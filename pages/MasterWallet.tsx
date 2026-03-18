@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import GlassCard from '../components/GlassCard';
-import { MOCK_USER } from '../constants';
+import { MOCK_USER, PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
@@ -250,16 +250,7 @@ const MasterWallet: React.FC = () => {
                    </div>
 
                    <div className="grid grid-cols-1 gap-4">
-                      {[
-                        { name: 'ID Activation', price: 50, features: ['Network Access', 'Basic Dividends'] },
-                        { name: 'Starter Node', price: 150, features: ['5% Pair Income', '250 USDT Capping'] },
-                        { name: 'Bronze Node', price: 350, features: ['5% Pair Income', '250 USDT Capping'] },
-                        { name: 'Silver Node', price: 750, features: ['5% Pair Income', '250 USDT Capping'] },
-                        { name: 'Gold Node', price: 1550, features: ['5% Pair Income', '250 USDT Capping'] },
-                        { name: 'Platinum Node', price: 3150, features: ['5% Pair Income', '250 USDT Capping'] },
-                        { name: 'Diamond Node', price: 6350, features: ['5% Pair Income', '360 USDT Capping'] },
-                        { name: 'Ambassador Node', price: 12750, features: ['5% Pair Income', '490 USDT Capping'] },
-                      ].map((pkg) => (
+                      {PACKAGES.map((pkg) => (
                         <div key={pkg.name} className="p-6 bg-[#1e2329] border border-white/5 rounded-3xl hover:border-orange-500/30 transition-all group cursor-pointer">
                            <div className="flex justify-between items-center">
                               <div>
@@ -294,7 +285,8 @@ const MasterWallet: React.FC = () => {
                      <p className="text-red-500 text-[10px] font-black uppercase tracking-widest text-center">{error}</p>
                    )}
                 </div>
-              ) : activeTab === 'exchange' ? (
+              ) :
+ activeTab === 'exchange' ? (
                 <div className="mt-10 space-y-10">
                    {/* Source Input */}
                    <div className="space-y-4">
@@ -432,7 +424,14 @@ const MasterWallet: React.FC = () => {
                           {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : 'Generate Payment Node'}
                         </button>
 
-                        {error && (
+                        <div className="p-6 bg-blue-500/5 border border-blue-500/10 rounded-2xl flex items-center gap-4 text-blue-400">
+                       <Info size={18} className="shrink-0" />
+                       <p className="text-[9px] font-black uppercase tracking-widest leading-relaxed">
+                         Withdrawal will process within 6 to 12 hours.
+                       </p>
+                    </div>
+
+                    {error && (
                           <p className="text-red-500 text-[10px] font-black uppercase tracking-widest text-center">{error}</p>
                         )}
                      </div>

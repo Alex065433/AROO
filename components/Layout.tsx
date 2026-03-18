@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ArowinLogo } from './ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
 
-const Layout: React.FC<{ role: 'user' | 'admin' }> = ({ role }) => {
+const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ role, onLogout }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -88,7 +88,7 @@ const Layout: React.FC<{ role: 'user' | 'admin' }> = ({ role }) => {
       </nav>
 
       <div className="p-4 border-t border-white/5">
-        <button onClick={() => navigate('/login')} className="flex items-center gap-4 px-5 py-4 text-slate-500 hover:text-amber-500 rounded-xl transition-colors w-full group text-left">
+        <button onClick={onLogout} className="flex items-center gap-4 px-5 py-4 text-slate-500 hover:text-amber-500 rounded-xl transition-colors w-full group text-left">
           <LogOut size={20} className="group-hover:text-amber-500" />
           {(isOpen || mobileMenuOpen) && <span className="font-bold text-[11px] uppercase tracking-[0.2em] text-left">Sign Out Terminal</span>}
         </button>

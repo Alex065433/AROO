@@ -23,6 +23,17 @@ const RANK_DATA = [
   { required: 10000, weekly: 10000, capping: 2500, pairIncome: 25 },
 ];
 
+export const PACKAGES = [
+  { id: 'activation', name: 'ID Activation', price: 50, nodes: 1, features: ['Network Access', 'Basic Dividends'] },
+  { id: 'starter', name: 'Starter Node', price: 150, nodes: 3, features: ['5% Pair Income', '250 USDT Capping'] },
+  { id: 'bronze', name: 'Bronze Node', price: 350, nodes: 3, features: ['5% Pair Income', '250 USDT Capping'] },
+  { id: 'silver', name: 'Silver Node', price: 750, nodes: 3, features: ['5% Pair Income', '250 USDT Capping'] },
+  { id: 'gold', name: 'Gold Node', price: 1550, nodes: 3, features: ['5% Pair Income', '250 USDT Capping'] },
+  { id: 'platinum', name: 'Platinum Node', price: 3150, nodes: 3, features: ['5% Pair Income', '250 USDT Capping'] },
+  { id: 'diamond', name: 'Diamond Node', price: 6350, nodes: 3, features: ['5% Pair Income', '360 USDT Capping'] },
+  { id: 'ambassador', name: 'Ambassador Node', price: 12750, nodes: 3, features: ['5% Pair Income', '490 USDT Capping'] },
+];
+
 export const RANKS: Rank[] = RANK_NAMES.map((name, i) => {
   const level = i + 1;
   const data = RANK_DATA[i];

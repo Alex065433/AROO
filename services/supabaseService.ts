@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { PACKAGES } from '../constants';
 
 export interface Ticket {
   id?: string;
@@ -255,13 +256,16 @@ export const supabaseService = {
 
     if (error) throw error;
 
-    // 2. Generate 3 Team Collection Nodes for the user
+    // 2. Generate Team Collection Nodes for the user based on package
+    const pkg = PACKAGES.find(p => p.price === amount);
+    const nodeCount = pkg?.nodes || 3;
+    
     const teamNodes = [];
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= nodeCount; i++) {
       teamNodes.push({
         uid,
         node_id: `NODE-${Math.floor(100000 + Math.random() * 900000)}`,
-        name: `Node ${i} (Package ${amount})`,
+        name: `Node ${i} (${pkg?.name || 'Package ' + amount})`,
         balance: 0,
         eligible: true,
         created_at: new Date().toISOString()
@@ -483,26 +487,12 @@ export const supabaseService = {
     if (profile.sponsor_id) {
       const referralBonus = amount * 0.10;
       const sponsor = await this.getUserProfile(profile.sponsor_id);
-      if (sponsor) {
-        const updatedWallets = { ...sponsor.wallets };
-        updatedWallets.referral.balance += referralBonus;
-        updatedWallets.master.balance += referralBonus;
-        await this.createUserProfile(sponsor.id, { wallets: updatedWallets });
-        
-        // Log transaction
-        await supabase.from('payments').insert([{
-          uid: sponsor.id,
-          amount: referralBonus,
-          type: 'referral_bonus',
-          status: 'completed',
-          method: 'INTERNAL',
-          created_at: new Date().toISOString()
-        }]);
+      if (sponsor && sponsor.active_package > 0) {
+        await this.addIncome(sponsor.id, referralBonus, 'referral_bonus');
       }
     }
 
     // 2. Binary Matching Bonus (10% of matching volume for all ancestors)
-    // This is complex and usually handled by a daily cron, but we'll do a simplified version here
     let currentId = uid;
     while (true) {
       const { data: node, error } = await supabase
@@ -519,16 +509,79 @@ export const supabaseService = {
       const parent = await this.getUserProfile(parentId);
       if (!parent) break;
 
-      // Update parent's volume (we'll use master wallet balance as a proxy for volume for now)
-      // In a real app, you'd have separate volume fields
-      const matchingBonus = amount * 0.10; // 10% matching
-      
-      // Simplified: If both sides have volume, pay matching
-      // This is a placeholder for real binary logic
-      console.log(`Processing matching for ancestor ${parentId} on side ${side}`);
+      // Update parent's volume
+      const newVolume = { ...parent.matching_volume };
+      if (side === 'LEFT') newVolume.left += amount;
+      else newVolume.right += amount;
+
+      // Calculate matching
+      const matchAmount = Math.min(newVolume.left, newVolume.right);
+      if (matchAmount > 0) {
+        const matchingIncome = matchAmount * 0.10; // 10% matching
+        
+        // Deduct matching volume
+        newVolume.left -= matchAmount;
+        newVolume.right -= matchAmount;
+
+        // Pay matching income with capping
+        if (parent.active_package > 0) {
+          await this.addIncome(parent.id, matchingIncome, 'matching_income');
+        }
+      }
+
+      await supabase
+        .from('profiles')
+        .update({ matching_volume: newVolume })
+        .eq('id', parentId);
       
       currentId = parentId;
     }
+  },
+
+  async addIncome(uid: string, amount: number, type: string) {
+    const profile = await this.getUserProfile(uid);
+    if (!profile) return;
+
+    // Check Capping
+    const today = new Date().toISOString().split('T')[0];
+    const dailyIncome = profile.daily_income || { date: '', amount: 0 };
+    
+    let currentDailyAmount = dailyIncome.date === today ? dailyIncome.amount : 0;
+    
+    // Capping based on package
+    // Default capping 250 USDT
+    let capping = 250;
+    if (profile.active_package >= 6350) capping = 360;
+    if (profile.active_package >= 12750) capping = 490;
+
+    const remainingCapping = capping - currentDailyAmount;
+    if (remainingCapping <= 0) return; // Capped for today
+
+    const payableAmount = Math.min(amount, remainingCapping);
+    
+    // Update Wallets
+    const updatedWallets = { ...profile.wallets };
+    updatedWallets.master.balance += payableAmount;
+    if (type === 'referral_bonus') updatedWallets.referral.balance += payableAmount;
+    
+    await supabase
+      .from('profiles')
+      .update({ 
+        wallets: updatedWallets,
+        daily_income: { date: today, amount: currentDailyAmount + payableAmount },
+        total_income: (profile.total_income || 0) + payableAmount
+      })
+      .eq('id', uid);
+
+    // Log transaction
+    await supabase.from('payments').insert([{
+      uid,
+      amount: payableAmount,
+      type,
+      status: 'completed',
+      method: 'INTERNAL',
+      created_at: new Date().toISOString()
+    }]);
   },
 
   async getBinaryTree(rootUid: string) {
@@ -541,41 +594,31 @@ export const supabaseService = {
     const rootProfile = profiles.find(p => p.id === rootUid || p.operator_id === rootUid);
     if (!rootProfile) return {};
 
-    const tree: Record<string, any> = {
-      'root': {
-        id: rootProfile.operator_id,
-        name: rootProfile.name,
-        rank: rootProfile.rank_name || 'Partner',
-        status: 'Active',
-        joinDate: rootProfile.created_at?.split('T')[0],
-        totalTeam: (rootProfile.team_size?.left || 0) + (rootProfile.team_size?.right || 0),
-        leftVolume: (rootProfile.wallets?.master?.balance || 0).toFixed(2) || '0.00',
-        rightVolume: '0.00',
-        parentId: null,
-        side: 'ROOT',
-        uid: rootProfile.id
-      }
+    const tree: Record<string, any> = {};
+
+    const buildTree = (node: any, path: string) => {
+      tree[path] = {
+        id: node.operator_id,
+        name: node.name,
+        rank: node.rank_name || 'Partner',
+        status: node.active_package > 0 ? 'Active' : 'Pending',
+        joinDate: node.created_at?.split('T')[0],
+        totalTeam: (node.team_size?.left || 0) + (node.team_size?.right || 0),
+        leftVolume: (node.matching_volume?.left || 0).toFixed(2) || '0.00',
+        rightVolume: (node.matching_volume?.right || 0).toFixed(2) || '0.00',
+        parentId: node.parent_id,
+        side: node.side || 'ROOT',
+        uid: node.id
+      };
+
+      const children = profiles.filter(p => p.parent_id === node.id);
+      children.forEach(child => {
+        const childPath = `${path}-${child.side.toLowerCase()}`;
+        buildTree(child, childPath);
+      });
     };
 
-    // Find children
-    const children = profiles.filter(p => p.parent_id === rootProfile.id);
-    children.forEach(child => {
-      const nodeId = child.side === 'LEFT' ? 'l1' : 'r1';
-      tree[nodeId] = {
-        id: child.operator_id,
-        name: child.name,
-        rank: child.rank_name || 'Partner',
-        status: 'Active',
-        joinDate: child.created_at?.split('T')[0],
-        totalTeam: (child.team_size?.left || 0) + (child.team_size?.right || 0),
-        leftVolume: (child.wallets?.master?.balance || 0).toFixed(2) || '0.00',
-        rightVolume: '0.00',
-        parentId: 'root',
-        side: child.side,
-        uid: child.id
-      };
-    });
-
+    buildTree(rootProfile, 'root');
     return tree;
   },
 

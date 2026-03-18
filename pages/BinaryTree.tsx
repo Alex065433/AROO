@@ -107,6 +107,100 @@ const ConnectionLine: React.FC<{ isActive: boolean; direction: 'vertical' | 'lef
   );
 };
 
+const TreeNode: React.FC<{
+  nodeId: string;
+  treeData: Record<string, NodeData>;
+  selectedNodeId: string | null;
+  activePath: string[];
+  onSelect: (id: string) => void;
+  onInvite: (side: 'LEFT' | 'RIGHT') => void;
+  level: number;
+}> = ({ nodeId, treeData, selectedNodeId, activePath, onSelect, onInvite, level }) => {
+  const data = treeData[nodeId];
+  const leftChildId = `${nodeId}-left`;
+  const rightChildId = `${nodeId}-right`;
+  const hasLeft = !!treeData[leftChildId];
+  const hasRight = !!treeData[rightChildId];
+
+  // Limit levels for performance in initial render, but allow expansion
+  if (level > 10) return null;
+
+  return (
+    <div className="flex flex-col items-center">
+      <Node 
+        nodeId={nodeId}
+        data={data} 
+        isSelected={selectedNodeId === nodeId}
+        isPath={activePath.includes(nodeId)}
+        onSelect={onSelect}
+        onInvite={onInvite}
+        nodeSide={nodeId.endsWith('-left') ? 'LEFT' : 'RIGHT'}
+      />
+      
+      {(hasLeft || hasRight || (data && level < 5)) && (
+        <div className="flex flex-col items-center relative">
+          <ConnectionLine isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} direction="vertical" />
+          <ConnectionLine 
+            isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} 
+            direction="horizontal" 
+            width={`${Math.max(400 / (level + 1), 100)}px`} 
+          />
+          <div className="flex gap-10 mt-0" style={{ gap: `${Math.max(200 / (level + 1), 20)}px` }}>
+            <div className="flex flex-col items-center">
+              <ConnectionLine isActive={activePath.includes(leftChildId)} direction="vertical" />
+              {hasLeft ? (
+                <TreeNode 
+                  nodeId={leftChildId}
+                  treeData={treeData}
+                  selectedNodeId={selectedNodeId}
+                  activePath={activePath}
+                  onSelect={onSelect}
+                  onInvite={onInvite}
+                  level={level + 1}
+                />
+              ) : (
+                <Node 
+                  nodeId={leftChildId}
+                  data={null}
+                  isSelected={false}
+                  isPath={false}
+                  onSelect={() => {}}
+                  onInvite={onInvite}
+                  nodeSide="LEFT"
+                />
+              )}
+            </div>
+            <div className="flex flex-col items-center">
+              <ConnectionLine isActive={activePath.includes(rightChildId)} direction="vertical" />
+              {hasRight ? (
+                <TreeNode 
+                  nodeId={rightChildId}
+                  treeData={treeData}
+                  selectedNodeId={selectedNodeId}
+                  activePath={activePath}
+                  onSelect={onSelect}
+                  onInvite={onInvite}
+                  level={level + 1}
+                />
+              ) : (
+                <Node 
+                  nodeId={rightChildId}
+                  data={null}
+                  isSelected={false}
+                  isPath={false}
+                  onSelect={() => {}}
+                  onInvite={onInvite}
+                  nodeSide="RIGHT"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const BinaryTree: React.FC = () => {
   const [scale, setScale] = useState(1);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -509,102 +603,15 @@ const BinaryTree: React.FC = () => {
             transition={{ type: 'spring', damping: 20 }}
             className="relative py-20 px-40"
           >
-            <div className="flex flex-col items-center">
-              {/* Level 0: Root */}
-              <Node 
-                nodeId="root"
-                data={treeData['root']} 
-                isSelected={selectedNodeId === 'root'}
-                isPath={activePath.includes('root')}
-                onSelect={setSelectedNodeId}
-              />
-              
-              {/* Connectors Level 0 to 1 */}
-              <div className="flex flex-col items-center relative">
-                 <ConnectionLine isActive={activePath.includes('root') && activePath.length > 1} direction="vertical" />
-                 <ConnectionLine isActive={activePath.includes('root') && activePath.length > 1} direction="horizontal" width="400px" />
-              </div>
-
-              {/* Level 1 */}
-              <div className="flex gap-60 mt-0">
-                <div className="flex flex-col items-center relative">
-                  <ConnectionLine isActive={activePath.includes('l1')} direction="vertical" />
-                  <Node 
-                    nodeId="l1"
-                    data={treeData['l1']} 
-                    isSelected={selectedNodeId === 'l1'}
-                    isPath={activePath.includes('l1')}
-                    onSelect={setSelectedNodeId}
-                    onInvite={setInviteModalSide}
-                    nodeSide="LEFT"
-                  />
-                  {/* Connectors Level 1 to 2 Left */}
-                  <div className="flex flex-col items-center relative">
-                    <ConnectionLine isActive={activePath.includes('l1') && (activePath.includes('l1-l') || activePath.includes('l1-r'))} direction="vertical" />
-                    <ConnectionLine isActive={activePath.includes('l1') && (activePath.includes('l1-l') || activePath.includes('l1-r'))} direction="horizontal" width="180px" />
-                    <div className="flex gap-24 mt-0">
-                      <div className="flex flex-col items-center">
-                        <ConnectionLine isActive={activePath.includes('l1-l')} direction="vertical" />
-                        <Node nodeId="l1-l" data={treeData['l1-l']} isSelected={selectedNodeId === 'l1-l'} isPath={activePath.includes('l1-l')} onSelect={setSelectedNodeId} />
-                        {/* Vacant slots below l1-l */}
-                        <ConnectionLine isActive={false} direction="vertical" />
-                        <ConnectionLine isActive={false} direction="horizontal" width="100px" />
-                        <div className="flex gap-10">
-                           <Node nodeId="v-l1-l-l" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="LEFT" />
-                           <Node nodeId="v-l1-l-r" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="RIGHT" />
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <ConnectionLine isActive={activePath.includes('l1-r')} direction="vertical" />
-                        <Node nodeId="l1-r" data={treeData['l1-r']} isSelected={selectedNodeId === 'l1-r'} isPath={activePath.includes('l1-r')} onSelect={setSelectedNodeId} />
-                        {/* Vacant slots below l1-r */}
-                        <ConnectionLine isActive={false} direction="vertical" />
-                        <ConnectionLine isActive={false} direction="horizontal" width="100px" />
-                        <div className="flex gap-10">
-                           <Node nodeId="v-l1-r-l" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="LEFT" />
-                           <Node nodeId="v-l1-r-r" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="RIGHT" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-center relative">
-                  <ConnectionLine isActive={activePath.includes('r1')} direction="vertical" />
-                  <Node 
-                    nodeId="r1"
-                    data={treeData['r1']} 
-                    isSelected={selectedNodeId === 'r1'}
-                    isPath={activePath.includes('r1')}
-                    onSelect={setSelectedNodeId}
-                    onInvite={setInviteModalSide}
-                    nodeSide="RIGHT"
-                  />
-                  {/* Connectors Level 1 to 2 Right */}
-                  <div className="flex flex-col items-center relative">
-                    <ConnectionLine isActive={activePath.includes('r1') && (activePath.includes('r1-l') || activePath.includes('r1-r'))} direction="vertical" />
-                    <ConnectionLine isActive={activePath.includes('r1') && (activePath.includes('r1-l') || activePath.includes('r1-r'))} direction="horizontal" width="180px" />
-                    <div className="flex gap-24 mt-0">
-                      <div className="flex flex-col items-center">
-                        <ConnectionLine isActive={activePath.includes('r1-l')} direction="vertical" />
-                        <Node nodeId="r1-l" data={treeData['r1-l']} isSelected={selectedNodeId === 'r1-l'} isPath={activePath.includes('r1-l')} onSelect={setSelectedNodeId} />
-                        {/* Vacant slots below r1-l */}
-                        <ConnectionLine isActive={false} direction="vertical" />
-                        <ConnectionLine isActive={false} direction="horizontal" width="100px" />
-                        <div className="flex gap-10">
-                           <Node nodeId="v-r1-l-l" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="LEFT" />
-                           <Node nodeId="v-r1-l-r" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="RIGHT" />
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <ConnectionLine isActive={false} direction="vertical" />
-                        <Node nodeId="r1-r" data={null} isSelected={false} isPath={false} onSelect={() => {}} onInvite={setInviteModalSide} nodeSide="RIGHT" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <TreeNode 
+              nodeId="root"
+              treeData={treeData}
+              selectedNodeId={selectedNodeId}
+              activePath={activePath}
+              onSelect={setSelectedNodeId}
+              onInvite={setInviteModalSide}
+              level={0}
+            />
           </motion.div>
         </GlassCard>
 

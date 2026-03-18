@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../../services/supabaseService';
+import { PACKAGES } from '../../constants';
 
 const AdminCustomers: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -199,10 +200,10 @@ const AdminCustomers: React.FC = () => {
               ) : users.filter(u => 
                   u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
                   u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  u.uid?.toLowerCase().includes(searchQuery.toLowerCase())
+                  u.operator_id?.toLowerCase().includes(searchQuery.toLowerCase())
                 ).map((user, i) => (
                 <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                  <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{user.uid?.substring(0, 8)}...</td>
+                  <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{user.id?.substring(0, 8)}...</td>
                   <td className="px-8 py-5">
                     <div className="flex flex-col">
                       <span className="text-sm font-bold text-slate-900 dark:text-white">{user.name || 'Unnamed User'}</span>
@@ -228,7 +229,7 @@ const AdminCustomers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm text-slate-500 dark:text-slate-400">
-                    {user.createdAt?.toDate ? user.createdAt.toDate().toLocaleDateString() : 'Recent'}
+                    {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'Recent'}
                   </td>
                   <td className="px-8 py-5 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -343,20 +344,17 @@ const AdminCustomers: React.FC = () => {
                           <Package size={18} />
                           <h4 className="text-xs font-black uppercase tracking-widest">Activate Package</h4>
                        </div>
-                       <div className="flex gap-2">
+                        <div className="flex gap-2">
                           <select 
                             value={selectedPackage}
                             onChange={(e) => setSelectedPackage(e.target.value)}
                             className="flex-1 bg-white dark:bg-slate-800 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-orange-500 text-slate-900 dark:text-white"
                           >
-                            <option value="50">$50 (ID Activation)</option>
-                            <option value="150">$150</option>
-                            <option value="350">$350</option>
-                            <option value="750">$750</option>
-                            <option value="1550">$1550</option>
-                            <option value="3150">$3150</option>
-                            <option value="6350">$6350</option>
-                            <option value="12750">$12750</option>
+                            {PACKAGES.map(pkg => (
+                              <option key={pkg.price} value={pkg.price}>
+                                ${pkg.price} ({pkg.name})
+                              </option>
+                            ))}
                           </select>
                           <button 
                             onClick={handleActivatePackage}

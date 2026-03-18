@@ -1,12 +1,12 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import GlassCard from '../components/GlassCard';
 import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight } from 'lucide-react';
-import { MOCK_USER } from '../constants';
+import { supabaseService } from '../services/supabaseService';
 
-const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT' }> = ({ side }) => {
+const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
   const [copied, setCopied] = useState(false);
-  const link = `https://arowin-trading.app/register?ref=${MOCK_USER.id}&side=${side.toLowerCase()}`;
+  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${side.toLowerCase()}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(link);
@@ -66,6 +66,21 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT' }> = ({ side }) => {
 };
 
 const ReferralProgram: React.FC = () => {
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const currentUser = supabaseService.getCurrentUser();
+      if (currentUser) {
+        const profile = await supabaseService.getUserProfile(currentUser.id);
+        setUser(profile);
+      }
+    };
+    fetchUser();
+  }, []);
+
+  const operatorId = user?.operator_id || 'ARW-REF-882';
+
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
@@ -78,15 +93,15 @@ const ReferralProgram: React.FC = () => {
               <Users className="text-emerald-500" size={20} />
               <div className="flex flex-col">
                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500/60">Active Directs</span>
-                 <span className="text-lg font-black text-white">24 Partners</span>
+                 <span className="text-lg font-black text-white">{(user?.team_size?.left || 0) + (user?.team_size?.right || 0)} Partners</span>
               </div>
            </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-        <ReferralLinkCard side="LEFT" />
-        <ReferralLinkCard side="RIGHT" />
+        <ReferralLinkCard side="LEFT" operatorId={operatorId} />
+        <ReferralLinkCard side="RIGHT" operatorId={operatorId} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

@@ -1,23 +1,46 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Search, Filter, Download, Check, X, 
   Calendar, ArrowUpRight, ArrowDownRight,
-  MoreHorizontal, FileText, ExternalLink
+  MoreHorizontal, FileText, ExternalLink, RefreshCw
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { supabaseService } from '../../services/supabaseService';
 
 const AdminTransactions: React.FC = () => {
   const [filterType, setFilterType] = useState('All');
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const transactions = [
-    { id: 'TX-10001', user: 'John Doe', type: 'Deposit', amount: '$1,200.00', status: 'Completed', date: '2024-03-15 14:30', method: 'USDT (TRC20)' },
-    { id: 'TX-10002', user: 'Jane Smith', type: 'Withdrawal', amount: '$450.00', status: 'Pending', date: '2024-03-15 12:15', method: 'Bank Transfer' },
-    { id: 'TX-10003', user: 'Mike Ross', type: 'Deposit', amount: '$3,000.00', status: 'Completed', date: '2024-03-14 09:45', method: 'BTC' },
-    { id: 'TX-10004', user: 'Sarah Connor', type: 'Withdrawal', amount: '$150.00', status: 'Rejected', date: '2024-03-14 16:20', method: 'USDT (ERC20)' },
-    { id: 'TX-10005', user: 'Harvey Specter', type: 'Deposit', amount: '$5,000.00', status: 'Completed', date: '2024-03-13 11:00', method: 'USDT (TRC20)' },
-    { id: 'TX-10006', user: 'Louis Litt', type: 'Withdrawal', amount: '$2,500.00', status: 'Pending', date: '2024-03-13 15:45', method: 'Bank Transfer' },
-  ];
+  useEffect(() => {
+    const fetchTransactions = async () => {
+      setIsLoading(true);
+      try {
+        const data = await supabaseService.getPayments('all');
+        setTransactions(data);
+      } catch (error) {
+        console.error('Error fetching transactions:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchTransactions();
+  }, []);
+
+  const filteredTransactions = transactions.filter(tx => {
+    const matchesType = filterType === 'All' || tx.type.toLowerCase().includes(filterType.toLowerCase());
+    const matchesSearch = tx.uid?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                         tx.id?.toString().includes(searchQuery);
+    return matchesType && matchesSearch;
+  });
+
+  const stats = {
+    deposits: transactions.filter(t => t.type === 'deposit' && t.status === 'completed').reduce((sum, t) => sum + t.amount, 0),
+    withdrawals: transactions.filter(t => t.type === 'withdrawal' && t.status === 'completed').reduce((sum, t) => sum + t.amount, 0),
+    pending: transactions.filter(t => t.status === 'pending').length
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
@@ -44,18 +67,18 @@ const AdminTransactions: React.FC = () => {
             <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg">
               <ArrowUpRight size={18} />
             </div>
-            <span className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Total Deposits (24h)</span>
+            <span className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Total Deposits</span>
           </div>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">$42,500.00</p>
+          <p className="text-2xl font-bold text-slate-900 dark:text-white">${stats.deposits.toLocaleString()}</p>
         </div>
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 bg-orange-500/10 text-orange-500 rounded-lg">
               <ArrowDownRight size={18} />
             </div>
-            <span className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Total Withdrawals (24h)</span>
+            <span className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Total Withdrawals</span>
           </div>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">$18,200.00</p>
+          <p className="text-2xl font-bold text-slate-900 dark:text-white">${stats.withdrawals.toLocaleString()}</p>
         </div>
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex items-center gap-3 mb-2">
@@ -64,7 +87,7 @@ const AdminTransactions: React.FC = () => {
             </div>
             <span className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Pending Requests</span>
           </div>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white">14</p>
+          <p className="text-2xl font-bold text-slate-900 dark:text-white">{stats.pending}</p>
         </div>
       </div>
 
@@ -75,6 +98,8 @@ const AdminTransactions: React.FC = () => {
           <input 
             type="text" 
             placeholder="Search by ID or User..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full bg-slate-50 dark:bg-slate-800/50 border-none rounded-xl pl-12 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
           />
         </div>
@@ -113,7 +138,7 @@ const AdminTransactions: React.FC = () => {
             <thead>
               <tr className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-widest">
                 <th className="px-8 py-4">Transaction ID</th>
-                <th className="px-8 py-4">User</th>
+                <th className="px-8 py-4">User ID</th>
                 <th className="px-8 py-4">Type</th>
                 <th className="px-8 py-4">Amount</th>
                 <th className="px-8 py-4">Method</th>
@@ -123,34 +148,45 @@ const AdminTransactions: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {transactions.map((tx, i) => (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-8 py-10 text-center">
+                    <RefreshCw className="animate-spin mx-auto text-indigo-600" size={24} />
+                  </td>
+                </tr>
+              ) : filteredTransactions.map((tx, i) => (
                 <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
                   <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">
                     <div className="flex items-center gap-2">
-                      {tx.id}
+                      {tx.id?.toString().substring(0, 8)}...
                       <ExternalLink size={12} className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" />
                     </div>
                   </td>
-                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.user}</td>
+                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.uid?.substring(0, 8)}...</td>
                   <td className="px-8 py-5">
-                    <span className={`text-xs font-bold ${tx.type === 'Deposit' ? 'text-emerald-500' : 'text-orange-500'}`}>
+                    <span className={`text-xs font-bold uppercase ${
+                      tx.type === 'deposit' ? 'text-emerald-500' : 
+                      tx.type === 'withdrawal' ? 'text-orange-500' : 'text-blue-500'
+                    }`}>
                       {tx.type}
                     </span>
                   </td>
-                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.amount}</td>
-                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">{tx.method}</td>
+                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">${tx.amount?.toFixed(2)}</td>
+                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">{tx.method || 'INTERNAL'}</td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      tx.status === 'Completed' ? 'bg-emerald-500/10 text-emerald-500' :
-                      tx.status === 'Pending' ? 'bg-amber-500/10 text-amber-500' :
+                      tx.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500' :
+                      tx.status === 'pending' ? 'bg-amber-500/10 text-amber-500' :
                       'bg-rose-500/10 text-rose-500'
                     }`}>
                       {tx.status}
                     </span>
                   </td>
-                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">{tx.date}</td>
+                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">
+                    {tx.created_at ? new Date(tx.created_at).toLocaleString() : 'Recent'}
+                  </td>
                   <td className="px-8 py-5 text-right">
-                    {tx.status === 'Pending' ? (
+                    {tx.status === 'pending' ? (
                       <div className="flex items-center justify-end gap-2">
                         <button className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-all" title="Approve">
                           <Check size={16} />

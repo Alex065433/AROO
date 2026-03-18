@@ -9,7 +9,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArowinLogo } from './ArowinLogo';
 
-const AdminLayout: React.FC = () => {
+const AdminLayout: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [isOpen, setIsOpen] = useState(true);
   const location = useLocation();
   const navigate = useNavigate();
@@ -58,7 +58,7 @@ const AdminLayout: React.FC = () => {
         </nav>
 
         <div className="p-4 border-t border-slate-100 dark:border-blue-500/5">
-          <button onClick={() => navigate('/login')} className="flex items-center gap-4 px-4 py-3 text-slate-500 hover:text-rose-500 rounded-xl transition-all w-full group">
+          <button onClick={onLogout} className="flex items-center gap-4 px-4 py-3 text-slate-500 hover:text-rose-500 rounded-xl transition-all w-full group">
             <LogOut size={20} className="group-hover:rotate-12 transition-transform" />
             {isOpen && <span className="font-bold text-sm tracking-tight">Logout</span>}
           </button>

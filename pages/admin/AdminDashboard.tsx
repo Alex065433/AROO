@@ -27,7 +27,7 @@ const AdminDashboard: React.FC = () => {
         const payments = await supabaseService.getPayments('all'); // Assuming we can fetch all or mock it
         
         setStatsData(stats);
-        setRecentTx(users.slice(0, 5));
+        setRecentTx(payments.slice(0, 5));
         setTradingLogs(payments.slice(0, 10));
       } catch (error) {
         console.error('Error fetching admin dashboard data:', error);
@@ -217,13 +217,15 @@ const AdminDashboard: React.FC = () => {
                   </tr>
                 ) : recentTx.map((tx, i) => (
                   <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                    <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{tx.uid?.substring(0, 8)}...</td>
-                    <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.name || 'User'}</td>
-                    <td className="px-8 py-5 text-sm text-slate-600 dark:text-slate-400">{tx.active_package ? 'Package Activation' : 'Registration'}</td>
-                    <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">${tx.active_package || '0'}</td>
+                    <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{tx.id?.toString().substring(0, 8)}...</td>
+                    <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.uid?.substring(0, 8)}...</td>
+                    <td className="px-8 py-5 text-sm text-slate-600 dark:text-slate-400 uppercase font-black tracking-widest">{tx.type}</td>
+                    <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">${tx.amount?.toFixed(2)}</td>
                     <td className="px-8 py-5 text-right">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-500`}>
-                        Completed
+                      <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        tx.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
+                      }`}>
+                        {tx.status}
                       </span>
                     </td>
                   </tr>

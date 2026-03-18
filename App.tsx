@@ -24,9 +24,29 @@ import Help from './pages/Help';
 
 const App: React.FC = () => {
   // Set to false to start at the user login screen
-  const [isUserAuth, setIsUserAuth] = useState(false);
+  const [isUserAuth, setIsUserAuth] = useState(() => {
+    const saved = localStorage.getItem('arowin_supabase_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      return user && user.role !== 'admin';
+    }
+    return false;
+  });
   // Set to false to allow testing the new Admin Login flow
-  const [isAdminAuth, setIsAdminAuth] = useState(false);
+  const [isAdminAuth, setIsAdminAuth] = useState(() => {
+    const saved = localStorage.getItem('arowin_supabase_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      return user && user.role === 'admin';
+    }
+    return false;
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem('arowin_supabase_user');
+    setIsUserAuth(false);
+    setIsAdminAuth(false);
+  };
   const [showSplash, setShowSplash] = useState(true);
 
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -51,7 +71,7 @@ const App: React.FC = () => {
         <Route path="/admin/login" element={<AdminLogin onLogin={() => setIsAdminAuth(true)} />} />
 
         {/* User Protected Routes */}
-        <Route element={isUserAuth ? <Layout role="user" /> : <Navigate to="/login" />}>
+        <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/login" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
           <Route path="/team-collection" element={<TeamCollection />} />
@@ -64,7 +84,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={isAdminAuth ? <AdminLayout /> : <Navigate to="/login" />}>
+        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/login" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />
