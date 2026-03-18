@@ -202,7 +202,7 @@ const Dashboard: React.FC = () => {
       [walletKey]: { ...prev[walletKey], balance: 0 }
     }));
 
-    setNotification(`Successfully claimed ${claimAmount.toFixed(2)} USDT to Vault`);
+    setNotification(`Successfully claimed ${(claimAmount || 0).toFixed(2)} USDT to Vault`);
     setTimeout(() => setNotification(null), 3000);
   };
 
@@ -358,13 +358,13 @@ const Dashboard: React.FC = () => {
              <div className="flex justify-between items-center">
                 <span className="text-xs font-bold text-[#848e9c]">Receive amount</span>
                 <div className="flex items-baseline gap-1">
-                   <span className="text-2xl font-bold text-white">{(Number(withdrawAmount) * 0.9).toFixed(2)}</span>
+                   <span className="text-2xl font-bold text-white">{((Number(withdrawAmount) || 0) * 0.9).toFixed(2)}</span>
                    <span className="text-[10px] font-bold text-white">USDT</span>
                 </div>
              </div>
              <div className="flex justify-between items-center">
                 <span className="text-[11px] font-bold text-[#474d57] underline underline-offset-2 decoration-dotted">Processing fee (10%)</span>
-                <span className="text-[11px] font-bold text-[#474d57]">{(Number(withdrawAmount) * 0.1).toFixed(2)} USDT</span>
+                <span className="text-[11px] font-bold text-[#474d57]">{((Number(withdrawAmount) || 0) * 0.1).toFixed(2)} USDT</span>
              </div>
            </div>
            <button 

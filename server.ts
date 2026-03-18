@@ -3,11 +3,17 @@ import dotenv from "dotenv";
 import axios from "axios";
 import crypto from "crypto";
 import path from "path";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// Initialize Supabase for backend
+const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || "";
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 app.use(express.json());
 
@@ -143,9 +149,29 @@ app.post("/api/payments/create", async (req, res) => {
 
     console.log("NOWPayments Response Success:", response.data.payment_id);
 
-    // Note: Payment info is no longer stored in Firestore.
-    // In a real app without Firebase, you would store this in your own database.
-    console.warn("Firebase removed: Payment info NOT stored in database.");
+    // Store payment info in Supabase
+    try {
+      const { error: dbError } = await supabase
+        .from('payments')
+        .insert([{
+          uid: uid,
+          payment_id: response.data.payment_id,
+          amount: amount,
+          currency: currency || "usdtbsc",
+          status: "waiting",
+          order_id: orderId,
+          order_description: orderDescription,
+          created_at: new Date().toISOString()
+        }]);
+      
+      if (dbError) {
+        console.error("Supabase Payment Store Error:", dbError.message);
+      } else {
+        console.log("Payment stored in Supabase successfully");
+      }
+    } catch (err) {
+      console.error("Failed to store payment in Supabase:", err);
+    }
 
     res.json(response.data);
   } catch (error: any) {
@@ -179,13 +205,58 @@ app.post("/api/payments/ipn", async (req, res) => {
     console.error("IPN Signature Mismatch!");
   }
 
-  const { payment_status, payment_id } = notificationsPayload;
+  const { payment_status, payment_id, order_id, price_amount } = notificationsPayload;
 
   console.log(`IPN Received for Payment ${payment_id}: ${payment_status}`);
 
-  // Note: Firestore logic removed. 
-  // In a real app, you would update your database here.
-  console.warn("Firebase removed: IPN received but no database update performed.");
+  // Update payment status in Supabase
+  try {
+    const { error: dbError } = await supabase
+      .from('payments')
+      .update({ status: payment_status, updated_at: new Date().toISOString() })
+      .eq('payment_id', payment_id);
+    
+    if (dbError) {
+      console.error("Supabase IPN Update Error:", dbError.message);
+    }
+
+    // If payment is finished, credit the user's wallet
+    if (payment_status === 'finished') {
+      // 1. Get the payment to find the user ID
+      const { data: paymentData, error: fetchError } = await supabase
+        .from('payments')
+        .select('uid, amount')
+        .eq('payment_id', payment_id)
+        .single();
+      
+      if (paymentData && !fetchError) {
+        const uid = paymentData.uid;
+        const amount = paymentData.amount;
+
+        // 2. Get user profile
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('wallets')
+          .eq('id', uid)
+          .single();
+        
+        if (profile && !profileError) {
+          const wallets = profile.wallets || { master: { balance: 0 } };
+          wallets.master.balance = (wallets.master.balance || 0) + amount;
+
+          // 3. Update profile
+          await supabase
+            .from('profiles')
+            .update({ wallets })
+            .eq('id', uid);
+          
+          console.log(`User ${uid} wallet credited with ${amount} USDT`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to process IPN in Supabase:", err);
+  }
 
   res.status(200).send("OK");
 });
@@ -224,6 +295,10 @@ async function startServer() {
   }
 }
 
-startServer();
+if (process.env.NODE_ENV !== "production" || !process.env.VERCEL) {
+  startServer().catch(err => {
+    console.error("Critical Server Error during startup:", err);
+  });
+}
 
 export default app;

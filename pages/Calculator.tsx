@@ -90,7 +90,7 @@ const Calculator: React.FC = () => {
             </GlassCard>
             <GlassCard glow="cyan">
               <p className="text-xs font-black uppercase tracking-widest text-slate-500">Est. Daily Income</p>
-              <h4 className="text-4xl font-bold mt-3 text-emerald-400">${results.daily.toFixed(2)}</h4>
+              <h4 className="text-4xl font-bold mt-3 text-emerald-400">${(results.daily || 0).toFixed(2)}</h4>
             </GlassCard>
           </div>
 

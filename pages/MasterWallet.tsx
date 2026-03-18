@@ -63,7 +63,7 @@ const MasterWallet: React.FC = () => {
   // Automated target calculation
   const targetAmount = useMemo(() => {
     if (!exchangeAmount || isNaN(Number(exchangeAmount))) return '0.00';
-    return (Number(exchangeAmount) * coins[selectedCoin].rate).toFixed(selectedCoin === 'TRX' ? 2 : 6);
+    return ((Number(exchangeAmount) || 0) * (coins[selectedCoin]?.rate || 0)).toFixed(selectedCoin === 'TRX' ? 2 : 6);
   }, [exchangeAmount, selectedCoin]);
 
   const createPayment = async () => {
@@ -495,14 +495,14 @@ const MasterWallet: React.FC = () => {
                       </div>
                       <div className="flex justify-between items-center px-1">
                          <span className="text-[10px] font-black text-slate-600 uppercase">Processing Fee (10%)</span>
-                         <span className="text-[10px] font-black text-white">{(Number(exchangeAmount) * 0.1).toFixed(2)} USDT</span>
+                         <span className="text-[10px] font-black text-white">{((Number(exchangeAmount) || 0) * 0.1).toFixed(2)} USDT</span>
                       </div>
                    </div>
 
                    <div className="p-8 bg-orange-500/[0.03] border border-orange-500/10 rounded-3xl space-y-2">
                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">Net Settlement Amount</p>
                       <p className="text-4xl font-black text-white text-center tracking-tighter">
-                         {(Number(exchangeAmount) * 0.9).toFixed(2)} <span className="text-sm font-bold text-slate-600 ml-1">USDT</span>
+                         {((Number(exchangeAmount) || 0) * 0.9).toFixed(2)} <span className="text-sm font-bold text-slate-600 ml-1">USDT</span>
                       </p>
                    </div>
 

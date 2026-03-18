@@ -42,9 +42,9 @@ const AdminDashboard: React.FC = () => {
     { label: 'Total Users', value: statsData?.totalUsers || '0', change: '+12.5%', icon: Users, color: 'indigo' },
     { label: 'Active Users', value: statsData?.activeUsers || '0', change: '+8.2%', icon: UserCheck, color: 'emerald' },
     { label: 'Blocked Users', value: statsData?.blockedUsers || '0', change: '-2.4%', icon: UserX, color: 'rose' },
-    { label: 'Total Deposits', value: `$${statsData?.totalDeposits?.toLocaleString() || '0'}`, change: '+18.7%', icon: DollarSign, color: 'blue' },
-    { label: 'Total Withdrawals', value: `$${statsData?.totalWithdrawals?.toLocaleString() || '0'}`, change: '+5.4%', icon: CreditCard, color: 'orange' },
-    { label: 'Platform Revenue', value: `$${statsData?.platformRevenue?.toLocaleString() || '0'}`, change: '+22.1%', icon: TrendingUp, color: 'violet' },
+    { label: 'Total Deposits', value: `$${(statsData?.totalDeposits || 0).toLocaleString()}`, change: '+18.7%', icon: DollarSign, color: 'blue' },
+    { label: 'Total Withdrawals', value: `$${(statsData?.totalWithdrawals || 0).toLocaleString()}`, change: '+5.4%', icon: CreditCard, color: 'orange' },
+    { label: 'Platform Revenue', value: `$${(statsData?.platformRevenue || 0).toLocaleString()}`, change: '+22.1%', icon: TrendingUp, color: 'violet' },
   ];
 
   const revenueData = [
@@ -258,7 +258,7 @@ const AdminDashboard: React.FC = () => {
                       Amount: ${log.amount} • Status: {log.status}
                     </p>
                     <p className="text-[9px] font-mono text-slate-400 mt-1 uppercase">
-                      {new Date(log.created_at).toLocaleString()}
+                      {log.created_at ? new Date(log.created_at).toLocaleString() : 'Recent'}
                     </p>
                   </div>
                 </div>

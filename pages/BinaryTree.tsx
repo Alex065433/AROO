@@ -135,7 +135,7 @@ const BinaryTree: React.FC = () => {
 
   const targetAmount = useMemo(() => {
     if (!exchangeAmount || isNaN(Number(exchangeAmount))) return '0.00';
-    return (Number(exchangeAmount) * coins[selectedCoin].rate).toFixed(selectedCoin === 'TRX' ? 2 : 6);
+    return ((Number(exchangeAmount) || 0) * (coins[selectedCoin]?.rate || 0)).toFixed(selectedCoin === 'TRX' ? 2 : 6);
   }, [exchangeAmount, selectedCoin]);
 
   useEffect(() => {
