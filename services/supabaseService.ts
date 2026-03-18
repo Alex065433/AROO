@@ -393,15 +393,26 @@ export const supabaseService = {
 
   // Payments
   async getPayments(uid: string) {
-    let query = supabase.from('payments').select('*');
-    
-    if (uid !== 'all') {
-      query = query.eq('uid', uid);
+    try {
+      let query = supabase.from('payments').select('*');
+      
+      if (uid !== 'all') {
+        query = query.eq('uid', uid);
+      }
+      
+      const { data, error } = await query.order('created_at', { ascending: false });
+      if (error) {
+        if (error.code === 'PGRST204' || error.code === 'PGRST205') {
+          console.warn('Payments table not found. Returning empty list.');
+          return [];
+        }
+        throw error;
+      }
+      return data;
+    } catch (err) {
+      console.error('Error fetching payments:', err);
+      return [];
     }
-    
-    const { data, error } = await query.order('created_at', { ascending: false });
-    if (error) throw error;
-    return data;
   },
 
   // MLM Logic
@@ -538,7 +549,7 @@ export const supabaseService = {
         status: 'Active',
         joinDate: rootProfile.created_at?.split('T')[0],
         totalTeam: (rootProfile.team_size?.left || 0) + (rootProfile.team_size?.right || 0),
-        leftVolume: rootProfile.wallets?.master?.balance?.toFixed(2) || '0.00',
+        leftVolume: (rootProfile.wallets?.master?.balance || 0).toFixed(2) || '0.00',
         rightVolume: '0.00',
         parentId: null,
         side: 'ROOT',
@@ -557,7 +568,7 @@ export const supabaseService = {
         status: 'Active',
         joinDate: child.created_at?.split('T')[0],
         totalTeam: (child.team_size?.left || 0) + (child.team_size?.right || 0),
-        leftVolume: child.wallets?.master?.balance?.toFixed(2) || '0.00',
+        leftVolume: (child.wallets?.master?.balance || 0).toFixed(2) || '0.00',
         rightVolume: '0.00',
         parentId: 'root',
         side: child.side,

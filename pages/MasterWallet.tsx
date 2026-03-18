@@ -587,7 +587,7 @@ const MasterWallet: React.FC = () => {
 
            <div className="text-center py-12 relative">
               <div className="absolute inset-0 bg-gradient-to-b from-orange-500/5 to-transparent blur-[100px] pointer-events-none rounded-full" />
-              <p className="text-8xl font-black text-white tracking-tighter relative z-10">{userWallets.master.balance.toFixed(2)}</p>
+              <p className="text-8xl font-black text-white tracking-tighter relative z-10">{(userWallets?.master?.balance || 0).toFixed(2)}</p>
               <div className="flex items-center justify-center gap-4 mt-6 relative z-10">
                 <div className="h-[1px] w-12 bg-orange-500/20" />
                 <p className="text-orange-500 text-base font-black uppercase tracking-[0.5em]">Tether (USDT)</p>

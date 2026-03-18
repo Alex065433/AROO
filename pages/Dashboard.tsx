@@ -343,12 +343,12 @@ const Dashboard: React.FC = () => {
               <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3">
                 <span className="text-white font-bold text-sm">USDT</span>
                 <div className="w-[1px] h-4 bg-[#474d57]" />
-                <button onClick={() => setWithdrawAmount(MOCK_USER.wallets.master.balance.toString())} className="text-amber-500 font-bold text-sm hover:underline">MAX</button>
+                <button onClick={() => setWithdrawAmount((userWallets?.master?.balance || 0).toString())} className="text-amber-500 font-bold text-sm hover:underline">MAX</button>
               </div>
             </div>
             <div className="flex justify-between items-center pt-1 px-1">
                <span className="text-[11px] font-bold text-[#848e9c] underline underline-offset-2 decoration-dotted">Available Balance</span>
-               <span className="text-[11px] font-bold text-white">{MOCK_USER.wallets.master.balance.toFixed(2)} USDT</span>
+               <span className="text-[11px] font-bold text-white">{(userWallets?.master?.balance || 0).toFixed(2)} USDT</span>
             </div>
           </div>
         </div>
