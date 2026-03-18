@@ -1,0 +1,517 @@
+
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
+  DollarSign, Copy, Check, ChevronDown, HelpCircle, 
+  User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle
+} from 'lucide-react';
+import { MOCK_USER } from '../constants';
+import { ArowinLogo } from '../components/ArowinLogo';
+import { supabaseService } from '../services/supabaseService';
+
+const Modal: React.FC<{ 
+  title: string; 
+  isOpen: boolean; 
+  onClose: () => void; 
+  children: React.ReactNode;
+  isBinanceStyle?: boolean;
+}> = ({ title, isOpen, onClose, children, isBinanceStyle = false }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 md:p-6">
+      <div className="absolute inset-0 bg-black/95 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative w-full max-w-lg h-full md:h-auto md:max-h-[95vh] bg-[#0b0e11] ${isBinanceStyle ? '' : 'border border-white/10 rounded-[40px] overflow-hidden'} shadow-2xl flex flex-col animate-in zoom-in duration-300`}>
+        {isBinanceStyle ? (
+          <div className="px-6 py-4 flex justify-between items-center border-b border-[#1e2329]">
+            <button onClick={onClose} className="p-2 text-white/90 hover:text-white transition-colors">
+              <ArrowLeft size={22} />
+            </button>
+            <div className="flex flex-col items-center">
+              <h3 className="text-lg font-bold text-white tracking-tight">Send {title}</h3>
+              <button className="flex items-center gap-1 text-[#848e9c] text-[10px] font-bold mt-0.5">
+                On-chain Transfer <ChevronDown size={14} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="p-2 text-[#848e9c] hover:text-white"><HelpCircle size={22} /></button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gradient-to-r from-amber-600 to-amber-500 p-6 flex justify-between items-center">
+            <h3 className="text-lg font-black uppercase tracking-widest text-white">{title}</h3>
+            <button onClick={onClose} className="p-2 text-white/50 hover:text-white transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+        )}
+        
+        <div className={`flex-1 overflow-y-auto custom-scrollbar ${isBinanceStyle ? 'p-6' : 'p-10'}`}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const WalletCardRow: React.FC<{ 
+  title: string; 
+  amount: number; 
+  buttons: { label: string; action?: () => void; color?: string; disabled?: boolean }[];
+  isMaster?: boolean;
+}> = ({ title, amount, buttons, isMaster = false }) => {
+  return (
+    <div className={`w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10`}>
+      <div className={`w-full py-3.5 px-6 flex justify-center items-center relative overflow-hidden ${isMaster ? 'bg-[#3b2a0c]' : 'bg-[#18181b]'}`}>
+        <h3 className="text-white text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-3">
+          {isMaster && <Wallet size={16} />}
+          {title}
+        </h3>
+      </div>
+
+      <div className="p-10 text-center bg-[#0d0d0e]">
+        <div className="flex flex-col items-center mb-10">
+          <p className="text-4xl font-black text-slate-200 tracking-tight mb-2">
+            {(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </p>
+          <p className="text-[#c0841a] text-[10px] font-black tracking-[0.2em] uppercase">USDT NODE ASSET</p>
+        </div>
+
+        <div className="flex flex-wrap justify-center gap-4">
+          {buttons.map((btn, idx) => (
+            <button 
+              key={idx}
+              onClick={btn.action}
+              disabled={btn.disabled}
+              className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg border border-white/5 ${
+                btn.disabled ? 'opacity-30 cursor-not-allowed' : (btn.color || 'bg-[#1e293b] text-slate-400 hover:text-white')
+              }`}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const [userData, setUserData] = useState<any>(MOCK_USER);
+  const [userWallets, setUserWallets] = useState(MOCK_USER.wallets);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [activeModal, setActiveModal] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const [depositAddress, setDepositAddress] = useState('0x71C7656EC7ab88b098defB751B7401B5f6d8976F');
+  const [isCopied, setIsCopied] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawAddress, setWithdrawAddress] = useState('');
+  const [binanceRates, setBinanceRates] = useState<{symbol: string, price: string}[]>([]);
+
+  const [adminStatus, setAdminStatus] = useState<{status: string} | null>(null);
+
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      try {
+        const response = await fetch('/api/health');
+        if (response.ok) {
+          const data = await response.json();
+          setAdminStatus(data);
+        }
+      } catch (err) {
+        console.error('Error checking admin status:', err);
+      }
+    };
+    checkAdminStatus();
+
+    const unsubscribe = supabaseService.onAuthChange(async (user) => {
+      if (user) {
+        try {
+          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          if (profile) {
+            setUserData(profile);
+            setUserWallets(profile.wallets);
+          }
+        } catch (err) {
+          console.error('Error fetching profile:', err);
+        }
+      }
+    });
+
+    const fetchRates = async () => {
+      try {
+        const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
+        const response = await fetch('/api/rates/binance');
+        if (!response.ok) {
+          // If server returns an error, we might still get JSON with fallback data
+          const errorData = await response.json().catch(() => ({}));
+          if (Array.isArray(errorData)) {
+            const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
+            setBinanceRates(filtered);
+            return;
+          }
+          throw new Error(`Server responded with ${response.status}`);
+        }
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          const filtered = data.filter((item: any) => symbols.includes(item.symbol));
+          setBinanceRates(filtered);
+        }
+      } catch (error) {
+        // Only log if it's a real network error or critical failure
+        console.warn('Binance rates sync issue:', error);
+      }
+    };
+
+    fetchRates();
+    const interval = setInterval(fetchRates, 10000); // Update every 10 seconds
+    return () => {
+      unsubscribe();
+      clearInterval(interval);
+    };
+  }, []);
+
+  const generateNewAddress = () => {
+    setIsGenerating(true);
+    setTimeout(() => {
+      const hex = '0123456789abcdef';
+      let newAddr = '0x';
+      for (let i = 0; i < 40; i++) newAddr += hex[Math.floor(Math.random() * 16)];
+      setDepositAddress(newAddr);
+      setIsGenerating(false);
+    }, 800);
+  };
+
+  const copyAddress = () => {
+    navigator.clipboard.writeText(depositAddress);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const handleClaim = (walletKey: keyof typeof MOCK_USER.wallets) => {
+    const claimAmount = userWallets[walletKey].balance;
+    if (claimAmount <= 0) return;
+
+    setUserWallets(prev => ({
+      ...prev,
+      master: { ...prev.master, balance: prev.master.balance + claimAmount },
+      [walletKey]: { ...prev[walletKey], balance: 0 }
+    }));
+
+    setNotification(`Successfully claimed ${claimAmount.toFixed(2)} USDT to Vault`);
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const executeAction = () => {
+    setIsProcessing(true);
+    setTimeout(() => {
+      setIsProcessing(false);
+      setActiveModal(null);
+      setNotification("Protocol Action Confirmed");
+      setTimeout(() => setNotification(null), 3000);
+    }, 1500);
+  };
+
+  return (
+    <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 relative">
+      {notification && (
+        <div className="fixed top-24 right-10 z-[60] bg-[#c0841a] text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-right duration-300 font-bold text-sm">
+          <CheckCircle2 size={18} />
+          {notification}
+        </div>
+      )}
+
+      {/* Announcements Ticker */}
+      <div className="bg-blue-600/10 border border-blue-500/20 px-8 py-3 rounded-2xl flex items-center gap-4 overflow-hidden group">
+         <Megaphone size={18} className="text-blue-500 shrink-0 animate-bounce" />
+         <div className="whitespace-nowrap animate-[marquee_30s_linear_infinite] group-hover:[animation-play-state:paused] flex gap-20">
+            <span className="text-[11px] font-black uppercase tracking-widest text-blue-400">Node Update: Global synchronization successful. All operational yields credited to registry.</span>
+            
+            {binanceRates.length > 0 ? (
+              binanceRates.map((rate) => (
+                <span key={rate.symbol} className="text-[11px] font-black uppercase tracking-widest text-emerald-400 flex items-center gap-2">
+                  <TrendingUp size={12} />
+                  {rate.symbol}: <span className="text-white">${(parseFloat(rate.price) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-[11px] font-black uppercase tracking-widest text-blue-400">Security: Node Level 2 verification protocols now active for all partners.</span>
+            )}
+            
+            <span className="text-[11px] font-black uppercase tracking-widest text-blue-400">Network: All nodes operational.</span>
+         </div>
+      </div>
+
+      <style>{`
+        @keyframes marquee {
+          0% { transform: translateX(100%); }
+          100% { transform: translateX(-100%); }
+        }
+      `}</style>
+
+      {/* Deposit Modal */}
+      <Modal title="Inbound Deposit" isOpen={activeModal === 'deposit'} onClose={() => setActiveModal(null)}>
+        <div className="space-y-8 text-center">
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-white rounded-[32px] shadow-2xl relative overflow-hidden group">
+              {isGenerating ? (
+                <div className="w-48 h-48 flex items-center justify-center">
+                  <RefreshCw className="text-amber-600 animate-spin" size={40} />
+                </div>
+              ) : (
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${depositAddress}`} 
+                  alt="QR Code" 
+                  className="w-48 h-48 object-contain transition-opacity duration-300"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="p-8 bg-white/5 rounded-[32px] border border-white/5 space-y-4">
+             <div className="flex justify-between items-center px-2">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Master Node Address</p>
+                <button onClick={copyAddress} className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-400 hover:text-white">
+                  {isCopied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                </button>
+             </div>
+             <p className={`text-white font-mono break-all text-xs bg-black/40 p-4 rounded-xl border border-white/5 ${isGenerating ? 'opacity-20' : ''}`}>
+               {depositAddress}
+             </p>
+          </div>
+
+          <button onClick={executeAction} className="w-full bg-[#a3680e] py-5 rounded-3xl font-black text-white hover:bg-[#c0841a] transition-all uppercase tracking-widest text-xs">
+             {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : 'I HAVE DEPOSITED'}
+          </button>
+        </div>
+      </Modal>
+
+      {/* Withdrawal Modal */}
+      <Modal 
+        title="USDT" 
+        isOpen={activeModal === 'withdraw'} 
+        onClose={() => setActiveModal(null)}
+        isBinanceStyle={true}
+      >
+        <div className="space-y-8 pb-40">
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-bold text-[#848e9c]">Address</label>
+            </div>
+            <div className="relative">
+              <input 
+                type="text" 
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+                placeholder="Enter Address" 
+                className="w-full bg-[#1e2329] border-none rounded-lg px-4 py-4 text-white placeholder-[#474d57] font-medium text-sm focus:ring-1 focus:ring-amber-500/50" 
+              />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-4 text-[#848e9c]">
+                <User size={18} className="cursor-pointer hover:text-white" />
+                <Scan size={18} className="cursor-pointer hover:text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-[#848e9c]">Network</label>
+              <Info size={14} className="text-[#848e9c]" />
+            </div>
+            <div className="bg-[#1e2329] rounded-lg px-4 py-4 flex justify-between items-center cursor-pointer group hover:bg-[#2b3139] transition-colors">
+              <span className="text-[#848e9c] text-sm font-medium">Select Protocol Network</span>
+              <ChevronDown size={18} className="text-[#848e9c]" />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-[#848e9c]">Withdrawal Amount</label>
+            </div>
+            <div className="relative">
+              <input 
+                type="number" 
+                value={withdrawAmount}
+                onChange={(e) => setWithdrawAmount(e.target.value)}
+                placeholder="Minimum 10" 
+                className="w-full bg-[#1e2329] border-none rounded-lg px-4 py-4 text-white font-bold text-lg pr-32 placeholder-[#474d57] focus:ring-1 focus:ring-amber-500/50" 
+              />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-3">
+                <span className="text-white font-bold text-sm">USDT</span>
+                <div className="w-[1px] h-4 bg-[#474d57]" />
+                <button onClick={() => setWithdrawAmount(MOCK_USER.wallets.master.balance.toString())} className="text-amber-500 font-bold text-sm hover:underline">MAX</button>
+              </div>
+            </div>
+            <div className="flex justify-between items-center pt-1 px-1">
+               <span className="text-[11px] font-bold text-[#848e9c] underline underline-offset-2 decoration-dotted">Available Balance</span>
+               <span className="text-[11px] font-bold text-white">{MOCK_USER.wallets.master.balance.toFixed(2)} USDT</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="absolute bottom-0 left-0 right-0 p-6 bg-[#0b0e11] border-t border-[#1e2329] space-y-5 animate-in slide-in-from-bottom duration-300">
+           <div className="space-y-2">
+             <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-[#848e9c]">Receive amount</span>
+                <div className="flex items-baseline gap-1">
+                   <span className="text-2xl font-bold text-white">{(Number(withdrawAmount) * 0.9).toFixed(2)}</span>
+                   <span className="text-[10px] font-bold text-white">USDT</span>
+                </div>
+             </div>
+             <div className="flex justify-between items-center">
+                <span className="text-[11px] font-bold text-[#474d57] underline underline-offset-2 decoration-dotted">Processing fee (10%)</span>
+                <span className="text-[11px] font-bold text-[#474d57]">{(Number(withdrawAmount) * 0.1).toFixed(2)} USDT</span>
+             </div>
+           </div>
+           <button 
+             onClick={executeAction} 
+             disabled={!withdrawAmount || Number(withdrawAmount) < 10 || isProcessing}
+             className={`w-full py-3.5 rounded-lg font-bold text-base transition-all active:scale-95 ${
+               withdrawAmount && Number(withdrawAmount) >= 10 ? 'bg-amber-500 text-[#1e2329] hover:bg-amber-400' : 'bg-[#2b3139] text-[#474d57] cursor-not-allowed'
+             }`}
+           >
+              {isProcessing ? <RefreshCw className="animate-spin mx-auto" size={24} /> : 'Withdraw'}
+           </button>
+        </div>
+      </Modal>
+
+      {/* Admin Console (Only for kethankumar130@gmail.com) */}
+      {userData.email === 'kethankumar130@gmail.com' && (
+        <div className="bg-rose-500/10 border border-rose-500/20 p-12 rounded-[48px] space-y-8">
+          <div className="flex items-center gap-4">
+            <ShieldCheck className="text-rose-500" size={32} />
+            <div>
+              <h3 className="text-xl font-black uppercase tracking-widest text-slate-200">Admin Control Node</h3>
+              <p className="text-[10px] font-black text-rose-500/60 uppercase tracking-[0.3em]">System Identity: kethankumar130@gmail.com</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
+              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Test MLM Protocol</h4>
+              <p className="text-[10px] text-slate-600 font-bold uppercase leading-relaxed">Simulate a package activation to trigger referral and binary matching yields across the network.</p>
+              <button 
+                onClick={async () => {
+                  setIsProcessing(true);
+                  try {
+                    await supabaseService.activatePackage(userData.id, 1000);
+                    setNotification("MLM Protocol Triggered: 1000 USDT Package Active");
+                    // Refresh profile
+                    const profile = await supabaseService.getUserProfile(userData.id);
+                    setUserData(profile);
+                    setUserWallets(profile.wallets);
+                  } catch (err) {
+                    console.error('MLM Trigger Failed:', err);
+                  }
+                  setIsProcessing(false);
+                }}
+                disabled={isProcessing}
+                className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] flex items-center justify-center gap-3"
+              >
+                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
+                ACTIVATE 1000 USDT TEST PACKAGE
+              </button>
+            </div>
+
+            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
+              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">System Management</h4>
+              <div className="space-y-4">
+                <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
+                  ACCESS CORE DASHBOARD
+                </button>
+                <button onClick={() => navigate('/admin/users')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
+                  MANAGE NETWORK NODES
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top Welcome Section */}
+      <div className="bg-[#0c0c0d] p-12 rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden group">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600/5 via-transparent to-amber-600/5 pointer-events-none" />
+        
+        <div className="flex items-center gap-10 relative z-10">
+          <div className="relative">
+            <div className="absolute inset-0 bg-blue-500/10 blur-3xl rounded-full" />
+            <div className="w-28 h-28 rounded-[32px] bg-[#1a1a1c] border border-white/10 p-3 flex items-center justify-center relative z-10 shadow-2xl">
+               <ArowinLogo size={80} />
+            </div>
+          </div>
+          <div>
+            <h2 className="text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
+            <div className="flex items-center gap-4 mt-3">
+               <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em]">OPERATOR: {userData.name}</span>
+               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-6">
+          <div className="bg-[#121214] border border-white/5 rounded-3xl px-8 py-5 flex items-center gap-6 group hover:border-amber-500/20 transition-all">
+             <div className="p-3 bg-blue-500/10 rounded-xl text-blue-500">
+               <TrendingUp size={22} />
+             </div>
+             <div>
+                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Network Yield</p>
+                <p className="text-xl font-black text-slate-200">+14.2%</p>
+             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4">
+        <WalletCardRow 
+          title="MASTER CONSOLIDATED VAULT"
+          isMaster={true}
+          amount={userWallets.master.balance}
+          buttons={[
+            { label: 'DEPOSIT', color: 'bg-[#a3680e] text-white', action: () => setActiveModal('deposit') },
+            { label: 'WITHDRAW', color: 'bg-white/5 text-slate-400', action: () => setActiveModal('withdraw') },
+            { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') },
+            { label: 'COLLECT ASSETS', color: 'bg-blue-600 text-white', action: () => navigate('/team-collection') }
+          ]}
+        />
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 space-y-6">
+        {[
+          { key: 'referral', label: 'DIRECT REFERRAL YIELD' },
+          { key: 'matching', label: 'BINARY MATCHING DIVIDEND' },
+          { key: 'rankBonus', label: 'RANK PROTOCOL BONUS' },
+          { key: 'rewards', label: 'INCENTIVE POOL ACCRUAL' }
+        ].map(item => (
+          <WalletCardRow 
+            key={item.key}
+            title={item.label}
+            amount={userWallets[item.key as keyof typeof userWallets].balance}
+            buttons={[
+              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: userWallets[item.key as keyof typeof userWallets].balance <= 0 },
+              { label: 'DETAILS', action: () => alert('Opening Detailed Ledger...') }
+            ]}
+          />
+        ))}
+      </div>
+
+      <div className="bg-slate-900/20 border border-white/5 p-12 rounded-[48px] flex flex-col md:flex-row items-center gap-10">
+        <div className="p-6 bg-blue-500/10 rounded-3xl text-blue-500">
+           <ShieldCheck size={40} />
+        </div>
+        <div className="flex-1 text-center md:text-left">
+          <h4 className="text-xl font-black uppercase tracking-widest text-slate-200">Institutional Settlement Engine</h4>
+          <p className="text-sm text-slate-500 mt-3 leading-relaxed max-w-2xl">
+            Arowin Trading utilizes decentralized verification nodes. All asset yields are distributed in accordance with our transparent proof-of-volume protocol.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;

@@ -1,0 +1,127 @@
+
+import React, { useState } from 'react';
+import GlassCard from '../components/GlassCard';
+import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight } from 'lucide-react';
+import { MOCK_USER } from '../constants';
+
+const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT' }> = ({ side }) => {
+  const [copied, setCopied] = useState(false);
+  const link = `https://arowin-trading.app/register?ref=${MOCK_USER.id}&side=${side.toLowerCase()}`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className={`relative overflow-hidden group p-10 rounded-[40px] border transition-all duration-500 ${
+      side === 'LEFT' 
+        ? 'bg-gradient-to-br from-orange-600/10 to-transparent border-orange-500/10 hover:border-orange-500/30 shadow-[0_20px_50px_rgba(249,115,22,0.05)]' 
+        : 'bg-gradient-to-br from-blue-600/10 to-transparent border-blue-500/10 hover:border-blue-500/30 shadow-[0_20px_50px_rgba(59,130,246,0.05)]'
+    }`}>
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-5">
+          <div className={`p-4 rounded-2xl shadow-inner ${side === 'LEFT' ? 'bg-orange-500/20 text-orange-500' : 'bg-blue-500/20 text-blue-500'}`}>
+            <LinkIcon size={24} />
+          </div>
+          <div>
+            <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Binary Placement</span>
+            <h4 className={`text-2xl font-bold tracking-tight ${side === 'LEFT' ? 'text-orange-500' : 'text-blue-500'}`}>{side} LEG PORTAL</h4>
+          </div>
+        </div>
+      </div>
+      
+      <div className="space-y-6">
+        <p className="text-sm text-slate-400 leading-relaxed font-medium">
+          Share this link to enroll new partners directly into your <span className="text-white font-bold">{side.toLowerCase()} leg</span>. 
+          Binary matching is calculated based on volume from this leg.
+        </p>
+        
+        <div className="flex items-center gap-4 bg-black/40 border border-white/5 rounded-2xl p-4">
+          <p className="flex-1 text-xs font-mono text-slate-500 truncate select-all">{link}</p>
+          <button 
+            onClick={handleCopy}
+            className={`p-3 rounded-xl transition-all active:scale-90 ${
+              copied ? 'bg-emerald-500/20 text-emerald-500' : 'bg-white/5 text-slate-400 hover:text-white'
+            }`}
+          >
+            {copied ? <Check size={18} /> : <Copy size={18} />}
+          </button>
+        </div>
+
+        <button 
+          onClick={handleCopy}
+          className={`w-full py-5 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl active:scale-95 ${
+            side === 'LEFT' 
+              ? 'bg-orange-600 text-white hover:bg-orange-500 shadow-orange-950/20' 
+              : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-950/20'
+          }`}
+        >
+          {copied ? 'Link Copied Successfully' : `Copy ${side} Referral Link`}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ReferralProgram: React.FC = () => {
+  return (
+    <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
+        <div>
+          <h2 className="text-5xl font-black uppercase tracking-tight text-white">Affiliate Enrollment Portals</h2>
+          <p className="text-slate-500 mt-3 text-lg font-medium max-w-2xl">Expand your network by inviting new partners. Select specific binary placement to optimize your matching dividends.</p>
+        </div>
+        <div className="flex gap-4">
+           <div className="px-6 py-4 bg-emerald-500/10 rounded-2xl border border-emerald-500/10 flex items-center gap-3">
+              <Users className="text-emerald-500" size={20} />
+              <div className="flex flex-col">
+                 <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500/60">Active Directs</span>
+                 <span className="text-lg font-black text-white">24 Partners</span>
+              </div>
+           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+        <ReferralLinkCard side="LEFT" />
+        <ReferralLinkCard side="RIGHT" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+         <GlassCard className="lg:col-span-2">
+            <div className="flex items-center gap-4 mb-8">
+               <div className="p-3 bg-orange-500/20 rounded-xl text-orange-500">
+                  <Info size={20} />
+               </div>
+               <h3 className="text-xl font-bold uppercase tracking-widest">Program Compensation Logic</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+               <div className="space-y-4 p-6 bg-white/5 rounded-3xl border border-white/5">
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-500">Direct Referral Bonus</p>
+                  <p className="text-4xl font-black text-white">5.0%</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">Earn instant commission on every partner package activated through your direct link.</p>
+               </div>
+               <div className="space-y-4 p-6 bg-white/5 rounded-3xl border border-white/5">
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-500">Binary Matching Dividend</p>
+                  <p className="text-4xl font-black text-white">10.0%</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">Receive automated matching dividends when volume is balanced across your Left and Right legs.</p>
+               </div>
+            </div>
+         </GlassCard>
+
+         <div className="bg-gradient-to-br from-slate-900 to-black border border-white/5 rounded-[40px] p-10 flex flex-col justify-center items-center text-center space-y-6">
+            <div className="w-20 h-20 bg-orange-500/10 rounded-full flex items-center justify-center text-orange-500">
+               <Share2 size={32} />
+            </div>
+            <h4 className="text-xl font-bold uppercase tracking-widest">Global Expansion</h4>
+            <p className="text-sm text-slate-500 leading-relaxed">Your network knows no borders. Partners can join from any jurisdiction supported by Arowin Trading node protocols.</p>
+            <button className="w-full py-4 bg-white/5 border border-white/5 hover:bg-white/10 text-xs font-black uppercase tracking-[0.2em] rounded-2xl transition-all">View Network Map <ArrowRight size={14} className="inline ml-2" /></button>
+         </div>
+      </div>
+    </div>
+  );
+};
+
+export default ReferralProgram;
