@@ -1,4 +1,4 @@
-import app from "./server";
+import app from "./api/index";
 
 const PORT = 3000;
 
