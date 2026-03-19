@@ -120,7 +120,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
             rankBonus: { balance: 0, currency: 'USDT' },
             rewards: { balance: 0, currency: 'USDT' },
           },
-          team_size: { left: 0, right: 0 },
+          team_size: 0,
           matched_pairs: 0,
           role: 'user'
         });
