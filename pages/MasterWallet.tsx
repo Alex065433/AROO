@@ -21,7 +21,7 @@ const MasterWallet: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [isGeneratingAddress, setIsGeneratingAddress] = useState(false);
   const [paymentData, setPaymentData] = useState<any>(null);
-  const [depositAmount, setDepositAmount] = useState('150');
+  const [depositAmount, setDepositAmount] = useState('50');
   const [userProfile, setUserProfile] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
@@ -67,8 +67,8 @@ const MasterWallet: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   const createPayment = async () => {
-    if (!depositAmount || Number(depositAmount) < 150) {
-      setError('Minimum deposit is 150 USDT');
+    if (!depositAmount || Number(depositAmount) < 50) {
+      setError('Minimum deposit is 50 USDT');
       return;
     }
 

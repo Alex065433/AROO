@@ -472,8 +472,8 @@ const Dashboard: React.FC = () => {
           isMaster={true}
           amount={userWallets.master.balance}
           buttons={[
-            { label: 'DEPOSIT', color: 'bg-[#a3680e] text-white', action: () => setActiveModal('deposit') },
-            { label: 'WITHDRAW', color: 'bg-white/5 text-slate-400', action: () => setActiveModal('withdraw') },
+            
+           
             { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') },
             { label: 'COLLECT ASSETS', color: 'bg-blue-600 text-white', action: () => navigate('/team-collection') }
           ]}
