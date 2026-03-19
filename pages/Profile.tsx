@@ -32,6 +32,8 @@ const Profile: React.FC = () => {
   const [showVerification, setShowVerification] = useState(false);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [isLoadingReferrals, setIsLoadingReferrals] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -51,9 +53,16 @@ const Profile: React.FC = () => {
               sponsorId: profile.sponsor_id || 'SPN-001'
             });
             setAvatar(`https://api.dicebear.com/7.x/avataaars/svg?seed=${profile.name}`);
+            
+            // Fetch referrals
+            setIsLoadingReferrals(true);
+            const refs = await supabaseService.getReferrals(profile.id);
+            setReferrals(refs);
+            setIsLoadingReferrals(false);
           }
         } catch (err) {
-          console.error('Error fetching profile:', err);
+          console.error('Error fetching profile or referrals:', err);
+          setIsLoadingReferrals(false);
         }
       }
     });
@@ -419,6 +428,80 @@ const Profile: React.FC = () => {
               <div>
                 <h4 className="font-bold text-white">Encrypted Vault</h4>
                 <p className="text-xs text-slate-500 mt-1">Personal data is stored on decentralized nodes with AES-256 encryption.</p>
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* Sponsor Protocol Section */}
+          <div className="mt-12 space-y-8">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-orange-500/10 rounded-2xl flex items-center justify-center text-orange-500">
+                <User size={24} />
+              </div>
+              <div>
+                <h3 className="text-2xl font-black uppercase tracking-tight text-white">Sponsor Protocol</h3>
+                <p className="text-slate-500 text-sm font-medium">Direct referrals registered under your operator identity.</p>
+              </div>
+            </div>
+
+            <GlassCard className="p-0 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white/[0.02] border-b border-white/5">
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Identity</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Registry ID</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Enrollment Date</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {isLoadingReferrals ? (
+                      <tr>
+                        <td colSpan={4} className="px-8 py-20 text-center">
+                          <RefreshCw className="animate-spin text-orange-500 mx-auto mb-4" size={32} />
+                          <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Syncing Referrals...</p>
+                        </td>
+                      </tr>
+                    ) : referrals.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-8 py-20 text-center">
+                          <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">No direct referrals detected in registry</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      referrals.map((ref, idx) => (
+                        <tr key={idx} className="hover:bg-white/[0.02] transition-colors group">
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center overflow-hidden border border-white/5 group-hover:border-orange-500/50 transition-all">
+                                <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${ref.name}`} alt="Avatar" className="w-full h-full object-cover" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-white">{ref.name}</p>
+                                <p className="text-[10px] text-slate-500 font-medium">{ref.email}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <span className="font-mono text-xs text-slate-400">{ref.operator_id}</span>
+                          </td>
+                          <td className="px-8 py-6">
+                            <span className="text-xs text-slate-500">{new Date(ref.created_at).toLocaleDateString()}</span>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${ref.active_package > 0 ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]'}`} />
+                              <span className={`text-[10px] font-black uppercase tracking-widest ${ref.active_package > 0 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                {ref.active_package > 0 ? 'Active' : 'Pending'}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </GlassCard>
           </div>

@@ -9,18 +9,18 @@ const RANK_NAMES = [
 ];
 
 const RANK_DATA = [
-  { required: 1, weekly: 4, capping: 250, pairIncome: 5 },
-  { required: 3, weekly: 6, capping: 250, pairIncome: 5 },
-  { required: 7, weekly: 10, capping: 250, pairIncome: 5 },
-  { required: 15, weekly: 16, capping: 250, pairIncome: 5 },
-  { required: 31, weekly: 31, capping: 250, pairIncome: 5 },
-  { required: 100, weekly: 50, capping: 250, pairIncome: 5 },
-  { required: 250, weekly: 125, capping: 250, pairIncome: 5 },
-  { required: 500, weekly: 250, capping: 360, pairIncome: 6 },
-  { required: 1000, weekly: 500, capping: 490, pairIncome: 7 },
-  { required: 2500, weekly: 1000, capping: 640, pairIncome: 8 },
-  { required: 5000, weekly: 2500, capping: 900, pairIncome: 10 },
-  { required: 10000, weekly: 10000, capping: 2500, pairIncome: 25 },
+  { required: 1, weekly: 4, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 3, weekly: 6, capping: 250, pairIncome: 5, reward: 10 },
+  { required: 7, weekly: 10, capping: 250, pairIncome: 5, reward: 25 },
+  { required: 15, weekly: 16, capping: 250, pairIncome: 5, reward: 50 },
+  { required: 31, weekly: 31, capping: 250, pairIncome: 5, reward: 100 },
+  { required: 100, weekly: 50, capping: 250, pairIncome: 5, reward: 250 },
+  { required: 250, weekly: 125, capping: 250, pairIncome: 5, reward: 500 },
+  { required: 500, weekly: 250, capping: 360, pairIncome: 6, reward: 1000 },
+  { required: 1000, weekly: 500, capping: 490, pairIncome: 7, reward: 2500 },
+  { required: 2500, weekly: 1000, capping: 640, pairIncome: 8, reward: 5000 },
+  { required: 5000, weekly: 2500, capping: 900, pairIncome: 10, reward: 10000 },
+  { required: 10000, weekly: 10000, capping: 2500, pairIncome: 25, reward: 25000 },
 ];
 
 export const PACKAGES = [
@@ -47,6 +47,7 @@ export const RANKS: Rank[] = RANK_NAMES.map((name, i) => {
     totalEarning: data.weekly * 52,
     dailyCapping: data.capping,
     pairIncome: data.pairIncome,
+    reward: data.reward,
   };
 });
 

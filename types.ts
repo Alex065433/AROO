@@ -9,6 +9,7 @@ export interface Rank {
   totalEarning: number;
   dailyCapping: number;
   pairIncome: number;
+  reward: number;
 }
 
 export interface Wallet {

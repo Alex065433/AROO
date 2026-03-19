@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import GlassCard from '../components/GlassCard';
 import { 
   ZoomIn, ZoomOut, Maximize, UserCheck, UserPlus, 
@@ -8,7 +8,7 @@ import {
   Link as LinkIcon, Wallet, ArrowUpRight, ArrowDownLeft,
   ArrowRightLeft, Package, History, RefreshCw,
   ArrowLeft, ChevronDown, AlertCircle, BarChart3, LineChart,
-  CheckCircle2
+  CheckCircle2, Minus, Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
@@ -51,6 +51,7 @@ const Node: React.FC<{
       <motion.div 
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.95 }}
+        data-node-id={nodeId}
         onClick={() => active ? onSelect(nodeId) : onInvite?.(nodeSide || 'LEFT')}
         className={`w-20 h-20 rounded-[24px] border-2 flex items-center justify-center transition-all duration-500 group cursor-pointer relative z-20 ${
           isSelected 
@@ -63,7 +64,22 @@ const Node: React.FC<{
         }`}
       >
         {active ? (
-          <UserCheck className={isSelected ? 'text-white' : isPath ? 'text-orange-500' : 'text-slate-400'} size={28} />
+          <div className="flex flex-col items-center gap-1">
+            <UserCheck className={isSelected ? 'text-white' : isPath ? 'text-orange-500' : 'text-slate-400'} size={28} />
+            {isSelected && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (data?.uid) onSelect(nodeId); // This is just to keep selection
+                  // We'll handle the root change in the parent
+                }}
+                className="absolute -top-2 -right-2 w-6 h-6 bg-orange-600 rounded-full flex items-center justify-center text-white border-2 border-[#0a0a0b] shadow-lg"
+                title="Set as Root"
+              >
+                <Maximize size={12} />
+              </button>
+            )}
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-1">
             <UserPlus className="text-slate-700 group-hover:text-orange-500 transition-colors" size={24} />
@@ -113,7 +129,7 @@ const TreeNode: React.FC<{
   selectedNodeId: string | null;
   activePath: string[];
   onSelect: (id: string) => void;
-  onInvite: (side: 'LEFT' | 'RIGHT') => void;
+  onInvite: (parentId: string, side: 'LEFT' | 'RIGHT') => void;
   level: number;
 }> = ({ nodeId, treeData, selectedNodeId, activePath, onSelect, onInvite, level }) => {
   const data = treeData[nodeId];
@@ -122,8 +138,8 @@ const TreeNode: React.FC<{
   const hasLeft = !!treeData[leftChildId];
   const hasRight = !!treeData[rightChildId];
 
-  // Limit levels for performance in initial render, but allow expansion
-  if (level > 10) return null;
+  // Limit levels for performance in initial render
+  if (level > 15) return null;
 
   return (
     <div className="flex flex-col items-center">
@@ -133,19 +149,19 @@ const TreeNode: React.FC<{
         isSelected={selectedNodeId === nodeId}
         isPath={activePath.includes(nodeId)}
         onSelect={onSelect}
-        onInvite={onInvite}
+        onInvite={(side) => onInvite(data?.id || '', side)}
         nodeSide={nodeId.endsWith('-left') ? 'LEFT' : 'RIGHT'}
       />
       
-      {(hasLeft || hasRight || (data && level < 5)) && (
+      {(hasLeft || hasRight || (data && level < 2)) && (
         <div className="flex flex-col items-center relative">
           <ConnectionLine isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} direction="vertical" />
           <ConnectionLine 
             isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} 
             direction="horizontal" 
-            width={`${Math.max(400 / (level + 1), 100)}px`} 
+            width={`${Math.max(2400 / Math.pow(1.5, level), 200)}px`} 
           />
-          <div className="flex gap-10 mt-0" style={{ gap: `${Math.max(200 / (level + 1), 20)}px` }}>
+          <div className="flex gap-4 mt-0" style={{ gap: `${Math.max(1200 / Math.pow(1.5, level), 100)}px` }}>
             <div className="flex flex-col items-center">
               <ConnectionLine isActive={activePath.includes(leftChildId)} direction="vertical" />
               {hasLeft ? (
@@ -165,7 +181,7 @@ const TreeNode: React.FC<{
                   isSelected={false}
                   isPath={false}
                   onSelect={() => {}}
-                  onInvite={onInvite}
+                  onInvite={(side) => onInvite(data?.id || '', side)}
                   nodeSide="LEFT"
                 />
               )}
@@ -189,7 +205,7 @@ const TreeNode: React.FC<{
                   isSelected={false}
                   isPath={false}
                   onSelect={() => {}}
-                  onInvite={onInvite}
+                  onInvite={(side) => onInvite(data?.id || '', side)}
                   nodeSide="RIGHT"
                 />
               )}
@@ -202,9 +218,8 @@ const TreeNode: React.FC<{
 };
 
 const BinaryTree: React.FC = () => {
-  const [scale, setScale] = useState(1);
+  const [scale, setScale] = useState(0.75);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [inviteModalSide, setInviteModalSide] = useState<'LEFT' | 'RIGHT' | null>(null);
   const [copied, setCopied] = useState(false);
   const [treeData, setTreeData] = useState<Record<string, NodeData>>(TREE_DATA);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -219,6 +234,52 @@ const BinaryTree: React.FC = () => {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
   const [viewRootId, setViewRootId] = useState<string | null>(null);
+  const [inviteModal, setInviteModal] = useState<{ parentId: string; side: 'LEFT' | 'RIGHT'; url: string } | null>(null);
+  const treeContainerRef = useRef<HTMLDivElement>(null);
+
+  // Handle mouse wheel zoom
+  useEffect(() => {
+    const container = treeContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        setScale(s => Math.min(Math.max(s + delta, 0.1), 5));
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, []);
+
+  const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT') => {
+    const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
+    // Use HashRouter compatible URL
+    const baseUrl = window.location.origin + window.location.pathname;
+    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    
+    setInviteModal({
+      parentId,
+      side,
+      url: inviteUrl
+    });
+  };
+
+  const scrollToMyNode = () => {
+    if (treeContainerRef.current) {
+      const container = treeContainerRef.current;
+      const content = container.firstChild as HTMLElement;
+      if (content) {
+        container.scrollTo({
+          left: (content.scrollWidth - container.clientWidth) / 2,
+          top: 0,
+          behavior: 'smooth'
+        });
+      }
+    }
+  };
 
   const coins = {
     USDT: { name: 'Tether USDT (BEP20)', symbol: 'USDT', color: 'text-orange-500', bg: 'bg-orange-500/10', rate: 1, change: '+0.01%' },
@@ -327,75 +388,92 @@ const BinaryTree: React.FC = () => {
     return path;
   };
 
+  const handleSelect = (id: string) => {
+    if (selectedNodeId === id) {
+      const node = treeData[id];
+      if (node && node.uid) {
+        setViewRootId(node.uid);
+        setSelectedNodeId(null);
+      }
+    } else {
+      setSelectedNodeId(id);
+    }
+  };
+
   const activePath = getPathToRoot(selectedNodeId);
   const selectedNode = selectedNodeId ? treeData[selectedNodeId] : null;
 
-  const handleCopy = () => {
-    const link = `${window.location.origin}/register?ref=${treeData['root'].id}&side=${inviteModalSide?.toLowerCase()}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   return (
     <div className="space-y-8 animate-in fade-in duration-500 relative min-h-[800px]">
-      {/* Registration Invitation Modal */}
+      {/* Invite Modal */}
       <AnimatePresence>
-        {inviteModalSide && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+        {inviteModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/90 backdrop-blur-sm" 
-              onClick={() => setInviteModalSide(null)} 
+              onClick={() => setInviteModal(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
             />
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-[#121214] border border-white/10 rounded-[40px] shadow-2xl overflow-hidden p-10 flex flex-col items-center text-center space-y-8"
+              className="relative w-full max-w-md bg-[#111112] border border-white/10 rounded-[40px] p-8 shadow-2xl overflow-hidden"
             >
-              <div className="w-20 h-20 bg-orange-500/10 rounded-3xl flex items-center justify-center text-orange-500 mb-2">
-                <LinkIcon size={36} />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-2xl font-black text-white italic tracking-tight uppercase">Enroll New Partner</h3>
-                <p className="text-slate-500 text-sm font-medium">
-                  Initialize registration for your <span className="text-orange-500 font-bold">{inviteModalSide} Branch</span>.
-                </p>
+              <div className="absolute top-0 right-0 p-6">
+                <button onClick={() => setInviteModal(null)} className="text-slate-500 hover:text-white transition-colors">
+                  <X size={24} />
+                </button>
               </div>
 
-              <div className="w-full bg-black/40 border border-white/5 rounded-2xl p-5 space-y-4">
-                 <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest text-left">Referral Access Portal</p>
-                 <div className="flex items-center gap-4">
-                    <p className="flex-1 text-[10px] font-mono text-slate-400 truncate text-left">
-                       {`${window.location.origin}/register?ref=${userProfile?.operatorId || 'ARW-8821'}&side=${inviteModalSide.toLowerCase()}`}
-                    </p>
+              <div className="flex flex-col items-center text-center space-y-6">
+                <div className="w-20 h-20 bg-orange-600/20 rounded-[24px] flex items-center justify-center text-orange-500">
+                  <Share2 size={32} />
+                </div>
+                
+                <div>
+                  <h3 className="text-2xl font-black text-white uppercase tracking-tight italic">Referral Protocol</h3>
+                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-2">
+                    Placement: {inviteModal.parentId} ({inviteModal.side} Side)
+                  </p>
+                </div>
+
+                <div className="w-full space-y-4">
+                  <div className="p-6 bg-slate-900/50 rounded-3xl border border-white/5 space-y-3">
+                    <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest text-left">Your Referral Link</p>
+                    <div className="flex items-center gap-3">
+                      <input 
+                        readOnly 
+                        value={inviteModal.url}
+                        className="flex-1 bg-transparent border-none text-xs font-mono text-slate-300 focus:ring-0 truncate"
+                      />
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(inviteModal.url);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="p-3 bg-orange-600 rounded-xl text-white hover:bg-orange-500 transition-all shadow-lg shadow-orange-950/20"
+                      >
+                        {copied ? <Check size={18} /> : <Copy size={18} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
                     <button 
-                      onClick={handleCopy}
-                      className={`p-3 rounded-xl transition-all active:scale-90 ${
-                        copied ? 'bg-emerald-500/20 text-emerald-500' : 'bg-white/5 text-slate-400 hover:text-white'
-                      }`}
+                      onClick={() => window.open(inviteModal.url, '_blank')}
+                      className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2"
                     >
-                      {copied ? <Check size={16} /> : <Copy size={16} />}
+                      Open Registration <ArrowUpRight size={14} />
                     </button>
-                 </div>
-              </div>
-
-              <div className="w-full space-y-3">
-                 <button 
-                   onClick={handleCopy}
-                   className="w-full py-5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs uppercase tracking-[0.2em] rounded-2xl transition-all shadow-xl shadow-orange-950/20"
-                 >
-                   {copied ? 'PROTOCOL COPIED' : 'COPY RECRUITMENT LINK'}
-                 </button>
-                 <button 
-                   onClick={() => setInviteModalSide(null)}
-                   className="w-full py-4 text-slate-600 hover:text-white font-black text-[10px] uppercase tracking-widest transition-colors"
-                 >
-                   Dismiss Authorization
-                 </button>
+                    <p className="text-[8px] text-slate-600 font-bold uppercase tracking-widest">
+                      Share this link with your new partner for direct placement.
+                    </p>
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -557,9 +635,9 @@ const BinaryTree: React.FC = () => {
 
           <div className="flex items-center gap-4 bg-slate-900/50 p-2 rounded-2xl border border-white/5 backdrop-blur-xl">
             <div className="flex px-2 border-r border-white/10">
-              <button onClick={() => setScale(s => Math.min(s + 0.1, 2))} className="p-3 text-slate-400 hover:text-white transition-colors"><ZoomIn size={20} /></button>
-              <button onClick={() => setScale(s => Math.max(s - 0.1, 0.5))} className="p-3 text-slate-400 hover:text-white transition-colors"><ZoomOut size={20} /></button>
-              <button onClick={() => setScale(1)} className="p-3 text-slate-400 hover:text-white transition-colors"><Maximize size={20} /></button>
+              <button onClick={() => setScale(s => Math.min(s + 0.2, 5))} className="p-3 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn size={20} /></button>
+              <button onClick={() => setScale(s => Math.max(s - 0.2, 0.1))} className="p-3 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut size={20} /></button>
+              <button onClick={() => { setScale(0.5); scrollToMyNode(); }} className="p-3 text-slate-400 hover:text-white transition-colors" title="Reset & Center"><Maximize size={20} /></button>
             </div>
             <div className="flex items-center gap-3 px-4">
                <div className="flex items-center gap-2">
@@ -567,52 +645,55 @@ const BinaryTree: React.FC = () => {
                  <span className="text-[10px] font-black text-slate-500 uppercase">Path Active</span>
                </div>
                {viewRootId !== userProfile?.id && (
-                 <button 
-                   onClick={() => setViewRootId(userProfile?.id || null)}
-                   className="ml-4 px-4 py-2 bg-orange-600/20 text-orange-500 text-[9px] font-black uppercase rounded-lg border border-orange-500/30 hover:bg-orange-600 hover:text-white transition-all"
-                 >
-                   My Node
-                 </button>
+                 <div className="flex gap-2">
+                   <button 
+                     onClick={() => {
+                       const currentRoot = treeData['root'];
+                       if (currentRoot && currentRoot.parentId) {
+                         setViewRootId(currentRoot.parentId);
+                       }
+                     }}
+                     className="px-4 py-2 bg-slate-800 text-slate-400 text-[9px] font-black uppercase rounded-lg border border-white/5 hover:text-white transition-all"
+                   >
+                     Go Up
+                   </button>
+                   <button 
+                     onClick={() => {
+                       setViewRootId(userProfile?.id || null);
+                       setTimeout(scrollToMyNode, 500);
+                     }}
+                     className="px-4 py-2 bg-orange-600/20 text-orange-500 text-[9px] font-black uppercase rounded-lg border border-orange-500/30 hover:bg-orange-600 hover:text-white transition-all"
+                   >
+                     My Node
+                   </button>
+                 </div>
                )}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex gap-8 items-start relative">
+      <div className="flex flex-col lg:flex-row gap-8 items-start relative">
         {/* Main Tree Container */}
-        <GlassCard className="flex-1 h-[750px] overflow-auto custom-scrollbar flex items-center justify-center relative bg-[#0a0a0b] cursor-grab active:cursor-grabbing">
-          {/* Legend Overlay */}
-          <div className="absolute top-8 left-8 space-y-4 z-10">
-            <div className="p-5 bg-black/40 backdrop-blur-md border border-white/5 rounded-3xl space-y-4 shadow-2xl">
-              <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest border-b border-white/5 pb-2">Visualization Key</h4>
-              <div className="flex items-center gap-4 text-xs">
-                <div className="w-3 h-3 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.5)]" /> 
-                <span className="text-slate-300 font-bold">Primary Path</span>
-              </div>
-              <div className="flex items-center gap-4 text-xs">
-                <div className="w-3 h-3 rounded-full bg-slate-700" /> 
-                <span className="text-slate-500">Dormant Node</span>
-              </div>
-            </div>
+        <GlassCard className="w-full lg:flex-1 h-[700px] md:h-[850px] overflow-auto custom-scrollbar relative bg-[#0a0a0b] cursor-grab active:cursor-grabbing border-white/5 shadow-2xl">
+          <div ref={treeContainerRef} className="absolute inset-0 overflow-auto custom-scrollbar flex justify-center pt-20 pb-40 px-20">
+            <motion.div 
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale, opacity: 1 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 120 }}
+              className="relative origin-top"
+            >
+              <TreeNode 
+                nodeId="root"
+                treeData={treeData}
+                selectedNodeId={selectedNodeId}
+                activePath={activePath}
+                onSelect={handleSelect}
+                onInvite={handleInvite}
+                level={0}
+              />
+            </motion.div>
           </div>
-
-          <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale, opacity: 1 }}
-            transition={{ type: 'spring', damping: 20 }}
-            className="relative py-20 px-40"
-          >
-            <TreeNode 
-              nodeId="root"
-              treeData={treeData}
-              selectedNodeId={selectedNodeId}
-              activePath={activePath}
-              onSelect={setSelectedNodeId}
-              onInvite={setInviteModalSide}
-              level={0}
-            />
-          </motion.div>
         </GlassCard>
 
         {/* Profile Sidebar (Chain Details) */}
@@ -622,9 +703,9 @@ const BinaryTree: React.FC = () => {
               initial={{ x: 100, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 100, opacity: 0 }}
-              className="w-96 shrink-0 h-[750px] bg-[#0d0d0e] border border-white/5 rounded-[40px] shadow-2xl p-8 flex flex-col"
+              className="fixed inset-y-0 right-0 w-full md:w-96 z-[150] md:relative md:z-0 md:h-[750px] bg-[#0d0d0e] border-l md:border border-white/5 md:rounded-[40px] shadow-2xl p-6 md:p-8 flex flex-col"
             >
-              <div className="flex justify-between items-center mb-8">
+              <div className="flex justify-between items-center mb-6 md:mb-8">
                 <div className="px-4 py-1.5 bg-orange-600 text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-orange-950/20">
                   Node Analysis
                 </div>
@@ -632,7 +713,7 @@ const BinaryTree: React.FC = () => {
                   onClick={() => setSelectedNodeId(null)}
                   className="p-2 text-slate-500 hover:text-white transition-colors"
                 >
-                  <X size={20} />
+                  <X size={24} />
                 </button>
               </div>
 

@@ -75,6 +75,22 @@ const AdminDashboard: React.FC = () => {
     { id: 'TX-9025', user: 'Harvey Specter', type: 'Deposit', amount: '$5,000', status: 'Completed', date: '2024-03-13' },
   ];
 
+  const handleSystemSync = async () => {
+    try {
+      setIsLoading(true);
+      const result = await supabaseService.processSystemIncomes();
+      alert(result.message);
+      // Refresh data
+      const stats = await supabaseService.getAdminStats();
+      setStatsData(stats);
+    } catch (error) {
+      console.error('Error syncing system:', error);
+      alert('Failed to sync system protocols');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
       {/* Header */}
@@ -273,8 +289,12 @@ const AdminDashboard: React.FC = () => {
             )}
           </div>
           <div className="p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
-            <button className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all">
-              Initialize System Sync
+            <button 
+              onClick={handleSystemSync}
+              disabled={isLoading}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Processing...' : 'Initialize System Sync'}
             </button>
           </div>
         </div>

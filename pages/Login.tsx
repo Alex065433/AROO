@@ -226,7 +226,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               <ShieldCheck size={16} />
               <span className="text-[10px] font-black uppercase tracking-widest">Protocol Secured</span>
            </div>
-           <button onClick={() => navigate('/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button>
+           <button onClick={() => navigate('/admin/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button>
         </motion.div>
       </div>
     </div>

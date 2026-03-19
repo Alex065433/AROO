@@ -14,7 +14,9 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [sponsorId, setSponsorId] = useState('ARW-REF-882');
+  const [parentId, setParentId] = useState<string | null>(null);
   const [sponsorName, setSponsorName] = useState<string | null>(null);
+  const [parentName, setParentName] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
@@ -25,9 +27,11 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const ref = params.get('ref');
+    const parentParam = params.get('parent');
     const sideParam = params.get('side');
     
     if (ref) setSponsorId(ref);
+    if (parentParam) setParentId(parentParam);
     if (sideParam === 'left' || sideParam === 'right') {
       setSide(sideParam.toUpperCase() as 'LEFT' | 'RIGHT');
     }
@@ -46,8 +50,21 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         setSponsorName(null);
       }
     };
+    const fetchParent = async () => {
+      if (parentId && parentId.length >= 6) {
+        const parent = await supabaseService.findUserByOperatorId(parentId);
+        if (parent) {
+          setParentName(parent.name);
+        } else {
+          setParentName(null);
+        }
+      } else {
+        setParentName(null);
+      }
+    };
     fetchSponsor();
-  }, [sponsorId]);
+    fetchParent();
+  }, [sponsorId, parentId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,6 +83,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         mobile: mobile || '',
         withdrawalPassword: withdrawalPassword,
         twoFactorPin: twoFactorPin || '123456',
+        parentId: parentId
       });
       
       setIsSubmitting(false);
@@ -167,6 +185,23 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 </p>
               )}
             </div>
+
+            {parentId && (
+              <div className="md:col-span-2 space-y-3">
+                <label className="text-[10px] font-black text-blue-500 uppercase tracking-[0.3em] ml-1">Placement Parent ID</label>
+                <input 
+                  readOnly
+                  type="text" 
+                  value={parentId}
+                  className="w-full bg-slate-900/60 border border-blue-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none opacity-70" 
+                />
+                {parentName && (
+                  <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest ml-1">
+                    Parent: {parentName} ({side} Side)
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-3">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Full Legal Name</label>

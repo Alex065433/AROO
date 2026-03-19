@@ -363,6 +363,28 @@ const AdminCustomers: React.FC = () => {
                           >
                             {isProcessing ? '...' : 'Activate'}
                           </button>
+                          <button 
+                            onClick={async () => {
+                              if (!selectedUser) return;
+                              if (confirm(`Are you sure you want to activate user ${selectedUser.name} for FREE?`)) {
+                                setIsProcessing(true);
+                                try {
+                                  await supabaseService.activatePackage(selectedUser.id, parseInt(selectedPackage));
+                                  alert('User activated successfully!');
+                                  fetchUsers();
+                                  setIsEditPanelOpen(false);
+                                } catch (err) {
+                                  alert('Activation failed');
+                                } finally {
+                                  setIsProcessing(false);
+                                }
+                              }
+                            }}
+                            disabled={isProcessing}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
+                          >
+                            Free
+                          </button>
                        </div>
                     </div>
 

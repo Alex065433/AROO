@@ -84,7 +84,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/login" />}>
+        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/admin/login" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />

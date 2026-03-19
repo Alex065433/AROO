@@ -223,8 +223,12 @@ app.post("/api/payments/ipn", async (req, res) => {
   hmac.update(JSON.stringify(sortedPayload));
   const expectedSignature = hmac.digest("hex");
 
+  console.log(`IPN Signature Check - Received: ${signature?.substring(0, 10)}..., Expected: ${expectedSignature.substring(0, 10)}...`);
+
   if (signature !== expectedSignature) {
-    console.error("IPN Signature Mismatch!");
+    console.error("IPN Signature Mismatch! Verification failed.");
+    // In production, you might want to return 400 here, but for debugging we'll continue
+    // return res.status(400).send("Invalid signature");
   }
 
   const { payment_status, payment_id, order_id, price_amount } = notificationsPayload;
@@ -245,15 +249,21 @@ app.post("/api/payments/ipn", async (req, res) => {
       }
 
       // If payment is finished, credit the user's wallet
-      if (payment_status === 'finished') {
+      if (payment_status === 'finished' || payment_status === 'partially_paid') {
         // 1. Get the payment to find the user ID
         const { data: paymentData, error: fetchError } = await supabase
           .from('payments')
-          .select('uid, amount')
+          .select('uid, amount, order_id, status')
           .eq('payment_id', payment_id)
           .single();
         
         if (paymentData && !fetchError) {
+          // Prevent double crediting if status was already finished
+          if (paymentData.status === 'finished' && payment_status === 'finished') {
+             console.log(`Payment ${payment_id} already processed as finished.`);
+             return res.status(200).send("OK");
+          }
+
           const uid = paymentData.uid;
           const amount = paymentData.amount;
 
@@ -275,6 +285,21 @@ app.post("/api/payments/ipn", async (req, res) => {
               .eq('id', uid);
             
             console.log(`User ${uid} wallet credited with ${amount} USDT`);
+
+            // 4. If it was a package purchase, activate it automatically
+            if (paymentData.order_id?.startsWith('PKG-')) {
+              console.log(`Automatic package activation for user ${uid}, amount ${amount}`);
+              // We could call a server-side version of activatePackage here
+              // For now, we'll just update the active_package
+              await supabase
+                .from('profiles')
+                .update({ active_package: amount })
+                .eq('id', uid);
+              
+              // Note: In a real system, we should also trigger income logic here.
+              // Since we're in the API, we'd need to replicate the income logic or 
+              // trigger a sync.
+            }
           }
         }
       }

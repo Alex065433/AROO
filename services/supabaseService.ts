@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { PACKAGES } from '../constants';
+import { PACKAGES, RANKS } from '../constants';
 
 export interface Ticket {
   id?: string;
@@ -14,8 +14,8 @@ export const supabaseService = {
   // Auth
   async adminLogin(adminId: string, secretKey: string) {
     // Unique Administration ID and Password logic
-    const ADMIN_ID = "AROWIN_ADMIN_001";
-    const ADMIN_SECRET = "CORE_PROTOCOL_777";
+    const ADMIN_ID = "ADMIN_AROWIN_2026";
+    const ADMIN_SECRET = "CORE_SECURE_999";
 
     if (adminId === ADMIN_ID && secretKey === ADMIN_SECRET) {
       // Return a mock admin profile or fetch the actual admin user
@@ -81,8 +81,6 @@ export const supabaseService = {
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
     // 1. Create Supabase Auth User
-    // NOTE: If this fails with "Database error saving new user", it is almost certainly
-    // a failing trigger in your Supabase project (e.g., handle_new_user).
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -108,16 +106,41 @@ export const supabaseService = {
 
     if (!sponsor) throw new Error('Invalid Sponsor ID');
 
-    // Find the correct parent in the binary tree (spillover logic)
+    // Find the correct parent in the binary tree
     let parentId = sponsor.id;
     let finalSide = side;
     
-    try {
-      const binaryResult = await this.findBinaryParent(sponsor.id, side);
-      parentId = binaryResult.parentId;
-      finalSide = binaryResult.side;
-    } catch (err) {
-      console.warn('Binary parent search failed, defaulting to sponsor:', err);
+    // If an explicit parent is provided in additionalData, use it
+    if (additionalData.parentId) {
+      // Verify parent exists
+      const { data: explicitParent } = await supabase
+        .from('profiles')
+        .select('id, operator_id')
+        .or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`)
+        .single();
+      
+      if (explicitParent) {
+        parentId = explicitParent.id;
+        finalSide = side;
+      } else {
+        // Fallback to spillover if explicit parent not found
+        try {
+          const binaryResult = await this.findBinaryParent(sponsor.id, side);
+          parentId = binaryResult.parentId;
+          finalSide = binaryResult.side;
+        } catch (err) {
+          console.warn('Binary parent search failed, defaulting to sponsor:', err);
+        }
+      }
+    } else {
+      // Standard spillover logic
+      try {
+        const binaryResult = await this.findBinaryParent(sponsor.id, side);
+        parentId = binaryResult.parentId;
+        finalSide = binaryResult.side;
+      } catch (err) {
+        console.warn('Binary parent search failed, defaulting to sponsor:', err);
+      }
     }
 
     // 3. Prepare Profile Data
@@ -134,6 +157,7 @@ export const supabaseService = {
       parent_id: parentId,
       side: finalSide,
       rank: 1,
+      package_amount: 50, // Default joining package
       wallets: {
         master: { balance: 0, currency: 'USDT' },
         referral: { balance: 0, currency: 'USDT' },
@@ -142,6 +166,7 @@ export const supabaseService = {
         rewards: { balance: 0, currency: 'USDT' },
       },
       team_size: { left: 0, right: 0 },
+      matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
       role: email === 'kethankumar130@gmail.com' ? 'admin' : 'user',
       created_at: new Date().toISOString(),
@@ -289,6 +314,107 @@ export const supabaseService = {
     return true;
   },
 
+  // Daily and Weekly Payout System
+  async processDailyPayouts() {
+    // This would normally be a cron job, but we'll provide it for admin use
+    const users = await this.getAllUsers();
+    if (!users) return;
+
+    for (const user of users) {
+      // 1. Reset daily capping tracking
+      const today = new Date().toISOString().split('T')[0];
+      await supabase
+        .from('profiles')
+        .update({ daily_income: { date: today, amount: 0 } })
+        .eq('id', user.id);
+      
+      // 2. Process Binary Matching (Daily)
+      await this.processBinaryMatchingForUser(user.id);
+
+      // 3. Check for rank auto-upgrade
+      await this.checkAndUpdateRank(user.id);
+    }
+    return true;
+  },
+
+  async processBinaryMatchingForUser(uid: string) {
+    const profile = await this.getUserProfile(uid);
+    if (!profile || profile.active_package <= 0) return;
+
+    const volume = profile.matching_volume || { left: 0, right: 0 };
+    const matchAmount = Math.min(volume.left, volume.right);
+
+    if (matchAmount >= 50) {
+      // 1 Pair = $50 matching on both sides
+      const pairs = Math.floor(matchAmount / 50);
+      const matchValue = pairs * 50;
+      
+      // Matching Income = 10% of pair value ($50 + $50 = $100, so $10 per pair)
+      const matchingIncome = pairs * 10;
+      
+      // Pay matching income with capping
+      await this.addIncome(uid, matchingIncome, 'matching_income');
+      
+      // Update matched pairs count and volume (carry-forward)
+      const newVolume = {
+        left: volume.left - matchValue,
+        right: volume.right - matchValue
+      };
+
+      await supabase
+        .from('profiles')
+        .update({ 
+          matched_pairs: (profile.matched_pairs || 0) + pairs,
+          matching_volume: newVolume
+        })
+        .eq('id', uid);
+      
+      console.log(`User ${uid} processed ${pairs} pairs. New volume: L:${newVolume.left} R:${newVolume.right}`);
+    }
+  },
+
+  async processBinaryMatching() {
+    const users = await this.getAllUsers();
+    if (!users) return;
+
+    for (const user of users) {
+      await this.processBinaryMatchingForUser(user.id);
+    }
+  },
+
+  async processRankAndRewards() {
+    const users = await this.getAllUsers();
+    if (!users) return;
+
+    for (const user of users) {
+      await this.checkAndUpdateRank(user.id);
+      
+      // Process Rank Bonus (Weekly/Monthly based on logic)
+      const rankData = RANKS.find(r => r.level === (user.rank || 1));
+      if (rankData && rankData.weeklyEarning > 0) {
+        await this.addIncome(user.id, rankData.weeklyEarning, 'rank_bonus');
+      }
+    }
+  },
+
+  async processWeeklyIncome() {
+    const users = await this.getAllUsers();
+    if (!users) return;
+
+    const today = new Date();
+    
+    for (const user of users) {
+      if (user.active_package > 0) {
+        const rankData = RANKS.find(r => r.level === (user.rank || 1));
+        if (rankData && rankData.weeklyEarning > 0) {
+          // Add weekly rank bonus
+          await this.addIncome(user.id, rankData.weeklyEarning, 'rank_bonus');
+        }
+      }
+    }
+    return true;
+  },
+
   // Team Collection
   async getTeamCollection(uid: string) {
     const { data, error } = await supabase
@@ -358,34 +484,26 @@ export const supabaseService = {
     const leftCount = profile.team_size?.left || 0;
     const rightCount = profile.team_size?.right || 0;
     
-    // Find the highest rank the user qualifies for
-    // RANKS are defined in constants.tsx, but we'll use a local copy or logic here
-    // Based on constants.tsx:
-    const rankRequirements = [
-      { level: 1, required: 1 },
-      { level: 2, required: 3 },
-      { level: 3, required: 7 },
-      { level: 4, required: 15 },
-      { level: 5, required: 31 },
-      { level: 6, required: 100 },
-      { level: 7, required: 250 },
-      { level: 8, required: 500 },
-      { level: 9, required: 1000 },
-      { level: 10, required: 2500 },
-      { level: 11, required: 5000 },
-      { level: 12, required: 10000 },
-    ];
-
+    // Find the highest rank the user qualifies for using criteria from constants.tsx
     let newRank = 1;
-    for (const req of rankRequirements) {
-      if (leftCount >= req.required && rightCount >= req.required) {
-        newRank = req.level;
+    for (const rank of RANKS) {
+      if (leftCount >= rank.requiredLeft && rightCount >= rank.requiredRight) {
+        newRank = rank.level;
       } else {
         break;
       }
     }
 
     if (newRank > (profile.rank || 1)) {
+      // Award one-time rewards for all ranks achieved between current and new
+      for (let r = (profile.rank || 1) + 1; r <= newRank; r++) {
+        const rankData = RANKS.find(rank => rank.level === r);
+        if (rankData && rankData.reward > 0) {
+          await this.addIncome(uid, rankData.reward, 'reward_income');
+          console.log(`User ${uid} earned reward for Rank ${r}: ${rankData.reward}`);
+        }
+      }
+
       await supabase
         .from('profiles')
         .update({ rank: newRank })
@@ -483,16 +601,16 @@ export const supabaseService = {
     const profile = await this.getUserProfile(uid);
     if (!profile) return;
 
-    // 1. Referral Bonus (10% to direct sponsor)
+    // 1. Referral Bonus (5% to direct sponsor)
     if (profile.sponsor_id) {
-      const referralBonus = amount * 0.10;
+      const referralBonus = amount * 0.05; // 5% of package
       const sponsor = await this.getUserProfile(profile.sponsor_id);
       if (sponsor && sponsor.active_package > 0) {
         await this.addIncome(sponsor.id, referralBonus, 'referral_bonus');
       }
     }
 
-    // 2. Binary Matching Bonus (10% of matching volume for all ancestors)
+    // 2. Update Ancestors Volume (Carry-forward)
     let currentId = uid;
     while (true) {
       const { data: node, error } = await supabase
@@ -509,30 +627,18 @@ export const supabaseService = {
       const parent = await this.getUserProfile(parentId);
       if (!parent) break;
 
-      // Update parent's volume
-      const newVolume = { ...parent.matching_volume };
+      // Update parent's volume (Carry-forward logic)
+      const newVolume = { ...parent.matching_volume || { left: 0, right: 0 } };
       if (side === 'LEFT') newVolume.left += amount;
       else newVolume.right += amount;
-
-      // Calculate matching
-      const matchAmount = Math.min(newVolume.left, newVolume.right);
-      if (matchAmount > 0) {
-        const matchingIncome = matchAmount * 0.10; // 10% matching
-        
-        // Deduct matching volume
-        newVolume.left -= matchAmount;
-        newVolume.right -= matchAmount;
-
-        // Pay matching income with capping
-        if (parent.active_package > 0) {
-          await this.addIncome(parent.id, matchingIncome, 'matching_income');
-        }
-      }
 
       await supabase
         .from('profiles')
         .update({ matching_volume: newVolume })
         .eq('id', parentId);
+      
+      // Trigger binary matching immediately for the ancestor
+      await this.processBinaryMatchingForUser(parentId);
       
       currentId = parentId;
     }
@@ -542,33 +648,45 @@ export const supabaseService = {
     const profile = await this.getUserProfile(uid);
     if (!profile) return;
 
-    // Check Capping
-    const today = new Date().toISOString().split('T')[0];
-    const dailyIncome = profile.daily_income || { date: '', amount: 0 };
-    
-    let currentDailyAmount = dailyIncome.date === today ? dailyIncome.amount : 0;
-    
-    // Capping based on package
-    // Default capping 250 USDT
-    let capping = 250;
-    if (profile.active_package >= 6350) capping = 360;
-    if (profile.active_package >= 12750) capping = 490;
+    let payableAmount = amount;
 
-    const remainingCapping = capping - currentDailyAmount;
-    if (remainingCapping <= 0) return; // Capped for today
+    // Only apply daily capping to matching income
+    if (type === 'matching_income') {
+      const today = new Date().toISOString().split('T')[0];
+      const dailyIncome = profile.daily_income || { date: '', amount: 0 };
+      
+      let currentDailyAmount = dailyIncome.date === today ? dailyIncome.amount : 0;
+      
+      // Capping based on rank
+      const rankData = RANKS.find(r => r.level === (profile.rank || 1));
+      const capping = rankData?.dailyCapping || 250;
 
-    const payableAmount = Math.min(amount, remainingCapping);
+      const remainingCapping = capping - currentDailyAmount;
+      if (remainingCapping <= 0) return; // Capped for today
+
+      payableAmount = Math.min(amount, remainingCapping);
+
+      // Update daily income tracking for capping
+      await supabase
+        .from('profiles')
+        .update({ 
+          daily_income: { date: today, amount: currentDailyAmount + payableAmount }
+        })
+        .eq('id', uid);
+    }
     
     // Update Wallets
     const updatedWallets = { ...profile.wallets };
     updatedWallets.master.balance += payableAmount;
     if (type === 'referral_bonus') updatedWallets.referral.balance += payableAmount;
+    if (type === 'matching_income') updatedWallets.matching.balance += payableAmount;
+    if (type === 'rank_bonus') updatedWallets.rankBonus.balance += payableAmount;
+    if (type === 'reward_income') updatedWallets.rewards.balance += payableAmount;
     
     await supabase
       .from('profiles')
       .update({ 
         wallets: updatedWallets,
-        daily_income: { date: today, amount: currentDailyAmount + payableAmount },
         total_income: (profile.total_income || 0) + payableAmount
       })
       .eq('id', uid);
@@ -585,18 +703,17 @@ export const supabaseService = {
   },
 
   async getBinaryTree(rootUid: string) {
-    const { data: profiles, error } = await supabase
+    const { data: rootProfile, error } = await supabase
       .from('profiles')
-      .select('*');
+      .select('*')
+      .or(`id.eq.${rootUid},operator_id.eq.${rootUid}`)
+      .single();
     
-    if (error) throw error;
-
-    const rootProfile = profiles.find(p => p.id === rootUid || p.operator_id === rootUid);
-    if (!rootProfile) return {};
+    if (error || !rootProfile) return {};
 
     const tree: Record<string, any> = {};
 
-    const buildTree = (node: any, path: string) => {
+    const buildNode = (node: any, path: string) => {
       tree[path] = {
         id: node.operator_id,
         name: node.name,
@@ -610,16 +727,80 @@ export const supabaseService = {
         side: node.side || 'ROOT',
         uid: node.id
       };
-
-      const children = profiles.filter(p => p.parent_id === node.id);
-      children.forEach(child => {
-        const childPath = `${path}-${child.side.toLowerCase()}`;
-        buildTree(child, childPath);
-      });
     };
 
-    buildTree(rootProfile, 'root');
+    buildNode(rootProfile, 'root');
+
+    // Optimized fetch: Fetch levels iteratively to reduce query count and increase depth
+    let currentLevelNodes = [{ id: rootProfile.id, path: 'root' }];
+    const maxDepth = 10; // Increased depth to 10 levels (~1023 nodes)
+
+    for (let depth = 0; depth < maxDepth; depth++) {
+      const parentIds = currentLevelNodes.map(n => n.id);
+      if (parentIds.length === 0) break;
+
+      const { data: children, error: fetchError } = await supabase
+        .from('profiles')
+        .select('*')
+        .in('parent_id', parentIds);
+
+      if (fetchError || !children || children.length === 0) break;
+
+      const nextLevelNodes: { id: string, path: string }[] = [];
+      
+      children.forEach(child => {
+        const parent = currentLevelNodes.find(p => p.id === child.parent_id);
+        if (parent) {
+          const childPath = `${parent.path}-${child.side.toLowerCase()}`;
+          buildNode(child, childPath);
+          nextLevelNodes.push({ id: child.id, path: childPath });
+        }
+      });
+
+      currentLevelNodes = nextLevelNodes;
+    }
+
     return tree;
+  },
+
+  async getBinaryChildren(parentId: string, parentPath: string) {
+    const { data: children, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('parent_id', parentId);
+    
+    if (error) throw error;
+
+    const nodes: Record<string, any> = {};
+    children?.forEach(child => {
+      const childPath = `${parentPath}-${child.side.toLowerCase()}`;
+      nodes[childPath] = {
+        id: child.operator_id,
+        name: child.name,
+        rank: child.rank_name || 'Partner',
+        status: child.active_package > 0 ? 'Active' : 'Pending',
+        joinDate: child.created_at?.split('T')[0],
+        totalTeam: (child.team_size?.left || 0) + (child.team_size?.right || 0),
+        leftVolume: (child.matching_volume?.left || 0).toFixed(2) || '0.00',
+        rightVolume: (child.matching_volume?.right || 0).toFixed(2) || '0.00',
+        parentId: child.parent_id,
+        side: child.side || 'ROOT',
+        uid: child.id
+      };
+    });
+
+    return nodes;
+  },
+
+  async getReferrals(uid: string) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, name, operator_id, email, created_at, active_package, rank_name')
+      .eq('sponsor_id', uid)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    return data;
   },
 
   async findUserByOperatorId(operatorId: string) {
@@ -738,6 +919,24 @@ export const supabaseService = {
       totalWithdrawals,
       platformRevenue: totalDeposits * 0.05 // Mock 5% fee revenue
     };
+  },
+
+  async processSystemIncomes() {
+    // This is a manual trigger for testing all income protocols
+    try {
+      console.log('Starting Manual System Income Sync...');
+      
+      // 1. Process Daily Payouts (Capping Reset, Binary Matching, Rank Check)
+      await this.processDailyPayouts();
+      
+      // 2. Process Rank & Rewards (Weekly Bonus)
+      await this.processRankAndRewards();
+      
+      return { success: true, message: 'System Income Protocols Executed Successfully' };
+    } catch (error) {
+      console.error('Error in manual income sync:', error);
+      throw error;
+    }
   },
 
   async addFunds(uid: string, amount: number) {

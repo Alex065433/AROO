@@ -79,7 +79,7 @@ const ReferralProgram: React.FC = () => {
     fetchUser();
   }, []);
 
-  const operatorId = user?.operator_id || 'ARW-REF-882';
+  const operatorId = user?.operator_id || 'ARW-XXXX';
 
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20">
