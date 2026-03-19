@@ -721,6 +721,7 @@ export const supabaseService = {
         status: node.active_package > 0 ? 'Active' : 'Pending',
         joinDate: node.created_at?.split('T')[0],
         totalTeam: (node.team_size?.left || 0) + (node.team_size?.right || 0),
+        team_size: node.team_size || { left: 0, right: 0 },
         leftVolume: (node.matching_volume?.left || 0).toFixed(2) || '0.00',
         rightVolume: (node.matching_volume?.right || 0).toFixed(2) || '0.00',
         parentId: node.parent_id,

@@ -2,17 +2,20 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import GlassCard from '../components/GlassCard';
 import { 
-  ZoomIn, ZoomOut, Maximize, UserCheck, UserPlus, 
-  Info, X, ShieldCheck, Globe, TrendingUp, 
+  UserPlus, 
+  X, ShieldCheck, Globe, TrendingUp, 
   Zap, ChevronRight, Share2, Award, Copy, Check,
-  Link as LinkIcon, Wallet, ArrowUpRight, ArrowDownLeft,
-  ArrowRightLeft, Package, History, RefreshCw,
-  ArrowLeft, ChevronDown, AlertCircle, BarChart3, LineChart,
-  CheckCircle2, Minus, Plus
+  ArrowUpRight, ArrowDownLeft,
+  History, RefreshCw,
+  ArrowLeft, AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
 import { User as UserProfile } from '../types';
+import { LiveRatesTicker } from '../components/LiveRatesTicker';
+
+import { D3BinaryTree } from '../components/D3BinaryTree';
 
 interface NodeData {
   id: string;
@@ -26,204 +29,30 @@ interface NodeData {
   parentId: string | null;
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
+  team_size?: { left: number; right: number };
 }
 
 const TREE_DATA: Record<string, NodeData> = {
   'root': { id: 'ARW-XXXX', name: 'Loading...', rank: 'Partner', status: 'Active', joinDate: '2024-01-01', totalTeam: 0, leftVolume: '0.00', rightVolume: '0.00', parentId: null, side: 'ROOT' },
 };
 
-const Node: React.FC<{ 
-  nodeId: string;
-  data: NodeData | null; 
-  isSelected: boolean;
-  isPath: boolean;
-  onSelect: (id: string) => void;
-  onInvite?: (side: 'LEFT' | 'RIGHT') => void;
-  nodeSide?: 'LEFT' | 'RIGHT';
-}> = ({ nodeId, data, isSelected, isPath, onSelect, onInvite, nodeSide }) => {
-  const active = data && data.status !== 'Vacant';
-  
-  return (
-    <motion.div 
-      layout
-      className="flex flex-col items-center gap-3 relative"
-    >
-      <motion.div 
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.95 }}
-        data-node-id={nodeId}
-        onClick={() => active ? onSelect(nodeId) : onInvite?.(nodeSide || 'LEFT')}
-        className={`w-20 h-20 rounded-[24px] border-2 flex items-center justify-center transition-all duration-500 group cursor-pointer relative z-20 ${
-          isSelected 
-            ? 'bg-orange-600 border-white shadow-[0_0_30px_rgba(249,115,22,0.6)]' 
-            : active 
-              ? isPath 
-                ? 'bg-slate-800 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.3)]'
-                : 'bg-slate-800 border-white/10 hover:border-orange-500/50' 
-              : 'bg-slate-900 border-dashed border-white/5 opacity-40 hover:opacity-100 hover:bg-orange-500/10 hover:border-orange-500/30'
-        }`}
-      >
-        {active ? (
-          <div className="flex flex-col items-center gap-1">
-            <UserCheck className={isSelected ? 'text-white' : isPath ? 'text-orange-500' : 'text-slate-400'} size={28} />
-            {isSelected && (
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (data?.uid) onSelect(nodeId); // This is just to keep selection
-                  // We'll handle the root change in the parent
-                }}
-                className="absolute -top-2 -right-2 w-6 h-6 bg-orange-600 rounded-full flex items-center justify-center text-white border-2 border-[#0a0a0b] shadow-lg"
-                title="Set as Root"
-              >
-                <Maximize size={12} />
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-1">
-            <UserPlus className="text-slate-700 group-hover:text-orange-500 transition-colors" size={24} />
-            <span className="text-[7px] font-black text-slate-700 group-hover:text-orange-500 uppercase tracking-tighter">Invite</span>
-          </div>
-        )}
-        
-        {/* Animated pulse for selected or path nodes */}
-        {(isSelected || isPath) && (
-          <span className="absolute inset-0 rounded-[24px] bg-orange-500/20 animate-ping pointer-events-none" />
-        )}
-      </motion.div>
-      
-      <div className="text-center h-8">
-        <p className={`text-[10px] font-black uppercase tracking-widest ${isSelected ? 'text-orange-500' : active ? 'text-white' : 'text-slate-700'}`}>
-          {active ? data?.name : 'Initialize Node'}
-        </p>
-        {active && (
-          <p className="text-[8px] text-slate-500 font-bold uppercase mt-1 tracking-tighter">
-            {data?.id}
-          </p>
-        )}
-      </div>
-    </motion.div>
-  );
-};
-
-const ConnectionLine: React.FC<{ isActive: boolean; direction: 'vertical' | 'left' | 'right' | 'horizontal'; width?: string }> = ({ isActive, direction, width = '300px' }) => {
-  const styles = {
-    vertical: 'h-12 w-[2px]',
-    left: `h-12 w-[2px] absolute top-0 left-0`,
-    right: `h-12 w-[2px] absolute top-0 right-0`,
-    horizontal: `h-[2px] absolute top-12 left-1/2 -translate-x-1/2`,
-  };
-
-  return (
-    <div 
-      className={`transition-all duration-700 ${styles[direction]} ${isActive ? 'bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.5)]' : 'bg-white/5'}`}
-      style={direction === 'horizontal' ? { width } : {}}
-    />
-  );
-};
-
-const TreeNode: React.FC<{
-  nodeId: string;
-  treeData: Record<string, NodeData>;
-  selectedNodeId: string | null;
-  activePath: string[];
-  onSelect: (id: string) => void;
-  onInvite: (parentId: string, side: 'LEFT' | 'RIGHT') => void;
-  level: number;
-}> = ({ nodeId, treeData, selectedNodeId, activePath, onSelect, onInvite, level }) => {
-  const data = treeData[nodeId];
-  const leftChildId = `${nodeId}-left`;
-  const rightChildId = `${nodeId}-right`;
-  const hasLeft = !!treeData[leftChildId];
-  const hasRight = !!treeData[rightChildId];
-
-  // Limit levels for performance in initial render
-  if (level > 15) return null;
-
-  return (
-    <div className="flex flex-col items-center">
-      <Node 
-        nodeId={nodeId}
-        data={data} 
-        isSelected={selectedNodeId === nodeId}
-        isPath={activePath.includes(nodeId)}
-        onSelect={onSelect}
-        onInvite={(side) => onInvite(data?.id || '', side)}
-        nodeSide={nodeId.endsWith('-left') ? 'LEFT' : 'RIGHT'}
-      />
-      
-      {(hasLeft || hasRight || (data && level < 2)) && (
-        <div className="flex flex-col items-center relative">
-          <ConnectionLine isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} direction="vertical" />
-          <ConnectionLine 
-            isActive={activePath.includes(nodeId) && (activePath.includes(leftChildId) || activePath.includes(rightChildId))} 
-            direction="horizontal" 
-            width={`${Math.max(2400 / Math.pow(1.5, level), 200)}px`} 
-          />
-          <div className="flex gap-4 mt-0" style={{ gap: `${Math.max(1200 / Math.pow(1.5, level), 100)}px` }}>
-            <div className="flex flex-col items-center">
-              <ConnectionLine isActive={activePath.includes(leftChildId)} direction="vertical" />
-              {hasLeft ? (
-                <TreeNode 
-                  nodeId={leftChildId}
-                  treeData={treeData}
-                  selectedNodeId={selectedNodeId}
-                  activePath={activePath}
-                  onSelect={onSelect}
-                  onInvite={onInvite}
-                  level={level + 1}
-                />
-              ) : (
-                <Node 
-                  nodeId={leftChildId}
-                  data={null}
-                  isSelected={false}
-                  isPath={false}
-                  onSelect={() => {}}
-                  onInvite={(side) => onInvite(data?.id || '', side)}
-                  nodeSide="LEFT"
-                />
-              )}
-            </div>
-            <div className="flex flex-col items-center">
-              <ConnectionLine isActive={activePath.includes(rightChildId)} direction="vertical" />
-              {hasRight ? (
-                <TreeNode 
-                  nodeId={rightChildId}
-                  treeData={treeData}
-                  selectedNodeId={selectedNodeId}
-                  activePath={activePath}
-                  onSelect={onSelect}
-                  onInvite={onInvite}
-                  level={level + 1}
-                />
-              ) : (
-                <Node 
-                  nodeId={rightChildId}
-                  data={null}
-                  isSelected={false}
-                  isPath={false}
-                  onSelect={() => {}}
-                  onInvite={(side) => onInvite(data?.id || '', side)}
-                  nodeSide="RIGHT"
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const BinaryTree: React.FC = () => {
-  const [scale, setScale] = useState(0.75);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [treeData, setTreeData] = useState<Record<string, NodeData>>(TREE_DATA);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | 'ledger' | null>(null);
+  const [totalReferrals, setTotalReferrals] = useState(0);
+
+  useEffect(() => {
+    const fetchReferrals = async () => {
+      if (!userProfile?.id) return;
+      const referrals = await supabaseService.getReferrals(userProfile.id);
+      setTotalReferrals(referrals.length);
+    };
+    fetchReferrals();
+  }, [userProfile]);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [depositAmount, setDepositAmount] = useState('150');
   const [paymentData, setPaymentData] = useState<any>(null);
@@ -237,23 +66,6 @@ const BinaryTree: React.FC = () => {
   const [inviteModal, setInviteModal] = useState<{ parentId: string; side: 'LEFT' | 'RIGHT'; url: string } | null>(null);
   const treeContainerRef = useRef<HTMLDivElement>(null);
 
-  // Handle mouse wheel zoom
-  useEffect(() => {
-    const container = treeContainerRef.current;
-    if (!container) return;
-
-    const handleWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        setScale(s => Math.min(Math.max(s + delta, 0.1), 5));
-      }
-    };
-
-    container.addEventListener('wheel', handleWheel, { passive: false });
-    return () => container.removeEventListener('wheel', handleWheel);
-  }, []);
-
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT') => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     // Use HashRouter compatible URL
@@ -265,20 +77,6 @@ const BinaryTree: React.FC = () => {
       side,
       url: inviteUrl
     });
-  };
-
-  const scrollToMyNode = () => {
-    if (treeContainerRef.current) {
-      const container = treeContainerRef.current;
-      const content = container.firstChild as HTMLElement;
-      if (content) {
-        container.scrollTo({
-          left: (content.scrollWidth - container.clientWidth) / 2,
-          top: 0,
-          behavior: 'smooth'
-        });
-      }
-    }
   };
 
   const coins = {
@@ -404,8 +202,11 @@ const BinaryTree: React.FC = () => {
   const selectedNode = selectedNodeId ? treeData[selectedNodeId] : null;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 relative min-h-[800px]">
-      {/* Invite Modal */}
+    <div className="space-y-0 animate-in fade-in duration-500 relative min-h-[800px]">
+      <LiveRatesTicker />
+      
+      <div className="p-8 space-y-8">
+        {/* Invite Modal */}
       <AnimatePresence>
         {inviteModal && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
@@ -634,11 +435,6 @@ const BinaryTree: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4 bg-slate-900/50 p-2 rounded-2xl border border-white/5 backdrop-blur-xl">
-            <div className="flex px-2 border-r border-white/10">
-              <button onClick={() => setScale(s => Math.min(s + 0.2, 5))} className="p-3 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn size={20} /></button>
-              <button onClick={() => setScale(s => Math.max(s - 0.2, 0.1))} className="p-3 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut size={20} /></button>
-              <button onClick={() => { setScale(0.5); scrollToMyNode(); }} className="p-3 text-slate-400 hover:text-white transition-colors" title="Reset & Center"><Maximize size={20} /></button>
-            </div>
             <div className="flex items-center gap-3 px-4">
                <div className="flex items-center gap-2">
                  <div className="w-2 h-2 rounded-full bg-orange-500" />
@@ -673,28 +469,46 @@ const BinaryTree: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-8 items-start relative">
-        {/* Main Tree Container */}
-        <GlassCard className="w-full lg:flex-1 h-[700px] md:h-[850px] overflow-auto custom-scrollbar relative bg-[#0a0a0b] cursor-grab active:cursor-grabbing border-white/5 shadow-2xl">
-          <div ref={treeContainerRef} className="absolute inset-0 overflow-auto custom-scrollbar flex justify-center pt-20 pb-40 px-20">
-            <motion.div 
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale, opacity: 1 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 120 }}
-              className="relative origin-top"
-            >
-              <TreeNode 
-                nodeId="root"
-                treeData={treeData}
-                selectedNodeId={selectedNodeId}
-                activePath={activePath}
-                onSelect={handleSelect}
-                onInvite={handleInvite}
-                level={0}
-              />
-            </motion.div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-orange-500/10 to-transparent">
+          <div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Direct Referrals</p>
+            <h3 className="text-3xl font-black text-white italic">{totalReferrals}</h3>
+          </div>
+          <div className="w-12 h-12 bg-orange-500/20 rounded-2xl flex items-center justify-center text-orange-500">
+            <UserPlus size={24} />
           </div>
         </GlassCard>
+        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-emerald-500/10 to-transparent">
+          <div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Left Leg Count</p>
+            <h3 className="text-3xl font-black text-white italic">{userProfile?.team_size?.left || 0}</h3>
+          </div>
+          <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-500">
+            <ArrowDownLeft size={24} />
+          </div>
+        </GlassCard>
+        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-blue-500/10 to-transparent">
+          <div>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Right Leg Count</p>
+            <h3 className="text-3xl font-black text-white italic">{userProfile?.team_size?.right || 0}</h3>
+          </div>
+          <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center text-blue-500">
+            <ArrowUpRight size={24} />
+          </div>
+        </GlassCard>
+      </div>
+
+      <div className="flex flex-col lg:flex-row gap-8 items-start relative">
+        {/* Main Tree Container */}
+        <div className="w-full lg:flex-1 h-[700px] md:h-[850px] relative">
+          <D3BinaryTree 
+            data={treeData}
+            onSelect={handleSelect}
+            onInvite={handleInvite}
+            userProfile={userProfile}
+          />
+        </div>
 
         {/* Profile Sidebar (Chain Details) */}
         <AnimatePresence>
@@ -797,6 +611,7 @@ const BinaryTree: React.FC = () => {
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">
             Selecting an active node activates the <b>Primary Connection Chain</b>. Clicking an empty node initializes the <b>Registration Invite Protocol</b>, providing side-specific placement links for new organizational expansion.
           </p>
+        </div>
         </div>
       </div>
     </div>
