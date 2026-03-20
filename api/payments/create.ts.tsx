@@ -9,14 +9,13 @@ export default async function handler(req: any, res: any) {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body
     const { amount, userId } = body
 
-    const response = await axios.post(
-      "https://api.nowpayments.io/v1/payment",
-      {
-        price_amount: Number(amount),
-        price_currency: "usd",
-        pay_currency: "usdt",
-        order_id: userId,
-        order_description: "Deposit"
+    const response = await fetch('/api/payments/create', {
+  method: 'POST', // Check if this is missing or misspelled
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(paymentData),
+});
       },
       {
         headers: {
