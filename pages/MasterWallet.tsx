@@ -67,55 +67,68 @@ const MasterWallet: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   const createPayment = async () => {
-    if (!depositAmount || Number(depositAmount) < 50) {
-      setError('Minimum deposit is 50 USDT');
-      return;
+  // ✅ Validation
+  if (!depositAmount || Number(depositAmount) < 50) {
+    setError("Minimum deposit is 50 USDT");
+    return;
+  }
+
+  if (!userProfile?.id) {
+    setError("User not loaded");
+    return;
+  }
+
+  setIsProcessing(true);
+  setError(null);
+
+  try {
+    const response = await fetch("/api/payments/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        amount: Number(depositAmount),
+        userId: userProfile.id,
+      }),
+    });
+
+    const contentType = response.headers.get("content-type");
+
+    let data: any;
+
+    // ✅ Safe response parsing
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      throw new Error(text || "Invalid server response");
     }
 
-    setIsProcessing(true);
-    setError(null);
+    console.log("PAYMENT RESPONSE:", data);
 
-    try {
-      const response = await fetch('/api/payments/create', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    amount: Number(depositAmount),
-    userId: userProfile.id
-  })
-});
-
-const data = await response.json();
-console.log("PAYMENT RESPONSE:", data);
-        })
-      });
-
-      const contentType = response.headers.get("content-type");
-      if (!response.ok) {
-        let errorMessage = 'Failed to create payment';
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-          const errData = await response.json();
-          errorMessage = errData.error?.message || errData.error || errorMessage;
-        } else {
-          const textError = await response.text();
-          errorMessage = textError || errorMessage;
-        }
-        throw new Error(errorMessage);
-      }
-
-      if (contentType && contentType.indexOf("application/json") !== -1) {
-        const data = await response.json();
-        setPaymentData(data);
-      } else {
-        throw new Error('Server returned non-JSON response');
-      }
-    } catch (err: any) {
-      console.error('Payment Error:', err);
-      setError(err.message || 'Failed to initialize payment protocol');
-    } finally {
-      setIsProcessing(false);
+    // ❌ Handle API error
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to create payment");
     }
-  };
+
+    // ✅ Redirect to NowPayments
+    if (data.invoice_url) {
+      window.location.href = data.invoice_url;
+    } else if (data.pay_address) {
+      // fallback if invoice_url not provided
+      alert(`Send payment to address: ${data.pay_address}`);
+    } else {
+      setError("Payment created but no payment link received");
+    }
+
+  } catch (err: any) {
+    console.error("PAYMENT ERROR:", err);
+    setError(err.message || "Something went wrong");
+  } finally {
+    setIsProcessing(false);
+  }
+};
 
   const handleAction = async (forcedAmount?: string) => {
     const amountToUse = forcedAmount || exchangeAmount;
