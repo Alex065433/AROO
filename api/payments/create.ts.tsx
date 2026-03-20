@@ -7,6 +7,9 @@ export default async function handler(req, res) {
   try {
     const { amount, user_id } = req.body
 
+    console.log("BODY:", req.body)
+    console.log("API KEY:", process.env.NOWPAYMENTS_API_KEY)
+
     const response = await fetch('https://api.nowpayments.io/v1/payment', {
       method: 'POST',
       headers: {
@@ -24,10 +27,12 @@ export default async function handler(req, res) {
 
     const data = await response.json()
 
+    console.log("NOWPAYMENTS RESPONSE:", data)
+
     return res.status(200).json(data)
 
   } catch (err) {
-    console.log(err)
+    console.log("ERROR:", err)
     return res.status(500).send('Payment creation failed')
   }
 }
