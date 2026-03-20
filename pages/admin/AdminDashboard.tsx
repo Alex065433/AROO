@@ -17,18 +17,27 @@ const AdminDashboard: React.FC = () => {
   const [statsData, setStatsData] = useState<any>(null);
   const [recentTx, setRecentTx] = useState<any[]>([]);
   const [tradingLogs, setTradingLogs] = useState<any[]>([]);
+  const [revenueData, setRevenueData] = useState<any[]>([]);
+  const [registrationData, setRegistrationData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const stats = await supabaseService.getAdminStats();
-        const users = await supabaseService.getAllUsers();
-        const payments = await supabaseService.getPayments('all'); // Assuming we can fetch all or mock it
+        const payments = await supabaseService.getPayments('all');
+        const revData = await supabaseService.getAdminChartData();
+        const regData = await supabaseService.getAdminRegistrationData();
         
         setStatsData(stats);
         setRecentTx(payments.slice(0, 5));
         setTradingLogs(payments.slice(0, 10));
+        setRevenueData(revData.length > 0 ? revData : [
+          { name: 'Jan', revenue: 0 },
+          { name: 'Feb', revenue: 0 },
+          { name: 'Mar', revenue: 0 }
+        ]);
+        setRegistrationData(regData);
       } catch (error) {
         console.error('Error fetching admin dashboard data:', error);
       } finally {
@@ -44,35 +53,8 @@ const AdminDashboard: React.FC = () => {
     { label: 'Blocked Users', value: statsData?.blockedUsers || '0', change: '-2.4%', icon: UserX, color: 'rose' },
     { label: 'Total Deposits', value: `$${(statsData?.totalDeposits || 0).toLocaleString()}`, change: '+18.7%', icon: DollarSign, color: 'blue' },
     { label: 'Total Withdrawals', value: `$${(statsData?.totalWithdrawals || 0).toLocaleString()}`, change: '+5.4%', icon: CreditCard, color: 'orange' },
+    { label: 'Pending Withdrawals', value: `$${(statsData?.pendingWithdrawals || 0).toLocaleString()}`, change: '0%', icon: Activity, color: 'amber' },
     { label: 'Platform Revenue', value: `$${(statsData?.platformRevenue || 0).toLocaleString()}`, change: '+22.1%', icon: TrendingUp, color: 'violet' },
-  ];
-
-  const revenueData = [
-    { name: 'Jan', value: 4000 },
-    { name: 'Feb', value: 3000 },
-    { name: 'Mar', value: 5000 },
-    { name: 'Apr', value: 4500 },
-    { name: 'May', value: 6000 },
-    { name: 'Jun', value: 5500 },
-    { name: 'Jul', value: 7000 },
-  ];
-
-  const registrationData = [
-    { name: 'Mon', value: 400 },
-    { name: 'Tue', value: 300 },
-    { name: 'Wed', value: 500 },
-    { name: 'Thu', value: 450 },
-    { name: 'Fri', value: 600 },
-    { name: 'Sat', value: 550 },
-    { name: 'Sun', value: 700 },
-  ];
-
-  const recentTransactions = [
-    { id: 'TX-9021', user: 'John Doe', type: 'Deposit', amount: '$1,200', status: 'Completed', date: '2024-03-15' },
-    { id: 'TX-9022', user: 'Jane Smith', type: 'Withdrawal', amount: '$450', status: 'Pending', date: '2024-03-15' },
-    { id: 'TX-9023', user: 'Mike Ross', type: 'Deposit', amount: '$3,000', status: 'Completed', date: '2024-03-14' },
-    { id: 'TX-9024', user: 'Sarah Connor', type: 'Withdrawal', amount: '$150', status: 'Rejected', date: '2024-03-14' },
-    { id: 'TX-9025', user: 'Harvey Specter', type: 'Deposit', amount: '$5,000', status: 'Completed', date: '2024-03-13' },
   ];
 
   const handleSystemSync = async () => {
@@ -115,7 +97,7 @@ const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-6">
         {stats.map((stat, i) => (
           <motion.div
             key={i}
@@ -128,8 +110,8 @@ const AdminDashboard: React.FC = () => {
               <div className={`p-2.5 rounded-xl bg-${stat.color}-500/10 text-${stat.color}-500 group-hover:scale-110 transition-transform`}>
                 <stat.icon size={20} />
               </div>
-              <div className={`flex items-center gap-1 text-xs font-bold ${stat.change.startsWith('+') ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {stat.change.startsWith('+') ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+              <div className={`flex items-center gap-1 text-xs font-bold ${stat.change.startsWith('+') ? 'text-emerald-500' : stat.change.startsWith('-') ? 'text-rose-500' : 'text-slate-400'}`}>
+                {stat.change.startsWith('+') ? <ArrowUpRight size={12} /> : stat.change.startsWith('-') ? <ArrowDownRight size={12} /> : null}
                 {stat.change}
               </div>
             </div>
@@ -169,7 +151,7 @@ const AdminDashboard: React.FC = () => {
                   contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '12px', color: '#fff' }}
                   itemStyle={{ color: '#fff' }}
                 />
-                <Area type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
+                <Area type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>

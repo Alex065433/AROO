@@ -456,7 +456,7 @@ const BinaryTree: React.FC = () => {
                    <button 
                      onClick={() => {
                        setViewRootId(userProfile?.id || null);
-                       setTimeout(scrollToMyNode, 500);
+                       // scrollToMyNode
                      }}
                      className="px-4 py-2 bg-orange-600/20 text-orange-500 text-[9px] font-black uppercase rounded-lg border border-orange-500/30 hover:bg-orange-600 hover:text-white transition-all"
                    >

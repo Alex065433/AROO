@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, Lock, Mail, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { TwoFactorAuth } from '../components/TwoFactorAuth';
 import { PasswordReset } from '../components/PasswordReset';
@@ -15,6 +15,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [showReset, setShowReset] = useState(false);
   const [operatorId, setOperatorId] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleAuth = async () => {
@@ -147,14 +148,18 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                     <Lock size={18} />
                   </div>
                   <input 
-                    type="password" 
+                    type={showPassword ? "text" : "password"} 
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••" 
                     className="w-full bg-[#0d0d0e] border border-white/5 rounded-2xl pl-16 pr-14 py-5 text-white focus:outline-none focus:border-amber-900/40 transition-all placeholder:text-slate-900 font-black text-sm tracking-widest"
                   />
-                  <button className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-800 hover:text-[#c0841a] transition-colors">
-                    <Eye size={18} />
+                  <button 
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-800 hover:text-[#c0841a] transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
               </div>

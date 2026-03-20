@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
 
@@ -10,6 +10,10 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const location = useLocation();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [registeredUser, setRegisteredUser] = useState<any>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showWithdrawalPassword, setShowWithdrawalPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
@@ -86,12 +90,13 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         parentId: parentId
       });
       
+      setRegisteredUser(user);
       setIsSubmitting(false);
       setIsSuccess(true);
       setTimeout(() => {
         onLogin();
         navigate('/dashboard');
-      }, 2500);
+      }, 5000); // Increased timeout to let user see the ID
     } catch (err: any) {
       console.error('Registration failed:', err);
       setError(supabaseService.formatError(err));
@@ -137,12 +142,29 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   if (isSuccess) {
     return (
       <div className="min-h-screen bg-[#0a0a0b] flex flex-col items-center justify-center p-10 font-inter">
-        <div className="text-center space-y-8 animate-in zoom-in duration-500">
+        <div className="text-center space-y-8 animate-in zoom-in duration-500 max-w-md w-full">
            <div className="w-32 h-32 bg-emerald-500/20 border border-emerald-500/30 rounded-[40px] flex items-center justify-center mx-auto text-emerald-500">
               <CheckCircle2 size={64} className="animate-bounce" />
            </div>
-           <h1 className="text-4xl font-black text-white uppercase tracking-tight">Enrollment Successful</h1>
-           <p className="text-slate-500 font-bold uppercase tracking-widest text-sm max-w-sm mx-auto">
+           <div className="space-y-2">
+             <h1 className="text-4xl font-black text-white uppercase tracking-tight">Enrollment Successful</h1>
+             <p className="text-emerald-500 font-bold uppercase tracking-widest text-xs">Protocol Node Activated</p>
+           </div>
+           
+           {registeredUser && (
+             <div className="bg-slate-900/60 border border-emerald-500/20 p-8 rounded-3xl space-y-4">
+               <div className="space-y-1">
+                 <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.3em]">Your Protocol ID</p>
+                 <p className="text-3xl font-mono font-bold text-white tracking-tighter">{registeredUser.operator_id}</p>
+               </div>
+               <div className="pt-4 border-t border-white/5 space-y-2">
+                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Welcome, {registeredUser.name}</p>
+                 <p className="text-[9px] text-slate-600 uppercase tracking-widest leading-relaxed">Please save your Protocol ID. You will need it to access the Arowin Network.</p>
+               </div>
+             </div>
+           )}
+
+           <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px] max-w-sm mx-auto">
              Your node is now synchronizing with the Arowin Network. Redirecting to access portal...
            </p>
            <div className="pt-4">
@@ -248,38 +270,65 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
             <div className="space-y-3">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Security Key</label>
-              <input 
-                required 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••" 
-                className="w-full bg-slate-900/40 border border-white/5 rounded-2xl px-6 py-4 text-white focus:outline-none" 
-              />
+              <div className="relative">
+                <input 
+                  required 
+                  type={showPassword ? "text" : "password"} 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••" 
+                  className="w-full bg-slate-900/40 border border-white/5 rounded-2xl px-6 py-4 text-white focus:outline-none" 
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-orange-500 transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Confirm Security Key</label>
-              <input 
-                required 
-                type="password" 
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="••••••••" 
-                className="w-full bg-slate-900/40 border border-white/5 rounded-2xl px-6 py-4 text-white focus:outline-none" 
-              />
+              <div className="relative">
+                <input 
+                  required 
+                  type={showConfirmPassword ? "text" : "password"} 
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••" 
+                  className="w-full bg-slate-900/40 border border-white/5 rounded-2xl px-6 py-4 text-white focus:outline-none" 
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-orange-500 transition-colors"
+                >
+                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">
               <label className="text-xs font-black text-orange-500 uppercase tracking-widest ml-1">Withdrawal Password</label>
-              <input 
-                required 
-                type="password" 
-                value={withdrawalPassword}
-                onChange={(e) => setWithdrawalPassword(e.target.value)}
-                placeholder="••••••••" 
-                className="w-full bg-slate-900/40 border border-orange-500/20 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-orange-500/50" 
-              />
+              <div className="relative">
+                <input 
+                  required 
+                  type={showWithdrawalPassword ? "text" : "password"} 
+                  value={withdrawalPassword}
+                  onChange={(e) => setWithdrawalPassword(e.target.value)}
+                  placeholder="••••••••" 
+                  className="w-full bg-slate-900/40 border border-orange-500/20 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-orange-500/50" 
+                />
+                <button 
+                  type="button"
+                  onClick={() => setShowWithdrawalPassword(!showWithdrawalPassword)}
+                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 hover:text-orange-500 transition-colors"
+                >
+                  {showWithdrawalPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3">

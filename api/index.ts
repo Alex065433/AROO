@@ -138,7 +138,7 @@ app.post("/api/payments/create", async (req, res) => {
 
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.get('host');
-  const baseUrl = `${protocol}://${host}`;
+  const baseUrl = process.env.APP_URL || `${protocol}://${host}`;
 
   try {
     const payload = {
@@ -151,6 +151,7 @@ app.post("/api/payments/create", async (req, res) => {
     };
     
     console.log("NOWPayments Payload:", JSON.stringify(payload));
+    console.log("IPN Callback URL set to:", payload.ipn_callback_url);
 
     const response = await axios.post(
       "https://api.nowpayments.io/v1/payment",
@@ -239,6 +240,25 @@ app.post("/api/payments/ipn", async (req, res) => {
   const supabase = getSupabase();
   if (supabase) {
     try {
+      // 1. Get the payment to find the user ID and check current status
+      const { data: paymentData, error: fetchError } = await supabase
+        .from('payments')
+        .select('uid, amount, order_id, status')
+        .eq('payment_id', payment_id)
+        .single();
+      
+      if (fetchError || !paymentData) {
+        console.error("Supabase IPN Fetch Error:", fetchError?.message || "Payment not found");
+        return res.status(404).send("Payment not found");
+      }
+
+      // Prevent double crediting if status was already finished or partially_paid
+      if (paymentData.status === 'finished' || paymentData.status === 'partially_paid') {
+         console.log(`Payment ${payment_id} already processed as ${paymentData.status}.`);
+         return res.status(200).send("OK");
+      }
+
+      // 2. Update payment status in Supabase
       const { error: dbError } = await supabase
         .from('payments')
         .update({ status: payment_status, updated_at: new Date().toISOString() })
@@ -248,63 +268,44 @@ app.post("/api/payments/ipn", async (req, res) => {
         console.error("Supabase IPN Update Error:", dbError.message);
       }
 
-      // If payment is finished, credit the user's wallet
+      // 3. If payment is finished, credit the user's wallet
       if (payment_status === 'finished' || payment_status === 'partially_paid') {
-        // 1. Get the payment to find the user ID
-        const { data: paymentData, error: fetchError } = await supabase
-          .from('payments')
-          .select('uid, amount, order_id, status')
-          .eq('payment_id', payment_id)
+        const uid = paymentData.uid;
+        const amount = paymentData.amount;
+
+        // 4. Get user profile
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('wallets')
+          .eq('id', uid)
           .single();
         
-        if (paymentData && !fetchError) {
-          // Prevent double crediting if status was already finished
-          if (paymentData.status === 'finished' && payment_status === 'finished') {
-             console.log(`Payment ${payment_id} already processed as finished.`);
-             return res.status(200).send("OK");
-          }
+        if (profile && !profileError) {
+          const wallets = profile.wallets || { master: { balance: 0 } };
+          wallets.master.balance = (wallets.master.balance || 0) + amount;
 
-          const uid = paymentData.uid;
-          const amount = paymentData.amount;
-
-          // 2. Get user profile
-          const { data: profile, error: profileError } = await supabase
+          // 5. Update profile
+          await supabase
             .from('profiles')
-            .select('wallets')
-            .eq('id', uid)
-            .single();
+            .update({ wallets })
+            .eq('id', uid);
           
-          if (profile && !profileError) {
-            const wallets = profile.wallets || { master: { balance: 0 } };
-            wallets.master.balance = (wallets.master.balance || 0) + amount;
+          console.log(`User ${uid} wallet credited with ${amount} USDT`);
 
-            // 3. Update profile
+          // 6. If it was a package purchase, activate it automatically
+          if (paymentData.order_id?.startsWith('PKG-')) {
+            console.log(`Automatic package activation for user ${uid}, amount ${amount}`);
             await supabase
               .from('profiles')
-              .update({ wallets })
+              .update({ active_package: amount })
               .eq('id', uid);
-            
-            console.log(`User ${uid} wallet credited with ${amount} USDT`);
-
-            // 4. If it was a package purchase, activate it automatically
-            if (paymentData.order_id?.startsWith('PKG-')) {
-              console.log(`Automatic package activation for user ${uid}, amount ${amount}`);
-              // We could call a server-side version of activatePackage here
-              // For now, we'll just update the active_package
-              await supabase
-                .from('profiles')
-                .update({ active_package: amount })
-                .eq('id', uid);
-              
-              // Note: In a real system, we should also trigger income logic here.
-              // Since we're in the API, we'd need to replicate the income logic or 
-              // trigger a sync.
-            }
           }
         }
       }
-    } catch (err) {
+      return res.status(200).send("OK");
+    } catch (err: any) {
       console.error("Failed to process IPN in Supabase:", err);
+      return res.status(500).send("Internal Error");
     }
   } else {
     console.warn("Skipping Supabase IPN processing: Client not initialized");

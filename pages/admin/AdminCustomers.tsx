@@ -82,6 +82,23 @@ const AdminCustomers: React.FC = () => {
     }
   };
 
+  const handleToggleStatus = async () => {
+    if (!selectedUser) return;
+    const newStatus = selectedUser.status === 'active' ? 'blocked' : 'active';
+    setIsProcessing(true);
+    try {
+      await supabaseService.updateUserStatus(selectedUser.id, newStatus);
+      alert(`User account ${newStatus === 'active' ? 'activated' : 'blocked'} successfully`);
+      setSelectedUser({ ...selectedUser, status: newStatus });
+      fetchUsers();
+    } catch (error) {
+      console.error('Error updating status:', error);
+      alert('Error updating status: ' + (error as any).message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleSaveChanges = async () => {
     if (!selectedUser) return;
     setIsProcessing(true);
@@ -183,8 +200,8 @@ const AdminCustomers: React.FC = () => {
                 <th className="px-8 py-4">User ID</th>
                 <th className="px-8 py-4">Name</th>
                 <th className="px-8 py-4">Wallet Balance</th>
+                <th className="px-8 py-4">Package</th>
                 <th className="px-8 py-4">Status</th>
-                <th className="px-8 py-4">KYC</th>
                 <th className="px-8 py-4">Reg. Date</th>
                 <th className="px-8 py-4 text-right">Actions</th>
               </tr>
@@ -203,11 +220,11 @@ const AdminCustomers: React.FC = () => {
                   u.operator_id?.toLowerCase().includes(searchQuery.toLowerCase())
                 ).map((user, i) => (
                 <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
-                  <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{user.id?.substring(0, 8)}...</td>
+                  <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{user.operator_id || user.id?.substring(0, 8)}</td>
                   <td className="px-8 py-5">
                     <div className="flex flex-col">
                       <span className="text-sm font-bold text-slate-900 dark:text-white">{user.name || 'Unnamed User'}</span>
-                      <span className="text-xs text-slate-500 dark:text-slate-400">{user.email}</span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{user.real_email || user.email}</span>
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
@@ -215,18 +232,19 @@ const AdminCustomers: React.FC = () => {
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      user.active_package ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
+                      user.active_package ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-500'
                     }`}>
-                      {user.active_package ? `Active ($${user.active_package})` : 'Inactive'}
+                      {user.active_package ? `$${user.active_package}` : 'No Package'}
                     </span>
                   </td>
                   <td className="px-8 py-5">
-                    <div className="flex items-center gap-1.5">
-                      <CheckCircle2 size={14} className="text-emerald-500" />
-                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-500">
-                        Verified
-                      </span>
-                    </div>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      user.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 
+                      user.status === 'pending' ? 'bg-amber-500/10 text-amber-500' : 
+                      'bg-rose-500/10 text-rose-500'
+                    }`}>
+                      {user.status || 'pending'}
+                    </span>
                   </td>
                   <td className="px-8 py-5 text-sm text-slate-500 dark:text-slate-400">
                     {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'Recent'}
@@ -312,10 +330,44 @@ const AdminCustomers: React.FC = () => {
                         className="w-full bg-transparent border-none p-0 text-xs text-slate-500 dark:text-slate-400 focus:ring-0"
                       />
                       <p className="text-[10px] text-slate-400 font-mono mt-1">{selectedUser.id}</p>
+                      <div className="mt-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                          selectedUser.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 
+                          selectedUser.status === 'pending' ? 'bg-amber-500/10 text-amber-500' : 
+                          'bg-rose-500/10 text-rose-500'
+                        }`}>
+                          {selectedUser.status || 'pending'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
+                    <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                             <ShieldAlert size={18} />
+                             <h4 className="text-xs font-black uppercase tracking-widest">Account Activation</h4>
+                          </div>
+                          <button 
+                            onClick={handleToggleStatus}
+                            disabled={isProcessing}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
+                              selectedUser.status === 'active' 
+                                ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20' 
+                                : 'bg-emerald-500 text-white hover:bg-emerald-600'
+                            }`}
+                          >
+                            {isProcessing ? '...' : selectedUser.status === 'active' ? 'Block Account' : 'Activate Account'}
+                          </button>
+                       </div>
+                       {selectedUser.status === 'pending' && (
+                         <p className="text-[10px] text-amber-600 dark:text-amber-400 italic">
+                           * This account is waiting for administrator approval.
+                         </p>
+                       )}
+                    </div>
+
                     <div className="p-4 bg-indigo-50 dark:bg-indigo-500/5 rounded-2xl border border-indigo-100 dark:border-indigo-500/10 space-y-4">
                        <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                           <Wallet size={18} />

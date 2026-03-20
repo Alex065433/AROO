@@ -46,18 +46,65 @@ export const supabaseService = {
   },
 
   async login(operatorId: string, password: string) {
-    // Step 1: get email from operator_id
-    const { data, error } = await supabase
+    let cleanId = operatorId.trim();
+    
+    // Auto-prepend ARW- if only 6 digits are provided
+    if (/^\d{6}$/.test(cleanId)) {
+      cleanId = `ARW-${cleanId}`;
+    }
+    
+    // Step 1: get profile from operator_id
+    // Try exact match first
+    let { data, error } = await supabase
       .from("profiles")
-      .select("email")
-      .eq("operator_id", operatorId)
+      .select("email, status, role")
+      .eq("operator_id", cleanId)
       .single();
+
+    // If not found, try case-insensitive (ilike)
+    if (error || !data) {
+      const { data: retryData, error: retryError } = await supabase
+        .from("profiles")
+        .select("email, status, role")
+        .ilike("operator_id", cleanId)
+        .single();
+      
+      if (!retryError && retryData) {
+        data = retryData;
+        error = null;
+      }
+    }
+
+    // If still not found, maybe it's an email?
+    if (error || !data) {
+      if (cleanId.includes('@')) {
+        const { data: emailData, error: emailError } = await supabase
+          .from("profiles")
+          .select("email, status, role")
+          .or(`email.ilike.${cleanId},real_email.ilike.${cleanId}`)
+          .single();
+        
+        if (!emailError && emailData) {
+          data = emailData;
+          error = null;
+        }
+      }
+    }
 
     if (error || !data) {
       throw new Error("Invalid Operator ID");
     }
 
-    // Step 2: login using email
+    // Check if account is active (unless it's an admin)
+    if (data.status === 'blocked') {
+      throw new Error("Your account has been blocked by the administrator. Please contact support.");
+    }
+    
+    if (data.status === 'pending' && data.role !== 'admin') {
+      throw new Error("Your account is pending activation by the administrator. Please wait for approval.");
+    }
+
+    // Step 2: login using email (which is the internal email)
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: data.email,
       password: password
@@ -80,9 +127,12 @@ export const supabaseService = {
   },
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
-    // 1. Create Supabase Auth User
+    const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
+    const internalEmail = `${operatorId}@arowin.internal`;
+
+    // 1. Create Supabase Auth User with internal email to allow multiple accounts per real email
     const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
+      email: internalEmail,
       password,
     });
 
@@ -95,13 +145,17 @@ export const supabaseService = {
     
     if (!authData.user) throw new Error('User creation failed');
     const user = authData.user;
-    const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
 
     // 2. Find Sponsor and Binary Parent
+    let cleanSponsorId = sponsorId.trim();
+    if (/^\d{6}$/.test(cleanSponsorId)) {
+      cleanSponsorId = `ARW-${cleanSponsorId}`;
+    }
+
     const { data: sponsor } = await supabase
       .from('profiles')
       .select('id')
-      .eq('operator_id', sponsorId)
+      .eq('operator_id', cleanSponsorId)
       .single();
 
     if (!sponsor) throw new Error('Invalid Sponsor ID');
@@ -147,7 +201,8 @@ export const supabaseService = {
     // We use snake_case for database columns
     const profileData = {
       id: user.id,
-      email: user.email,
+      email: internalEmail,
+      real_email: email,
       operator_id: operatorId,
       name: additionalData.name || email.split('@')[0],
       mobile: additionalData.mobile || '',
@@ -169,6 +224,7 @@ export const supabaseService = {
       matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
       role: email === 'kethankumar130@gmail.com' ? 'admin' : 'user',
+      status: email === 'kethankumar130@gmail.com' ? 'active' : 'pending',
       created_at: new Date().toISOString(),
     };
 
@@ -805,10 +861,14 @@ export const supabaseService = {
   },
 
   async findUserByOperatorId(operatorId: string) {
+    let cleanId = operatorId.trim();
+    if (/^\d{6}$/.test(cleanId)) {
+      cleanId = `ARW-${cleanId}`;
+    }
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('operator_id', operatorId)
+      .eq('operator_id', cleanId)
       .single();
     if (error) return null;
     return data;
@@ -895,7 +955,7 @@ export const supabaseService = {
   async getAdminStats() {
     const { data: users, error: usersError } = await supabase
       .from('profiles')
-      .select('id, wallets, active_package');
+      .select('id, wallets, active_package, status');
     
     if (usersError) throw usersError;
 
@@ -907,19 +967,65 @@ export const supabaseService = {
 
     const totalUsers = users?.length || 0;
     const activeUsers = users?.filter(u => u.active_package > 0).length || 0;
-    const totalDeposits = payments?.filter(p => p.type === 'deposit' && p.status === 'completed')
+    const blockedUsers = users?.filter(u => u.status === 'blocked').length || 0;
+    const totalDeposits = payments?.filter(p => p.type === 'deposit' && p.status === 'finished')
       .reduce((sum, p) => sum + p.amount, 0) || 0;
     const totalWithdrawals = payments?.filter(p => p.type === 'withdrawal' && p.status === 'completed')
       .reduce((sum, p) => sum + p.amount, 0) || 0;
+    const pendingWithdrawals = payments?.filter(p => p.type === 'withdrawal' && p.status === 'pending')
+      .reduce((sum, p) => sum + p.amount, 0) || 0;
+    
+    // Platform revenue is 5% of all successful deposits
+    const platformRevenue = totalDeposits * 0.05;
     
     return {
       totalUsers,
       activeUsers,
-      blockedUsers: 0,
+      blockedUsers,
       totalDeposits,
       totalWithdrawals,
-      platformRevenue: totalDeposits * 0.05 // Mock 5% fee revenue
+      pendingWithdrawals,
+      platformRevenue
     };
+  },
+
+  async getAdminChartData() {
+    const { data: payments, error } = await supabase
+      .from('payments')
+      .select('amount, type, status, created_at')
+      .eq('status', 'finished')
+      .eq('type', 'deposit')
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    // Group by date
+    const grouped = payments.reduce((acc: any, p) => {
+      const date = new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      acc[date] = (acc[date] || 0) + p.amount;
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([name, revenue]) => ({ name, revenue }));
+  },
+
+  async getAdminRegistrationData() {
+    const { data: users, error } = await supabase
+      .from('profiles')
+      .select('created_at')
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
+    // Group by day of week
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const grouped = users.reduce((acc: any, u) => {
+      const day = days[new Date(u.created_at).getDay()];
+      acc[day] = (acc[day] || 0) + 1;
+      return acc;
+    }, {});
+
+    return days.map(day => ({ name: day, value: grouped[day] || 0 }));
   },
 
   async processSystemIncomes() {
@@ -971,6 +1077,15 @@ export const supabaseService = {
     const { error } = await supabase
       .from('profiles')
       .update(data)
+      .eq('id', uid);
+    if (error) throw error;
+    return true;
+  },
+
+  async updateUserStatus(uid: string, status: 'active' | 'pending' | 'blocked') {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status })
       .eq('id', uid);
     if (error) throw error;
     return true;
