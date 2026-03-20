@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { PACKAGES, RANKS } from '../constants';
+import { PACKAGES, RANKS, MOCK_USER } from '../constants';
 
 export interface Ticket {
   id?: string;
@@ -48,9 +48,14 @@ export const supabaseService = {
   async login(operatorId: string, password: string) {
     let cleanId = operatorId.trim();
     
-    // Auto-prepend ARW- if only 6 digits are provided
+    // Normalize Operator ID format
+    // 1. If it's just 6 digits, prepend ARW-
     if (/^\d{6}$/.test(cleanId)) {
       cleanId = `ARW-${cleanId}`;
+    }
+    // 2. If it's ARW followed by 6 digits (no hyphen), insert hyphen
+    if (/^ARW\d{6}$/i.test(cleanId)) {
+      cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
     }
     
     // Step 1: get profile from operator_id
@@ -78,10 +83,11 @@ export const supabaseService = {
     // If still not found, maybe it's an email?
     if (error || !data) {
       if (cleanId.includes('@')) {
+        // Use ilike and handle potential quotes in the or filter
         const { data: emailData, error: emailError } = await supabase
           .from("profiles")
           .select("email, status, role")
-          .or(`email.ilike.${cleanId},real_email.ilike.${cleanId}`)
+          .or(`email.ilike."${cleanId}",real_email.ilike."${cleanId}"`)
           .single();
         
         if (!emailError && emailData) {
@@ -92,7 +98,7 @@ export const supabaseService = {
     }
 
     if (error || !data) {
-      throw new Error("Invalid Operator ID");
+      throw new Error("Invalid Operator ID or Email");
     }
 
     // Check if account is active (unless it's an admin)
@@ -147,15 +153,19 @@ export const supabaseService = {
     const user = authData.user;
 
     // 2. Find Sponsor and Binary Parent
+    // Normalize Operator ID format
     let cleanSponsorId = sponsorId.trim();
     if (/^\d{6}$/.test(cleanSponsorId)) {
       cleanSponsorId = `ARW-${cleanSponsorId}`;
+    }
+    if (/^ARW\d{6}$/i.test(cleanSponsorId)) {
+      cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
     }
 
     const { data: sponsor } = await supabase
       .from('profiles')
       .select('id')
-      .eq('operator_id', cleanSponsorId)
+      .ilike('operator_id', cleanSponsorId)
       .single();
 
     if (!sponsor) throw new Error('Invalid Sponsor ID');
@@ -243,6 +253,7 @@ export const supabaseService = {
         operator_id: operatorId,
         name: profileData.name,
         role: profileData.role,
+        wallets: profileData.wallets, // Ensure wallets exist even in minimal profile
         created_at: profileData.created_at
       };
       
@@ -324,8 +335,36 @@ export const supabaseService = {
   },
 
   // Package Activation
-  async activatePackage(uid: string, amount: number) {
-    // 1. Log the activation
+  async activatePackage(uid: string, amount: number, adminId?: string) {
+    // 1. If adminId is provided, deduct from admin's master wallet
+    if (adminId) {
+      const adminProfile = await this.getUserProfile(adminId);
+      if (!adminProfile) throw new Error('Admin not found');
+      
+      if ((adminProfile.wallets?.master?.balance || 0) < amount) {
+        throw new Error('Insufficient admin funds');
+      }
+
+      const updatedAdminWallets = { ...MOCK_USER.wallets, ...adminProfile.wallets };
+      updatedAdminWallets.master.balance -= amount;
+
+      await supabase
+        .from('profiles')
+        .update({ wallets: updatedAdminWallets })
+        .eq('id', adminId);
+        
+      // Log admin deduction
+      await supabase.from('payments').insert([{
+        uid: adminId,
+        amount: -amount,
+        type: 'admin_fund_usage',
+        status: 'completed',
+        method: 'INTERNAL',
+        created_at: new Date().toISOString()
+      }]);
+    }
+
+    // 2. Log the activation for the user
     const { error } = await supabase.from('payments').insert([{
       uid,
       amount,
@@ -337,7 +376,7 @@ export const supabaseService = {
 
     if (error) throw error;
 
-    // 2. Generate Team Collection Nodes for the user based on package
+    // 3. Generate Team Collection Nodes for the user based on package
     const pkg = PACKAGES.find(p => p.price === amount);
     const nodeCount = pkg?.nodes || 3;
     
@@ -355,17 +394,20 @@ export const supabaseService = {
     
     await supabase.from('team_collection').insert(teamNodes);
 
-    // 3. Update Profile Active Package
+    // 4. Update Profile Active Package
     await supabase
       .from('profiles')
       .update({ active_package: amount })
       .eq('id', uid);
 
-    // 4. Process MLM Income
+    // 5. Process MLM Income
     await this.processIncome(uid, amount);
     
-    // 5. Update Rank
+    // 6. Update Rank
     await this.checkAndUpdateRank(uid);
+
+    // 7. Add Notification
+    await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
     
     return true;
   },
@@ -506,7 +548,7 @@ export const supabaseService = {
     // 2. Add to user's master wallet
     const profile = await this.getUserProfile(uid);
     if (profile) {
-      const updatedWallets = { ...profile.wallets };
+      const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
       updatedWallets.master.balance += totalCollected;
       await this.createUserProfile(uid, { wallets: updatedWallets });
       
@@ -732,7 +774,7 @@ export const supabaseService = {
     }
     
     // Update Wallets
-    const updatedWallets = { ...profile.wallets };
+    const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
     updatedWallets.master.balance += payableAmount;
     if (type === 'referral_bonus') updatedWallets.referral.balance += payableAmount;
     if (type === 'matching_income') updatedWallets.matching.balance += payableAmount;
@@ -865,20 +907,47 @@ export const supabaseService = {
     if (/^\d{6}$/.test(cleanId)) {
       cleanId = `ARW-${cleanId}`;
     }
-    const { data, error } = await supabase
+    if (/^ARW\d{6}$/i.test(cleanId)) {
+      cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
+    }
+    
+    // Try exact match first
+    let { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('operator_id', cleanId)
       .single();
+
+    // Fallback to ilike
+    if (error || !data) {
+      const { data: retryData, error: retryError } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('operator_id', cleanId)
+        .single();
+      
+      if (!retryError && retryData) {
+        data = retryData;
+        error = null;
+      }
+    }
+
     if (error) return null;
     return data;
   },
 
   async updatePassword(newPassword: string) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
     const { error } = await supabase.auth.updateUser({
       password: newPassword
     });
     if (error) throw error;
+
+    // Add Notification
+    await this.addNotification(user.id, 'Password Updated', 'Your account password has been successfully updated.', 'update');
+
     return true;
   },
 
@@ -903,7 +972,9 @@ export const supabaseService = {
 
   formatError(error: any): string {
     const message = error?.message || '';
-    if (message.includes('Invalid Operator ID')) return 'Invalid Operator ID. Please check and try again.';
+    if (message.includes('Invalid Operator ID') || message.includes('Invalid Email')) {
+      return 'Invalid Operator ID or Email. Please check and try again.';
+    }
     if (message.includes('Invalid Password')) return 'Invalid Password. Please check and try again.';
     if (message.includes('Database error saving new user')) {
       return 'Database error saving new user. This usually means a Supabase trigger or RLS policy is failing. Ensure your "profiles" table has all required columns and correct RLS policies.';
@@ -1050,7 +1121,7 @@ export const supabaseService = {
     const profile = await this.getUserProfile(uid);
     if (!profile) throw new Error('User not found');
 
-    const updatedWallets = { ...profile.wallets };
+    const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
     updatedWallets.master.balance += amount;
 
     const { error } = await supabase
@@ -1106,5 +1177,62 @@ export const supabaseService = {
     await supabase.from('team_collection').delete().eq('uid', uid);
 
     return true;
+  },
+
+  // Notifications
+  async getNotifications(uid: string) {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('uid', uid)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    
+    if (error) {
+      console.warn('Notifications table might not exist yet:', error);
+      return [];
+    }
+    return data;
+  },
+
+  async addNotification(uid: string, title: string, message: string, type: 'alert' | 'update' | 'reward' = 'update') {
+    const { error } = await supabase
+      .from('notifications')
+      .insert([{
+        uid,
+        title,
+        message,
+        type,
+        is_new: true,
+        created_at: new Date().toISOString()
+      }]);
+    
+    if (error) {
+      console.warn('Failed to add notification (table might not exist):', error);
+    }
+  },
+
+  async markNotificationsAsRead(uid: string) {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_new: false })
+      .eq('uid', uid)
+      .eq('is_new', true);
+    
+    if (error) {
+      console.warn('Failed to mark notifications as read:', error);
+    }
+  },
+
+  onNotificationsChange(uid: string, callback: (payload: any) => void) {
+    return supabase
+      .channel(`notifications-${uid}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'notifications',
+        filter: `uid=eq.${uid}`
+      }, callback)
+      .subscribe();
   }
 };

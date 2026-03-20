@@ -134,7 +134,10 @@ const Dashboard: React.FC = () => {
           const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           if (profile) {
             setUserData(profile);
-            setUserWallets(profile.wallets);
+            setUserWallets({
+              ...MOCK_USER.wallets,
+              ...(profile.wallets || {})
+            });
           }
         } catch (err) {
           console.error('Error fetching profile:', err);
