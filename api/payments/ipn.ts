@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import crypto from 'crypto'
+import * as crypto from 'crypto'
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
