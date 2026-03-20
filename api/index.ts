@@ -15,14 +15,14 @@ const getSupabase = () => {
   if (supabaseClient) return supabaseClient;
   
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseServiceKey) {
     console.warn("Supabase environment variables are missing. Database operations will fail.");
     return null;
   }
   
-  supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+  supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
   return supabaseClient;
 };
 
@@ -207,6 +207,40 @@ app.post("/api/payments/create", async (req, res) => {
   }
 });
 
+// Get Payment Status
+app.get("/api/payments/status/:paymentId", async (req, res) => {
+  const { paymentId } = req.params;
+  
+  try {
+    const response = await axios.get(
+      `https://api.nowpayments.io/v1/payment/${paymentId}`,
+      {
+        headers: {
+          "x-api-key": NOWPAYMENTS_API_KEY,
+        },
+      }
+    );
+
+    // Also update Supabase if status is finished
+    const paymentStatus = response.data.payment_status;
+    if (paymentStatus === 'finished' || paymentStatus === 'partially_paid') {
+      const supabase = getSupabase();
+      if (supabase) {
+        await supabase
+          .from('payments')
+          .update({ status: paymentStatus, updated_at: new Date().toISOString() })
+          .eq('payment_id', paymentId);
+      }
+    }
+
+    res.json(response.data);
+  } catch (error: any) {
+    const errorData = error.response?.data || error.message;
+    console.error("NOWPayments Status Error:", JSON.stringify(errorData));
+    res.status(500).json({ error: errorData });
+  }
+});
+
 // Handle IPN
 app.post("/api/payments/ipn", async (req, res) => {
   const signature = req.get("x-nowpayments-sig");
@@ -259,6 +293,8 @@ app.post("/api/payments/ipn", async (req, res) => {
       }
 
       // 2. Update payment status in Supabase
+      // The DB triggers (on_payment_update_wallets and on_payment_update_process_package) 
+      // will handle wallet updates and MLM logic automatically when status becomes 'finished'
       const { error: dbError } = await supabase
         .from('payments')
         .update({ status: payment_status, updated_at: new Date().toISOString() })
@@ -268,40 +304,13 @@ app.post("/api/payments/ipn", async (req, res) => {
         console.error("Supabase IPN Update Error:", dbError.message);
       }
 
-      // 3. If payment is finished, credit the user's wallet
-      if (payment_status === 'finished' || payment_status === 'partially_paid') {
-        const uid = paymentData.uid;
-        const amount = paymentData.amount;
-
-        // 4. Get user profile
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('wallets')
-          .eq('id', uid)
-          .single();
-        
-        if (profile && !profileError) {
-          const wallets = profile.wallets || { master: { balance: 0 } };
-          wallets.master.balance = (wallets.master.balance || 0) + amount;
-
-          // 5. Update profile
-          await supabase
-            .from('profiles')
-            .update({ wallets })
-            .eq('id', uid);
-          
-          console.log(`User ${uid} wallet credited with ${amount} USDT`);
-
-          // 6. If it was a package purchase, activate it automatically
-          if (paymentData.order_id?.startsWith('PKG-')) {
-            console.log(`Automatic package activation for user ${uid}, amount ${amount}`);
-            await supabase
-              .from('profiles')
-              .update({ active_package: amount })
-              .eq('id', uid);
-          }
-        }
-      }
+      // 3. If it was a package purchase and it's finished, we might need to ensure 
+      // a package_activation record exists if the trigger doesn't handle 'deposit' -> 'activation' transition
+      // But usually, the user buys a package, we create a 'package_activation' record with 'waiting' status,
+      // and NOWPayments updates THAT record.
+      
+      console.log(`IPN processed for ${payment_id}. DB triggers will handle wallet/MLM logic.`);
+      
       return res.status(200).send("OK");
     } catch (err: any) {
       console.error("Failed to process IPN in Supabase:", err);

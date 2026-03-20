@@ -285,14 +285,6 @@ export const supabaseService = {
       throw new Error(`Profile Sync Error: ${profileError.message}`);
     }
 
-    // 5. Update Ancestors Team Size
-    try {
-      await this.updateAncestorsTeamSize(user.id);
-    } catch (err) {
-      console.error('Error updating ancestors team size:', err);
-      // Don't throw here, as the user is already registered
-    }
-
     return { ...profileData, uid: user.id };
   },
 
@@ -352,78 +344,62 @@ export const supabaseService = {
   },
 
   // Package Activation
-  async activatePackage(uid: string, amount: number, adminId?: string) {
-    // 1. If adminId is provided, deduct from admin's master wallet
-    if (adminId) {
-      const adminProfile = await this.getUserProfile(adminId);
-      if (!adminProfile) throw new Error('Admin not found');
-      
-      if ((adminProfile.wallets?.master?.balance || 0) < amount) {
-        throw new Error('Insufficient admin funds');
-      }
+  async activatePackage(uid: string, amount: number, options: { adminId?: string, isFree?: boolean } = {}) {
+    const { adminId, isFree } = options;
 
-      const updatedAdminWallets = { ...MOCK_USER.wallets, ...adminProfile.wallets };
-      updatedAdminWallets.master.balance -= amount;
-
-      await supabase
-        .from('profiles')
-        .update({ wallets: updatedAdminWallets })
-        .eq('id', adminId);
+    // 1. Handle payment deduction unless it's free
+    if (!isFree) {
+      if (adminId) {
+        const adminProfile = await this.getUserProfile(adminId);
+        if (!adminProfile) throw new Error('Admin not found');
         
-      // Log admin deduction
-      await supabase.from('payments').insert([{
-        uid: adminId,
-        amount: -amount,
-        type: 'admin_fund_usage',
-        status: 'completed',
-        method: 'INTERNAL',
-        created_at: new Date().toISOString()
-      }]);
+        if ((adminProfile.wallets?.master?.balance || 0) < amount) {
+          throw new Error('Insufficient admin funds');
+        }
+
+        // Log admin deduction
+        await supabase.from('payments').insert([{
+          uid: adminId,
+          amount: -amount,
+          type: 'admin_fund_usage',
+          status: 'finished',
+          method: 'INTERNAL',
+          created_at: new Date().toISOString()
+        }]);
+      } else {
+        // Deduct from user's own master wallet
+        const profile = await this.getUserProfile(uid);
+        if (!profile) throw new Error('User not found');
+        if ((profile.wallets?.master?.balance || 0) < amount) {
+          throw new Error('Insufficient funds');
+        }
+
+        // Log user deduction
+        await supabase.from('payments').insert([{
+          uid,
+          amount: -amount,
+          type: 'package_purchase',
+          status: 'finished',
+          method: 'INTERNAL',
+          created_at: new Date().toISOString()
+        }]);
+      }
     }
 
-    // 2. Log the activation for the user
+    // 2. Log the activation for the user (this will trigger all MLM logic in DB)
     const { error } = await supabase.from('payments').insert([{
       uid,
       amount,
       type: 'package_activation',
-      status: 'completed',
+      status: 'finished',
       method: 'INTERNAL',
       created_at: new Date().toISOString()
     }]);
 
     if (error) throw error;
 
-    // 3. Generate Team Collection Nodes for the user based on package
+    // 3. Add Notification
     const pkg = PACKAGES.find(p => p.price === amount);
-    const nodeCount = pkg?.nodes || 3;
-    
-    const teamNodes = [];
-    for (let i = 1; i <= nodeCount; i++) {
-      teamNodes.push({
-        uid,
-        node_id: `NODE-${Math.floor(100000 + Math.random() * 900000)}`,
-        name: `Node ${i} (${pkg?.name || 'Package ' + amount})`,
-        balance: 0,
-        eligible: true,
-        created_at: new Date().toISOString()
-      });
-    }
-    
-    await supabase.from('team_collection').insert(teamNodes);
-
-    // 4. Update Profile Active Package
-    await supabase
-      .from('profiles')
-      .update({ active_package: amount })
-      .eq('id', uid);
-
-    // 5. Process MLM Income
-    await this.processIncome(uid, amount);
-    
-    // 6. Update Rank
-    await this.checkAndUpdateRank(uid);
-
-    // 7. Add Notification
     await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
     
     return true;
@@ -431,100 +407,45 @@ export const supabaseService = {
 
   // Daily and Weekly Payout System
   async processDailyPayouts() {
-    // This would normally be a cron job, but we'll provide it for admin use
-    const users = await this.getAllUsers();
+    // Daily payouts are now handled by database triggers on package activation.
+    // This function can be used to manually trigger rank checks if needed.
+    const { data: users } = await supabase.from('profiles').select('id');
     if (!users) return;
 
     for (const user of users) {
-      // 1. Reset daily capping tracking
-      const today = new Date().toISOString().split('T')[0];
-      await supabase
-        .from('profiles')
-        .update({ daily_income: { date: today, amount: 0 } })
-        .eq('id', user.id);
-      
-      // 2. Process Binary Matching (Daily)
-      await this.processBinaryMatchingForUser(user.id);
-
-      // 3. Check for rank auto-upgrade
-      await this.checkAndUpdateRank(user.id);
+      // We can call a RPC if we had one, but for now we just let the triggers do the work.
+      // Or we can manually trigger a rank check by updating a field.
+      await supabase.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', user.id);
     }
     return true;
   },
 
-  async processBinaryMatchingForUser(uid: string) {
-    const profile = await this.getUserProfile(uid);
-    if (!profile || profile.active_package <= 0) return;
-
-    const volume = profile.matching_volume || { left: 0, right: 0 };
-    const matchAmount = Math.min(volume.left, volume.right);
-
-    if (matchAmount >= 50) {
-      // 1 Pair = $50 matching on both sides
-      const pairs = Math.floor(matchAmount / 50);
-      const matchValue = pairs * 50;
-      
-      // Matching Income = 10% of pair value ($50 + $50 = $100, so $10 per pair)
-      const matchingIncome = pairs * 10;
-      
-      // Pay matching income with capping
-      await this.addIncome(uid, matchingIncome, 'matching_income');
-      
-      // Update matched pairs count and volume (carry-forward)
-      const newVolume = {
-        left: volume.left - matchValue,
-        right: volume.right - matchValue
-      };
-
-      await supabase
-        .from('profiles')
-        .update({ 
-          matched_pairs: (profile.matched_pairs || 0) + pairs,
-          matching_volume: newVolume
-        })
-        .eq('id', uid);
-      
-      console.log(`User ${uid} processed ${pairs} pairs. New volume: L:${newVolume.left} R:${newVolume.right}`);
-    }
-  },
-
   async processBinaryMatching() {
-    const users = await this.getAllUsers();
-    if (!users) return;
-
-    for (const user of users) {
-      await this.processBinaryMatchingForUser(user.id);
-    }
+    // Handled by DB triggers
+    return true;
   },
 
   async processRankAndRewards() {
-    const users = await this.getAllUsers();
-    if (!users) return;
-
-    for (const user of users) {
-      await this.checkAndUpdateRank(user.id);
-      
-      // Process Rank Bonus (Weekly/Monthly based on logic)
-      const rankData = RANKS.find(r => r.level === (user.rank || 1));
-      if (rankData && rankData.weeklyEarning > 0) {
-        await this.addIncome(user.id, rankData.weeklyEarning, 'rank_bonus');
-      }
-    }
+    // Handled by DB triggers
+    return true;
   },
 
   async processWeeklyIncome() {
-    const users = await this.getAllUsers();
+    // Weekly rank bonuses could be handled here or via a cron job
+    const { data: users } = await supabase.from('profiles').select('*').gt('rank', 1);
     if (!users) return;
 
-    const today = new Date();
-    
     for (const user of users) {
-      if (user.active_package > 0) {
-        const rankData = RANKS.find(r => r.level === (user.rank || 1));
-        if (rankData && rankData.weeklyEarning > 0) {
-          // Add weekly rank bonus
-          await this.addIncome(user.id, rankData.weeklyEarning, 'rank_bonus');
-        }
+      const rankData = RANKS.find(r => r.level === user.rank);
+      if (rankData && rankData.weeklyEarning > 0) {
+        await supabase.from('payments').insert([{
+          uid: user.id,
+          amount: rankData.weeklyEarning,
+          type: 'rank_bonus',
+          status: 'finished',
+          method: 'INTERNAL',
+          created_at: new Date().toISOString()
+        }]);
       }
     }
     return true;
@@ -562,23 +483,15 @@ export const supabaseService = {
         .eq('node_id', node.node_id);
     }
 
-    // 2. Add to user's master wallet
-    const profile = await this.getUserProfile(uid);
-    if (profile) {
-      const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
-      updatedWallets.master.balance += totalCollected;
-      await this.createUserProfile(uid, { wallets: updatedWallets });
-      
-      // Log transaction
-      await supabase.from('payments').insert([{
-        uid,
-        amount: totalCollected,
-        type: 'team_collection',
-        status: 'completed',
-        method: 'INTERNAL',
-        created_at: new Date().toISOString()
-      }]);
-    }
+    // 2. Add to user's master wallet via payment record (trigger will handle wallet update)
+    await supabase.from('payments').insert([{
+      uid,
+      amount: totalCollected,
+      type: 'team_collection',
+      status: 'finished',
+      method: 'INTERNAL',
+      created_at: new Date().toISOString()
+    }]);
 
     return totalCollected;
   },
@@ -711,53 +624,6 @@ export const supabaseService = {
         .update({ team_size: newTeamSize })
         .eq('id', parentId);
         
-      currentId = parentId;
-    }
-  },
-
-  async processIncome(uid: string, amount: number) {
-    const profile = await this.getUserProfile(uid);
-    if (!profile) return;
-
-    // 1. Referral Bonus (5% to direct sponsor)
-    if (profile.sponsor_id) {
-      const referralBonus = amount * 0.05; // 5% of package
-      const sponsor = await this.getUserProfile(profile.sponsor_id);
-      if (sponsor && sponsor.active_package > 0) {
-        await this.addIncome(sponsor.id, referralBonus, 'referral_bonus');
-      }
-    }
-
-    // 2. Update Ancestors Volume (Carry-forward)
-    let currentId = uid;
-    while (true) {
-      const { data: node, error } = await supabase
-        .from('profiles')
-        .select('parent_id, side')
-        .eq('id', currentId)
-        .single();
-        
-      if (error || !node || !node.parent_id) break;
-      
-      const parentId = node.parent_id;
-      const side = node.side;
-      
-      const parent = await this.getUserProfile(parentId);
-      if (!parent) break;
-
-      // Update parent's volume (Carry-forward logic)
-      const newVolume = { ...parent.matching_volume || { left: 0, right: 0 } };
-      if (side === 'LEFT') newVolume.left += amount;
-      else newVolume.right += amount;
-
-      await supabase
-        .from('profiles')
-        .update({ matching_volume: newVolume })
-        .eq('id', parentId);
-      
-      // Trigger binary matching immediately for the ancestor
-      await this.processBinaryMatchingForUser(parentId);
-      
       currentId = parentId;
     }
   },
@@ -1138,29 +1004,17 @@ export const supabaseService = {
   },
 
   async addFunds(uid: string, amount: number) {
-    const profile = await this.getUserProfile(uid);
-    if (!profile) throw new Error('User not found');
-
-    const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
-    updatedWallets.master.balance += amount;
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ wallets: updatedWallets })
-      .eq('id', uid);
-
-    if (error) throw error;
-
-    // Log transaction
-    await supabase.from('payments').insert([{
+    // Log transaction - the DB trigger on_payment_update_wallets will handle the wallet update
+    const { error } = await supabase.from('payments').insert([{
       uid,
       amount,
-      type: 'admin_credit',
-      status: 'completed',
+      type: 'deposit',
+      status: 'finished',
       method: 'INTERNAL',
       created_at: new Date().toISOString()
     }]);
 
+    if (error) throw error;
     return true;
   },
 

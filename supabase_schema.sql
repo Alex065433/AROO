@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     sponsor_id UUID REFERENCES public.profiles(id),
     parent_id UUID REFERENCES public.profiles(id),
     side TEXT CHECK (side IN ('LEFT', 'RIGHT', 'ROOT')),
-    rank INTEGER DEFAULT 1,
-    rank_name TEXT DEFAULT 'Partner',
+    rank INTEGER DEFAULT 0,
+    rank_name TEXT DEFAULT 'New Partner',
     active_package NUMERIC DEFAULT 0,
     package_amount NUMERIC DEFAULT 0,
     total_income NUMERIC DEFAULT 0,
@@ -193,34 +193,128 @@ DECLARE
     bonus_percent NUMERIC := 0.10; -- 10% matching bonus
     bonus_amount NUMERIC;
     current_wallets JSONB;
+    current_rank INTEGER;
+    daily_cap NUMERIC;
+    today_income NUMERIC;
+    today_date TEXT := TO_CHAR(NOW(), 'YYYY-MM-DD');
 BEGIN
-    -- Get current volumes and wallets
-    SELECT (matching_volume->>'left')::numeric, (matching_volume->>'right')::numeric, wallets
-    INTO u_left_vol, u_right_vol, current_wallets
+    -- Get current volumes, wallets, and rank for capping
+    SELECT (matching_volume->>'left')::numeric, (matching_volume->>'right')::numeric, wallets, rank, (daily_income->>'amount')::numeric, (daily_income->>'date')
+    INTO u_left_vol, u_right_vol, current_wallets, current_rank, today_income, today_date
     FROM public.profiles
     WHERE id = user_id;
 
     -- Calculate matching amount
     match_amount := LEAST(u_left_vol, u_right_vol);
 
-    IF match_amount > 0 THEN
+    IF match_amount >= 50 THEN -- Minimum 1 pair ($50)
         bonus_amount := match_amount * bonus_percent;
+        
+        -- Simple Daily Capping Logic (Simplified for SQL)
+        daily_cap := CASE 
+            WHEN current_rank = 1 THEN 250
+            WHEN current_rank = 2 THEN 500
+            WHEN current_rank = 3 THEN 1000
+            ELSE 2500
+        END;
 
-        -- Update user's earnings and wallets
+        IF today_date != TO_CHAR(NOW(), 'YYYY-MM-DD') THEN
+            today_income := 0;
+        END IF;
+
+        IF today_income < daily_cap THEN
+            IF (today_income + bonus_amount) > daily_cap THEN
+                bonus_amount := daily_cap - today_income;
+            END IF;
+
+            -- Update user's earnings and wallets
+            UPDATE public.profiles
+            SET total_income = total_income + bonus_amount,
+                wallets = jsonb_set(
+                    jsonb_set(wallets, '{matching,balance}', ((current_wallets->'matching'->>'balance')::numeric + bonus_amount)::text::jsonb),
+                    '{master,balance}', ((current_wallets->'master'->>'balance')::numeric + bonus_amount)::text::jsonb
+                ),
+                daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
+                -- Deduct matched volume
+                matching_volume = jsonb_build_object(
+                    'left', u_left_vol - match_amount,
+                    'right', u_right_vol - match_amount
+                ),
+                matched_pairs = matched_pairs + floor(match_amount / 50)
+            WHERE id = user_id;
+
+            -- Log the bonus payment
+            INSERT INTO public.payments (uid, amount, type, status, order_description)
+            VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'Binary matching bonus for ' || match_amount || ' volume');
+        END IF;
+    END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 11. Rank System Logic
+CREATE OR REPLACE FUNCTION public.check_and_update_rank(user_id UUID)
+RETURNS VOID AS $$
+DECLARE
+    u_rank INTEGER;
+    u_left_vol NUMERIC;
+    u_right_vol NUMERIC;
+    u_active_pkg NUMERIC;
+    new_rank INTEGER;
+    reward_amount NUMERIC := 0;
+    current_wallets JSONB;
+BEGIN
+    SELECT rank, (matching_volume->>'left')::numeric, (matching_volume->>'right')::numeric, active_package, wallets
+    INTO u_rank, u_left_vol, u_right_vol, u_active_pkg, current_wallets
+    FROM public.profiles
+    WHERE id = user_id;
+
+    -- Only active users can have ranks
+    IF u_active_pkg IS NULL OR u_active_pkg <= 0 THEN
+        IF u_rank > 0 THEN
+            UPDATE public.profiles SET rank = 0, rank_name = 'New Partner' WHERE id = user_id;
+        END IF;
+        RETURN;
+    END IF;
+
+    new_rank := u_rank;
+
+    -- Rank 1: Partner (Active Account)
+    IF u_rank = 0 AND u_active_pkg > 0 THEN
+        new_rank := 1;
+    END IF;
+
+    -- Rank Criteria
+    IF u_left_vol >= 5000 AND u_right_vol >= 5000 AND u_rank < 2 THEN
+        new_rank := 2;
+        reward_amount := 100;
+    ELSIF u_left_vol >= 15000 AND u_right_vol >= 15000 AND u_rank < 3 THEN
+        new_rank := 3;
+        reward_amount := 250;
+    ELSIF u_left_vol >= 50000 AND u_right_vol >= 50000 AND u_rank < 4 THEN
+        new_rank := 4;
+        reward_amount := 1000;
+    ELSIF u_left_vol >= 150000 AND u_right_vol >= 150000 AND u_rank < 5 THEN
+        new_rank := 5;
+        reward_amount := 2500;
+    END IF;
+
+    IF new_rank > u_rank THEN
         UPDATE public.profiles
-        SET total_income = total_income + bonus_amount,
-            wallets = jsonb_set(wallets, '{matching,balance}', ((current_wallets->'matching'->>'balance')::numeric + bonus_amount)::text::jsonb),
-            -- Deduct matched volume
-            matching_volume = jsonb_build_object(
-                'left', u_left_vol - match_amount,
-                'right', u_right_vol - match_amount
-            ),
-            matched_pairs = matched_pairs + 1
+        SET rank = new_rank,
+            rank_name = CASE 
+                WHEN new_rank = 1 THEN 'Partner'
+                WHEN new_rank = 2 THEN 'Bronze'
+                WHEN new_rank = 3 THEN 'Silver'
+                WHEN new_rank = 4 THEN 'Gold'
+                WHEN new_rank = 5 THEN 'Platinum'
+                ELSE rank_name
+            END
         WHERE id = user_id;
 
-        -- Log the bonus payment
-        INSERT INTO public.payments (uid, amount, type, status, order_description)
-        VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'Binary matching bonus for ' || match_amount || ' volume');
+        IF reward_amount > 0 THEN
+            INSERT INTO public.payments (uid, amount, type, status, order_description)
+            VALUES (user_id, reward_amount, 'rank_reward', 'finished', 'Reward for reaching Rank ' || new_rank);
+        END IF;
     END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -231,18 +325,57 @@ DECLARE
     current_parent_id UUID;
     current_side TEXT;
     package_amount NUMERIC;
+    sponsor_id UUID;
+    sponsor_wallets JSONB;
+    referral_bonus NUMERIC;
 BEGIN
     -- Only process if payment is finished and type is package_activation
-    IF NEW.status = 'finished' AND NEW.type = 'package_activation' AND (OLD.status IS NULL OR OLD.status != 'finished') THEN
+    -- Handle both INSERT and UPDATE
+    IF NEW.status = 'finished' AND NEW.type = 'package_activation' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'finished'))) THEN
         package_amount := NEW.amount;
 
-        -- Update the user's own package info
+        -- 1. Update the user's own package info and status
         UPDATE public.profiles
         SET active_package = package_amount,
-            package_amount = package_amount
+            package_amount = package_amount,
+            status = 'active'
         WHERE id = NEW.uid;
 
-        -- Traverse up to update ancestors' volume
+        -- 1.1 Generate Team Collection Nodes
+        -- (3 nodes for $50, 7 for $100, 15 for $250, 31 for $500, 63 for $1000)
+        INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
+        SELECT 
+            NEW.uid,
+            'NODE-' || floor(random() * 900000 + 100000)::text,
+            'Node ' || i || ' (Package ' || package_amount || ')',
+            0,
+            true,
+            NOW()
+        FROM generate_series(1, CASE 
+            WHEN package_amount >= 1000 THEN 63
+            WHEN package_amount >= 500 THEN 31
+            WHEN package_amount >= 250 THEN 15
+            WHEN package_amount >= 100 THEN 7
+            ELSE 3
+        END) AS i;
+
+        -- Trigger rank check for the user themselves
+        PERFORM public.check_and_update_rank(NEW.uid);
+
+        -- 2. Referral Bonus (5% to direct sponsor)
+        SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid;
+        
+        IF sponsor_id IS NOT NULL THEN
+            referral_bonus := package_amount * 0.05;
+            
+            INSERT INTO public.payments (uid, amount, type, status, order_description)
+            VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'Direct referral bonus from ' || NEW.uid);
+            
+            -- Trigger rank check for sponsor
+            PERFORM public.check_and_update_rank(sponsor_id);
+        END IF;
+
+        -- 3. Traverse up to update ancestors' volume
         SELECT parent_id, side INTO current_parent_id, current_side
         FROM public.profiles
         WHERE id = NEW.uid;
@@ -261,6 +394,9 @@ BEGIN
 
             -- Trigger binary matching check for this parent
             PERFORM public.calculate_binary_matching(current_parent_id);
+            
+            -- Trigger rank check for this parent
+            PERFORM public.check_and_update_rank(current_parent_id);
 
             -- Move up to the next parent
             SELECT parent_id, side INTO current_parent_id, current_side
@@ -272,7 +408,63 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- 12. Wallet Update Logic for Payments
+CREATE OR REPLACE FUNCTION public.update_wallets_on_payment()
+RETURNS TRIGGER AS $$
+DECLARE
+    current_wallets JSONB;
+    wallet_key TEXT;
+    new_balance NUMERIC;
+BEGIN
+    -- Only process if status is finished
+    IF NEW.status = 'finished' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'finished'))) THEN
+        SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid;
+        
+        -- Determine which wallet to update based on payment type
+        wallet_key := CASE 
+            WHEN NEW.type = 'referral_bonus' THEN 'referral'
+            WHEN NEW.type = 'matching_bonus' THEN 'matching'
+            WHEN NEW.type = 'rank_reward' THEN 'rank_reward'
+            WHEN NEW.type = 'team_collection' THEN 'rewards'
+            WHEN NEW.type = 'deposit' THEN 'master'
+            WHEN NEW.type = 'withdrawal' THEN 'master'
+            WHEN NEW.type = 'package_activation' THEN 'master'
+            ELSE 'master'
+        END;
+
+        -- Update the specific wallet and the master wallet (except for deposits/withdrawals which are already master)
+        IF wallet_key != 'master' THEN
+            UPDATE public.profiles
+            SET wallets = jsonb_set(
+                    jsonb_set(wallets, '{' || wallet_key || ',balance}', ((current_wallets->wallet_key->>'balance')::numeric + NEW.amount)::text::jsonb),
+                    '{master,balance}', ((current_wallets->'master'->>'balance')::numeric + NEW.amount)::text::jsonb
+                ),
+                total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
+            WHERE id = NEW.uid;
+        ELSE
+            -- Handle master wallet updates (deposits, withdrawals, package activations)
+            new_balance := CASE 
+                WHEN NEW.type = 'withdrawal' OR (NEW.type = 'package_activation' AND NEW.method = 'WALLET') THEN 
+                    ((current_wallets->'master'->>'balance')::numeric - NEW.amount)
+                ELSE 
+                    ((current_wallets->'master'->>'balance')::numeric + NEW.amount)
+            END;
+
+            UPDATE public.profiles
+            SET wallets = jsonb_set(wallets, '{master,balance}', new_balance::text::jsonb)
+            WHERE id = NEW.uid;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 DROP TRIGGER IF EXISTS on_payment_update_process_package ON public.payments;
 CREATE TRIGGER on_payment_update_process_package
-  AFTER UPDATE ON public.payments
+  AFTER INSERT OR UPDATE ON public.payments
   FOR EACH ROW EXECUTE FUNCTION public.process_package_activation();
+
+DROP TRIGGER IF EXISTS on_payment_update_wallets ON public.payments;
+CREATE TRIGGER on_payment_update_wallets
+  AFTER INSERT OR UPDATE ON public.payments
+  FOR EACH ROW EXECUTE FUNCTION public.update_wallets_on_payment();

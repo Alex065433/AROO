@@ -87,15 +87,22 @@ const RankSystem: React.FC = () => {
                   <GlassCard 
                     key={r.level} 
                     glow={isCurrent ? 'amber' : 'none'} 
-                    className={`group transition-all duration-500 relative ${!isUnlocked ? 'opacity-30' : 'opacity-100'}`}
+                    className={`group transition-all duration-500 relative ${!isUnlocked ? 'grayscale opacity-40' : 'opacity-100'}`}
                   >
                     {!isUnlocked && (
-                      <div className="absolute inset-0 z-20 bg-black/40 backdrop-blur-[2px] rounded-3xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="flex flex-col items-center gap-2">
-                           <Lock className="text-slate-500" size={32} />
-                           <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                             {!isActive ? 'Account Inactive' : 'Protocol Locked'}
+                      <div className="absolute inset-0 z-20 bg-black/60 backdrop-blur-[4px] rounded-3xl flex items-center justify-center">
+                        <div className="flex flex-col items-center gap-3 p-6 text-center">
+                           <div className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2">
+                             <Lock className="text-slate-400" size={24} />
+                           </div>
+                           <span className="text-[11px] font-black text-white uppercase tracking-[0.2em]">
+                             {!isActive ? 'Account Activation Required' : `Requires Level ${r.level}`}
                            </span>
+                           {!isActive && (
+                             <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest max-w-[150px]">
+                               Activate a package to unlock the rank ladder
+                             </p>
+                           )}
                         </div>
                       </div>
                     )}

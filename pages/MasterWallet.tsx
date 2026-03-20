@@ -148,7 +148,9 @@ const MasterWallet: React.FC = () => {
     }
 
     if (activeTab === 'package') {
-      // Deduct balance for package activation
+      // The database trigger 'update_wallets_on_payment' handles the deduction 
+      // from the master wallet automatically when a 'package_activation' payment 
+      // with method 'WALLET' is created.
       try {
         const user = supabaseService.getCurrentUser();
         if (user) {
@@ -159,22 +161,18 @@ const MasterWallet: React.FC = () => {
             return;
           }
           
-          const newBalance = profile.wallets.master.balance - cost;
-          // 1. Deduct balance
-          await supabaseService.createUserProfile(user.id || user.uid, {
-            wallets: {
-              ...profile.wallets,
-              master: { ...profile.wallets.master, balance: newBalance }
-            }
-          });
-
-          // 2. Call activatePackage which handles logging, team nodes, active_package field, and MLM income
+          // Call activatePackage which handles logging, team nodes, active_package field, and MLM income
+          // It will also trigger the wallet deduction in the DB
           await supabaseService.activatePackage(user.id || user.uid, cost);
           
-          setUserWallets(prev => ({
-            ...prev,
-            master: { ...prev.master, balance: newBalance }
-          }));
+          // Refresh local state after a short delay to allow triggers to finish
+          setTimeout(async () => {
+            const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+            if (updatedProfile) {
+              setUserProfile(updatedProfile);
+              setUserWallets({ ...MOCK_USER.wallets, ...(updatedProfile.wallets || {}) });
+            }
+          }, 1000);
         }
       } catch (err) {
         console.error('Error activating package:', err);

@@ -20,11 +20,22 @@ const AdminCustomers: React.FC = () => {
   const [fundAmount, setFundAmount] = useState('');
   const [selectedPackage, setSelectedPackage] = useState('150');
 
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({
+    name: '',
+    email: '',
+    password: 'Password123!',
+    sponsorId: 'ARW-100001',
+    side: 'LEFT' as 'LEFT' | 'RIGHT'
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
       const data = await supabaseService.getAllUsers();
-      setUsers(data);
+      setUsers(data || []);
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
@@ -35,6 +46,44 @@ const AdminCustomers: React.FC = () => {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  const handleAddCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsProcessing(true);
+    try {
+      await supabaseService.register(
+        newCustomer.email,
+        newCustomer.password,
+        newCustomer.sponsorId,
+        newCustomer.side,
+        { name: newCustomer.name }
+      );
+      alert('Customer added successfully');
+      setIsAddModalOpen(false);
+      setNewCustomer({
+        name: '',
+        email: '',
+        password: 'Password123!',
+        sponsorId: 'ARW-100001',
+        side: 'LEFT'
+      });
+      fetchUsers();
+    } catch (error) {
+      console.error('Error adding customer:', error);
+      alert('Error adding customer: ' + (error as any).message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const filteredUsers = users.filter(u => 
+    u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    u.operator_id?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
+  const paginatedUsers = filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleAddFunds = async () => {
     if (!selectedUser || !fundAmount) return;
@@ -56,7 +105,9 @@ const AdminCustomers: React.FC = () => {
     if (!selectedUser) return;
     setIsProcessing(true);
     try {
-      await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage));
+      await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), {
+        adminId: supabaseService.getCurrentUser()?.id
+      });
       alert('Package activated successfully');
       fetchUsers();
     } catch (error) {
@@ -152,7 +203,10 @@ const AdminCustomers: React.FC = () => {
           <button className="px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all flex items-center gap-2">
             <Download size={16} /> Export CSV
           </button>
-          <button className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-medium transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2">
+          <button 
+            onClick={() => setIsAddModalOpen(true)}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-medium transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2"
+          >
             <Plus size={16} /> Add Customer
           </button>
         </div>
@@ -214,11 +268,7 @@ const AdminCustomers: React.FC = () => {
                     <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Synchronizing User Nodes...</p>
                   </td>
                 </tr>
-              ) : users.filter(u => 
-                  u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                  u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  u.operator_id?.toLowerCase().includes(searchQuery.toLowerCase())
-                ).map((user, i) => (
+              ) : paginatedUsers.map((user, i) => (
                 <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
                   <td className="px-8 py-5 text-sm font-mono font-bold text-indigo-600 dark:text-indigo-400">{user.operator_id || user.id?.substring(0, 8)}</td>
                   <td className="px-8 py-5">
@@ -264,26 +314,157 @@ const AdminCustomers: React.FC = () => {
         
         {/* Pagination */}
         <div className="px-8 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Showing 1 to 5 of 45,231 customers</p>
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredUsers.length)} of {filteredUsers.length} customers
+          </p>
           <div className="flex items-center gap-2">
-            <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white disabled:opacity-30" disabled>
+            <button 
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white disabled:opacity-30"
+            >
               <ChevronLeft size={20} />
             </button>
             <div className="flex items-center gap-1">
-              {[1, 2, 3, '...', 12].map((p, i) => (
-                <button key={i} className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
-                  p === 1 ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
-                }`}>
-                  {p}
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const pageNum = i + 1;
+                return (
+                  <button 
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
+                      currentPage === pageNum ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              {totalPages > 5 && <span className="text-slate-400">...</span>}
+              {totalPages > 5 && (
+                <button 
+                  onClick={() => setCurrentPage(totalPages)}
+                  className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
+                    currentPage === totalPages ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {totalPages}
                 </button>
-              ))}
+              )}
             </div>
-            <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white">
+            <button 
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white disabled:opacity-30"
+            >
               <ChevronRight size={20} />
             </button>
           </div>
         </div>
       </div>
+
+      {/* Add Customer Modal */}
+      <AnimatePresence>
+        {isAddModalOpen && (
+          <div className="fixed inset-0 flex items-center justify-center z-[300] p-4">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="absolute inset-0 bg-black/60 backdrop-blur-md" 
+              onClick={() => setIsAddModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800"
+            >
+              <div className="p-8">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Add New Customer</h2>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Register a new user manually into the system.</p>
+                  </div>
+                  <button onClick={() => setIsAddModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-all">
+                    <XCircle size={24} />
+                  </button>
+                </div>
+
+                <form onSubmit={handleAddCustomer} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Full Name</label>
+                      <input 
+                        required
+                        type="text" 
+                        value={newCustomer.name}
+                        onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white" 
+                        placeholder="John Doe"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Email Address</label>
+                      <input 
+                        required
+                        type="email" 
+                        value={newCustomer.email}
+                        onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white" 
+                        placeholder="john@example.com"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Password</label>
+                    <input 
+                      required
+                      type="text" 
+                      value={newCustomer.password}
+                      onChange={(e) => setNewCustomer({...newCustomer, password: e.target.value})}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white" 
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Sponsor ID</label>
+                      <input 
+                        required
+                        type="text" 
+                        value={newCustomer.sponsorId}
+                        onChange={(e) => setNewCustomer({...newCustomer, sponsorId: e.target.value})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white" 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Placement Side</label>
+                      <select 
+                        value={newCustomer.side}
+                        onChange={(e) => setNewCustomer({...newCustomer, side: e.target.value as 'LEFT' | 'RIGHT'})}
+                        className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+                      >
+                        <option value="LEFT">Left Side</option>
+                        <option value="RIGHT">Right Side</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    disabled={isProcessing}
+                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 mt-4"
+                  >
+                    {isProcessing ? 'Adding Customer...' : 'Create Account'}
+                  </button>
+                </form>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Slide-in Edit Panel */}
       <AnimatePresence>
@@ -421,7 +602,7 @@ const AdminCustomers: React.FC = () => {
                               if (confirm(`Are you sure you want to activate user ${selectedUser.name} for FREE?`)) {
                                 setIsProcessing(true);
                                 try {
-                                  await supabaseService.activatePackage(selectedUser.id, parseInt(selectedPackage));
+                                  await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), { isFree: true });
                                   alert('User activated successfully!');
                                   fetchUsers();
                                   setIsEditPanelOpen(false);

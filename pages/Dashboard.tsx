@@ -1,10 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { 
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
-  User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle
+  User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
+  QrCode
 } from 'lucide-react';
 import { MOCK_USER } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
@@ -112,7 +114,36 @@ const Dashboard: React.FC = () => {
   const [withdrawAddress, setWithdrawAddress] = useState('');
   const [binanceRates, setBinanceRates] = useState<{symbol: string, price: string}[]>([]);
 
+  const [isDepositing, setIsDepositing] = useState(false);
+  const [depositAmount, setDepositAmount] = useState('50');
+  const [depositCurrency, setDepositCurrency] = useState('usdtbsc');
+  const [paymentData, setPaymentData] = useState<any>(null);
+
   const [adminStatus, setAdminStatus] = useState<{status: string} | null>(null);
+
+  const handleDeposit = async () => {
+    if (!userData) return;
+    setIsDepositing(true);
+    try {
+      const response = await axios.post('/api/payments/create', {
+        amount: parseFloat(depositAmount),
+        currency: depositCurrency,
+        orderId: `DEP-${Date.now()}`,
+        orderDescription: `Wallet Deposit for ${userData.id}`,
+        uid: userData.id
+      });
+      
+      setPaymentData(response.data);
+      setNotification('Deposit request created successfully!');
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error: any) {
+      console.error('Deposit error:', error);
+      setNotification(error.response?.data?.message || 'Failed to create deposit request');
+      setTimeout(() => setNotification(null), 3000);
+    } finally {
+      setIsDepositing(false);
+    }
+  };
 
   useEffect(() => {
     const checkAdminStatus = async () => {
@@ -209,7 +240,50 @@ const Dashboard: React.FC = () => {
     setTimeout(() => setNotification(null), 3000);
   };
 
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+
+  const checkDepositStatus = async () => {
+    if (!paymentData) return;
+    setIsCheckingStatus(true);
+    try {
+      const response = await axios.get(`/api/payments/status/${paymentData.payment_id}`);
+      const status = response.data.payment_status;
+      
+      if (status === 'finished' || status === 'partially_paid') {
+        setNotification('Deposit confirmed! Your balance will update shortly.');
+        setActiveModal(null);
+        setPaymentData(null);
+        // Refresh profile
+        if (userData) {
+          const profile = await supabaseService.getUserProfile(userData.id);
+          if (profile) {
+            setUserData(profile);
+            setUserWallets({
+              ...MOCK_USER.wallets,
+              ...(profile.wallets || {})
+            });
+          }
+        }
+      } else if (status === 'waiting' || status === 'confirming' || status === 'sending') {
+        setNotification(`Payment status: ${status}. Please wait...`);
+      } else {
+        setNotification(`Payment status: ${status}`);
+      }
+    } catch (error) {
+      console.error('Error checking status:', error);
+      setNotification('Failed to check payment status');
+    } finally {
+      setIsCheckingStatus(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
   const executeAction = () => {
+    if (activeModal === 'deposit' && paymentData) {
+      checkDepositStatus();
+      return;
+    }
+    
     setIsProcessing(true);
     setTimeout(() => {
       setIsProcessing(false);
@@ -257,39 +331,119 @@ const Dashboard: React.FC = () => {
       `}</style>
 
       {/* Deposit Modal */}
-      <Modal title="Inbound Deposit" isOpen={activeModal === 'deposit'} onClose={() => setActiveModal(null)}>
-        <div className="space-y-8 text-center">
-          <div className="flex flex-col items-center justify-center space-y-4">
-            <div className="p-4 bg-white rounded-[32px] shadow-2xl relative overflow-hidden group">
-              {isGenerating ? (
-                <div className="w-48 h-48 flex items-center justify-center">
-                  <RefreshCw className="text-amber-600 animate-spin" size={40} />
+      <Modal 
+        title="Inbound Deposit" 
+        isOpen={activeModal === 'deposit'} 
+        onClose={() => {
+          setActiveModal(null);
+          setPaymentData(null);
+        }}
+      >
+        <div className="space-y-8">
+          {!paymentData ? (
+            <>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center px-2">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Deposit Amount (USDT)</p>
                 </div>
-              ) : (
-                <img 
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${depositAddress}`} 
-                  alt="QR Code" 
-                  className="w-48 h-48 object-contain transition-opacity duration-300"
+                <input
+                  type="number"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-amber-500/50 font-bold"
+                  placeholder="Min 50 USDT"
                 />
-              )}
-            </div>
-          </div>
+              </div>
 
-          <div className="p-8 bg-white/5 rounded-[32px] border border-white/5 space-y-4">
-             <div className="flex justify-between items-center px-2">
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Master Node Address</p>
-                <button onClick={copyAddress} className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-400 hover:text-white">
-                  {isCopied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { id: 'usdtbsc', name: 'USDT (BEP20)' },
+                  { id: 'usdttrc20', name: 'USDT (TRC20)' },
+                ].map((network) => (
+                  <button
+                    key={network.id}
+                    onClick={() => setDepositCurrency(network.id)}
+                    className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${
+                      depositCurrency === network.id
+                        ? 'bg-amber-500/10 border-amber-500/50'
+                        : 'bg-white/5 border-white/10 hover:bg-white/10'
+                    }`}
+                  >
+                    <img src="https://cryptologos.cc/logos/tether-usdt-logo.png" alt={network.name} className="w-8 h-8" referrerPolicy="no-referrer" />
+                    <div className="text-[10px] font-black text-white uppercase tracking-widest">{network.name}</div>
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={handleDeposit}
+                disabled={isDepositing || parseFloat(depositAmount) < 50}
+                className="w-full bg-[#a3680e] hover:bg-[#c0841a] disabled:opacity-30 disabled:cursor-not-allowed text-white font-black py-5 rounded-3xl transition-all uppercase tracking-widest text-xs shadow-xl shadow-amber-900/20"
+              >
+                {isDepositing ? <RefreshCw className="animate-spin mx-auto" size={20} /> : 'GENERATE DEPOSIT ADDRESS'}
+              </button>
+            </>
+          ) : (
+            <div className="space-y-8 text-center">
+              <div className="bg-white p-6 rounded-[40px] inline-block mx-auto shadow-2xl">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${paymentData.pay_address}`} 
+                  alt="QR Code" 
+                  className="w-48 h-48 object-contain"
+                />
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-6 bg-white/5 rounded-[32px] border border-white/5 space-y-4">
+                  <div className="flex justify-between items-center px-2">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Send exactly {paymentData.pay_amount} {paymentData.pay_currency.toUpperCase()}</p>
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(paymentData.pay_address);
+                        setNotification('Address copied!');
+                        setTimeout(() => setNotification(null), 3000);
+                      }}
+                      className="p-2 hover:bg-white/5 rounded-xl transition-all text-slate-400 hover:text-white"
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                  <p className="text-white font-mono break-all text-xs bg-black/40 p-4 rounded-xl border border-white/5">
+                    {paymentData.pay_address}
+                  </p>
+                </div>
+
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-[10px] font-black uppercase tracking-widest text-amber-500">
+                  Payment ID: <span className="font-mono text-white ml-2">{paymentData.payment_id}</span>
+                </div>
+              </div>
+
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed">
+                Your node will be credited automatically once the transaction is confirmed on the blockchain.
+              </p>
+              
+              <div className="space-y-3">
+                <button 
+                  onClick={checkDepositStatus}
+                  disabled={isCheckingStatus}
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-[#1e2329] font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] flex items-center justify-center gap-2"
+                >
+                  {isCheckingStatus ? <RefreshCw className="animate-spin" size={16} /> : <Check size={16} />}
+                  I HAVE DEPOSITED
                 </button>
-             </div>
-             <p className={`text-white font-mono break-all text-xs bg-black/40 p-4 rounded-xl border border-white/5 ${isGenerating ? 'opacity-20' : ''}`}>
-               {depositAddress}
-             </p>
-          </div>
 
-          <button onClick={executeAction} className="w-full bg-[#a3680e] py-5 rounded-3xl font-black text-white hover:bg-[#c0841a] transition-all uppercase tracking-widest text-xs">
-             {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : 'I HAVE DEPOSITED'}
-          </button>
+                <button 
+                  onClick={() => {
+                    setActiveModal(null);
+                    setPaymentData(null);
+                  }}
+                  className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5"
+                >
+                  CLOSE WINDOW
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
 
