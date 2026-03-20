@@ -34,7 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       {
         price_amount: Number(amount),
         price_currency: "usd",
-        pay_currency: "usdttrc20", // ✅ FIX HERE
+        pay_currency: "usdtbep 20", // ✅ FIX HERE
         order_id: userId,
         order_description: "Deposit",
       },
