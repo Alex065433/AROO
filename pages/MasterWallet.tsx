@@ -77,14 +77,16 @@ const MasterWallet: React.FC = () => {
 
     try {
       const response = await fetch('/api/payments/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: depositAmount,
-          currency: 'usdtbsc',
-          orderId: `DEP-${Date.now()}`,
-          orderDescription: `Deposit for ${userProfile?.email}`,
-          uid: userProfile?.id
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    amount: Number(depositAmount),
+    userId: userProfile.id
+  })
+});
+
+const data = await response.json();
+console.log("PAYMENT RESPONSE:", data);
         })
       });
 
