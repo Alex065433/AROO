@@ -184,10 +184,19 @@ export const supabaseService = {
         .single();
       
       if (explicitParent) {
-        parentId = explicitParent.id;
-        finalSide = side;
+        // Even with explicit parent, find the next available spot on that side
+        // to prevent duplicate side assignments
+        try {
+          const binaryResult = await this.findBinaryParent(explicitParent.id, side);
+          parentId = binaryResult.parentId;
+          finalSide = binaryResult.side;
+        } catch (err) {
+          console.warn('Binary parent search failed for explicit parent, defaulting to explicit parent:', err);
+          parentId = explicitParent.id;
+          finalSide = side;
+        }
       } else {
-        // Fallback to spillover if explicit parent not found
+        // Fallback to spillover from sponsor if explicit parent not found
         try {
           const binaryResult = await this.findBinaryParent(sponsor.id, side);
           parentId = binaryResult.parentId;
@@ -197,7 +206,7 @@ export const supabaseService = {
         }
       }
     } else {
-      // Standard spillover logic
+      // Standard spillover logic from sponsor
       try {
         const binaryResult = await this.findBinaryParent(sponsor.id, side);
         parentId = binaryResult.parentId;
@@ -251,6 +260,9 @@ export const supabaseService = {
         id: user.id,
         email: user.email,
         operator_id: operatorId,
+        sponsor_id: profileData.sponsor_id,
+        parent_id: profileData.parent_id,
+        side: profileData.side,
         name: profileData.name,
         role: profileData.role,
         wallets: profileData.wallets, // Ensure wallets exist even in minimal profile
@@ -274,7 +286,12 @@ export const supabaseService = {
     }
 
     // 5. Update Ancestors Team Size
-    await this.updateAncestorsTeamSize(user.id);
+    try {
+      await this.updateAncestorsTeamSize(user.id);
+    } catch (err) {
+      console.error('Error updating ancestors team size:', err);
+      // Don't throw here, as the user is already registered
+    }
 
     return { ...profileData, uid: user.id };
   },
@@ -636,8 +653,8 @@ export const supabaseService = {
   },
 
   // MLM Logic
-  async findBinaryParent(sponsorId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
-    let currentParentId = sponsorId;
+  async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+    let currentParentId = startNodeId;
     
     while (true) {
       const { data: children, error } = await supabase
@@ -682,7 +699,10 @@ export const supabaseService = {
         
       if (parentError || !parent) break;
       
-      const newTeamSize = { ...parent.team_size };
+      const newTeamSize = { 
+        left: parent.team_size?.left || 0, 
+        right: parent.team_size?.right || 0 
+      };
       if (side === 'LEFT') newTeamSize.left += 1;
       else newTeamSize.right += 1;
       
@@ -849,7 +869,7 @@ export const supabaseService = {
       
       children.forEach(child => {
         const parent = currentLevelNodes.find(p => p.id === child.parent_id);
-        if (parent) {
+        if (parent && child.side) {
           const childPath = `${parent.path}-${child.side.toLowerCase()}`;
           buildNode(child, childPath);
           nextLevelNodes.push({ id: child.id, path: childPath });

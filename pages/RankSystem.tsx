@@ -7,6 +7,7 @@ import { Crown, Star, Shield, Zap, Lock, CheckCircle2, Award, Gem, Medal, Refres
 
 const RankSystem: React.FC = () => {
   const [userRank, setUserRank] = useState(1);
+  const [isActive, setIsActive] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,9 +15,10 @@ const RankSystem: React.FC = () => {
       try {
         const user = supabaseService.getCurrentUser();
         if (user) {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid);
+          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           if (profile) {
             setUserRank(profile.rank || 1);
+            setIsActive(profile.active_package > 0);
           }
         }
       } catch (err) {
@@ -77,8 +79,8 @@ const RankSystem: React.FC = () => {
             {/* Ranks in Tier */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 px-4">
               {RANKS.filter(r => tier.levels.includes(r.level)).map((r) => {
-                const isUnlocked = r.level <= userRank;
-                const isCurrent = r.level === userRank;
+                const isUnlocked = isActive && r.level <= userRank;
+                const isCurrent = isActive && r.level === userRank;
                 const Icon = getRankIcon(r.level);
 
                 return (
@@ -91,7 +93,9 @@ const RankSystem: React.FC = () => {
                       <div className="absolute inset-0 z-20 bg-black/40 backdrop-blur-[2px] rounded-3xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="flex flex-col items-center gap-2">
                            <Lock className="text-slate-500" size={32} />
-                           <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Protocol Locked</span>
+                           <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                             {!isActive ? 'Account Inactive' : 'Protocol Locked'}
+                           </span>
                         </div>
                       </div>
                     )}

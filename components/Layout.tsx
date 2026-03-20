@@ -16,7 +16,7 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
-  const [userData, setUserData] = useState<{name: string, rank: number} | null>(null);
+  const [userData, setUserData] = useState<{name: string, rank: number, isActive: boolean} | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -28,7 +28,8 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
           if (profile) {
             setUserData({
               name: profile.name,
-              rank: profile.rank || 1
+              rank: profile.rank || 1,
+              isActive: profile.active_package > 0
             });
           }
         } catch (err) {
@@ -39,7 +40,11 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     return () => unsubscribe();
   }, []);
 
-  const currentRankName = userData ? (RANKS.find(r => r.level === userData.rank)?.name || `Rank ${userData.rank}`) : 'Partner';
+  const currentRankName = userData 
+    ? (userData.isActive 
+        ? (RANKS.find(r => r.level === userData.rank)?.name || `Rank ${userData.rank}`)
+        : 'Inactive')
+    : 'Partner';
   const unreadCount = notifications.filter(n => n.isNew).length;
 
   const menu = [

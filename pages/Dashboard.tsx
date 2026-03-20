@@ -406,7 +406,7 @@ const Dashboard: React.FC = () => {
                     // Refresh profile
                     const profile = await supabaseService.getUserProfile(userData.id);
                     setUserData(profile);
-                    setUserWallets(profile.wallets);
+                    setUserWallets({ ...MOCK_USER.wallets, ...(profile.wallets || {}) });
                   } catch (err) {
                     console.error('MLM Trigger Failed:', err);
                   }

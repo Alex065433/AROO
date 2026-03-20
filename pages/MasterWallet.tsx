@@ -37,7 +37,7 @@ const MasterWallet: React.FC = () => {
           const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           if (profile) {
             setUserProfile(profile);
-            setUserWallets(profile.wallets);
+            setUserWallets({ ...MOCK_USER.wallets, ...(profile.wallets || {}) });
           }
 
           // Fetch real transactions
