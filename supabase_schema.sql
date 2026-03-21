@@ -377,8 +377,8 @@ BEGIN
     FROM public.profiles
     WHERE id = user_id;
 
-    -- Only active users can have ranks
-    IF u_active_pkg IS NULL OR u_active_pkg <= 0 THEN
+    -- CRITICAL: Rank only activates if package is $150 or more
+    IF u_active_pkg IS NULL OR u_active_pkg < 150 THEN
         IF u_rank > 0 THEN
             UPDATE public.profiles SET rank = 0, rank_name = 'New Partner' WHERE id = user_id;
         END IF;
@@ -387,8 +387,8 @@ BEGIN
 
     new_rank := u_rank;
 
-    -- Rank 1: Partner (Active Account)
-    IF u_rank = 0 AND u_active_pkg > 0 THEN
+    -- Rank 1: Starter (Active Account >= 150)
+    IF u_rank = 0 AND u_active_pkg >= 150 THEN
         new_rank := 1;
     END IF;
 
@@ -479,7 +479,13 @@ BEGIN
         WHERE id = NEW.uid;
 
         -- 1.1 Generate Team Collection Nodes
-        -- (3 nodes for $50, 7 for $100, 15 for $250, 31 for $500, 63 for $1000)
+        -- User request: 150$ -> 3 nodes.
+        -- We'll adjust the ladder: 
+        -- < 150: 0 nodes
+        -- 150-249: 3 nodes
+        -- 250-499: 15 nodes
+        -- 500-999: 31 nodes
+        -- 1000+: 63 nodes
         INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
         SELECT 
             NEW.uid,
@@ -492,19 +498,19 @@ BEGIN
             WHEN package_amount >= 1000 THEN 63
             WHEN package_amount >= 500 THEN 31
             WHEN package_amount >= 250 THEN 15
-            WHEN package_amount >= 100 THEN 7
-            ELSE 3
+            WHEN package_amount >= 150 THEN 3
+            ELSE 0
         END) AS i
         ON CONFLICT (node_id) DO NOTHING;
 
-        -- 1.2 Incentive Pool Accrual (1% to the user themselves)
+        -- 1.2 INCENTIVE POOL ACCRUAL (1% to the user themselves)
         INSERT INTO public.payments (uid, amount, type, status, order_description)
         VALUES (NEW.uid, package_amount * 0.01, 'incentive_accrual', 'finished', 'INCENTIVE POOL ACCRUAL for Package ' || package_amount);
 
         -- Trigger rank check for the user themselves
         PERFORM public.check_and_update_rank(NEW.uid);
 
-        -- 2. Referral Bonus (5% to direct sponsor)
+        -- 2. DIRECT REFERRAL YIELD (5% to direct sponsor)
         SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid;
         
         IF sponsor_id IS NOT NULL THEN
@@ -517,7 +523,7 @@ BEGIN
             PERFORM public.check_and_update_rank(sponsor_id);
         END IF;
 
-        -- 3. Traverse up to update ancestors' volume
+        -- 3. Traverse up to update ancestors' volume for BINARY MATCHING DIVIDEND
         SELECT parent_id, side INTO current_parent_id, current_side
         FROM public.profiles
         WHERE id = NEW.uid;

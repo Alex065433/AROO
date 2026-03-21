@@ -4,10 +4,12 @@ import axios from "axios";
 import crypto from "crypto";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
 
 dotenv.config();
 
 const app = express();
+const resend = new Resend(process.env.RESEND_API_KEY || "re_854E6gtW_NZCqaxH6gT6jwYUeSmTHettv");
 
 // Lazy-load Supabase client to prevent startup crashes if env vars are missing
 let supabaseClient: any = null;
@@ -82,6 +84,52 @@ app.post("/api/admin/activate-package", (req, res) => {
   const { uid, packageAmount } = req.body;
   console.log(`Mock Admin: Activating $${packageAmount} package for ${uid}`);
   res.json({ success: true });
+});
+
+// Welcome Email Route
+app.post("/api/email/welcome", async (req, res) => {
+  const { email, name, operatorId } = req.body;
+
+  if (!email || !operatorId) {
+    return res.status(400).json({ error: "Email and Operator ID are required" });
+  }
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "Arowin Network <onboarding@resend.dev>",
+      to: [email],
+      subject: "Welcome to Arowin Network - Your Node is Active!",
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+          <h1 style="color: #f97316; text-transform: uppercase;">Welcome to the Network</h1>
+          <p>Greetings <strong>${name || 'Operator'}</strong>,</p>
+          <p>Your enrollment in the Arowin Trading Financial Network has been successfully processed. Your protocol node is now synchronizing with our decentralized growth framework.</p>
+          
+          <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f97316;">
+            <p style="margin: 0; font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Your Protocol ID</p>
+            <p style="margin: 5px 0 0 0; font-size: 24px; font-family: monospace; font-weight: bold; color: #0f172a;">${operatorId}</p>
+          </div>
+
+          <p>Please keep this ID secure. You will need it to access your dashboard and manage your trading nodes.</p>
+          
+          <p style="font-size: 14px; color: #64748b; margin-top: 40px;">
+            Best Regards,<br>
+            <strong>Arowin System Core</strong>
+          </p>
+        </div>
+      `,
+    });
+
+    if (error) {
+      console.error("Resend Error:", error);
+      return res.status(500).json({ error });
+    }
+
+    res.json({ success: true, data });
+  } catch (err: any) {
+    console.error("Email Sending Failed:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Proxy for Binance Rates to avoid CORS

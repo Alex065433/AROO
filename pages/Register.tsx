@@ -93,6 +93,22 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       setRegisteredUser(user);
       setIsSubmitting(false);
       setIsSuccess(true);
+
+      // Send Welcome Email
+      try {
+        await fetch('/api/email/welcome', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email,
+            name: name || 'New Operator',
+            operatorId: user.operator_id
+          })
+        });
+      } catch (emailErr) {
+        console.error('Failed to send welcome email:', emailErr);
+      }
+
       setTimeout(() => {
         onLogin();
         navigate('/dashboard');
