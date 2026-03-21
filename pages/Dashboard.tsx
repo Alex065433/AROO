@@ -595,6 +595,24 @@ const Dashboard: React.FC = () => {
                   {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
                   REBUILD TREE COUNTS
                 </button>
+                <button 
+                  onClick={async () => {
+                    setIsProcessing(true);
+                    try {
+                      await supabaseService.rebuildCumulativeVolume();
+                      setNotification("Cumulative Volume Rebuilt Successfully");
+                    } catch (err) {
+                      console.error('Rebuild Failed:', err);
+                      setNotification("Rebuild Failed: " + (err as Error).message);
+                    }
+                    setIsProcessing(false);
+                  }}
+                  disabled={isProcessing}
+                  className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-amber-500/20 flex items-center justify-center gap-3"
+                >
+                  {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                  REBUILD CUMULATIVE VOLUME
+                </button>
                 <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
                   ACCESS CORE DASHBOARD
                 </button>

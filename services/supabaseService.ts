@@ -927,6 +927,12 @@ export const supabaseService = {
     return true;
   },
 
+  async rebuildCumulativeVolume() {
+    const { error } = await supabase.rpc('rebuild_cumulative_volume');
+    if (error) throw error;
+    return true;
+  },
+
   async getAbsoluteRoot() {
     const { data, error } = await supabase
       .from('profiles')

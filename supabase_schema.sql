@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     }'::jsonb,
     team_size JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
     matching_volume JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
+    cumulative_volume JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
     carry_forward JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
     daily_income JSONB DEFAULT '{"date": "", "amount": 0}'::jsonb,
     matched_pairs INTEGER DEFAULT 0,
@@ -282,7 +283,12 @@ DECLARE
     today_date TEXT := TO_CHAR(NOW(), 'YYYY-MM-DD');
 BEGIN
     -- Get current volumes, wallets, and rank for capping
-    SELECT (matching_volume->>'left')::numeric, (matching_volume->>'right')::numeric, wallets, rank, (daily_income->>'amount')::numeric, (daily_income->>'date')
+    SELECT 
+        (COALESCE(matching_volume->>'left', '0'))::numeric, 
+        (COALESCE(matching_volume->>'right', '0'))::numeric, 
+        wallets, rank, 
+        (COALESCE(daily_income->>'amount', '0'))::numeric, 
+        COALESCE(daily_income->>'date', TO_CHAR(NOW(), 'YYYY-MM-DD'))
     INTO u_left_vol, u_right_vol, current_wallets, current_rank, today_income, today_date
     FROM public.profiles
     WHERE id = user_id;
@@ -366,7 +372,7 @@ DECLARE
     reward_amount NUMERIC := 0;
     current_wallets JSONB;
 BEGIN
-    SELECT rank, (matching_volume->>'left')::numeric, (matching_volume->>'right')::numeric, active_package, wallets
+    SELECT rank, (COALESCE(cumulative_volume->>'left', '0'))::numeric, (COALESCE(cumulative_volume->>'right', '0'))::numeric, active_package, wallets
     INTO u_rank, u_left_vol, u_right_vol, u_active_pkg, current_wallets
     FROM public.profiles
     WHERE id = user_id;
@@ -477,7 +483,7 @@ BEGIN
         INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
         SELECT 
             NEW.uid,
-            'NODE-' || floor(random() * 900000 + 100000)::text,
+            'NODE-' || substring(gen_random_uuid()::text from 1 for 8) || '-' || i,
             'Node ' || i || ' (Package ' || package_amount || ')',
             0,
             true,
@@ -488,7 +494,8 @@ BEGIN
             WHEN package_amount >= 250 THEN 15
             WHEN package_amount >= 100 THEN 7
             ELSE 3
-        END) AS i;
+        END) AS i
+        ON CONFLICT (node_id) DO NOTHING;
 
         -- 1.2 Incentive Pool Accrual (1% to the user themselves)
         INSERT INTO public.payments (uid, amount, type, status, order_description)
@@ -516,16 +523,19 @@ BEGIN
         WHERE id = NEW.uid;
 
         WHILE current_parent_id IS NOT NULL LOOP
-            -- Update the parent's matching volume
-            IF current_side = 'LEFT' THEN
-                UPDATE public.profiles
-                SET matching_volume = jsonb_set(matching_volume, '{left}', ((matching_volume->>'left')::numeric + package_amount)::text::jsonb)
-                WHERE id = current_parent_id;
-            ELSIF current_side = 'RIGHT' THEN
-                UPDATE public.profiles
-                SET matching_volume = jsonb_set(matching_volume, '{right}', ((matching_volume->>'right')::numeric + package_amount)::text::jsonb)
-                WHERE id = current_parent_id;
-            END IF;
+            -- Update the parent's matching volume AND cumulative volume
+            UPDATE public.profiles
+            SET matching_volume = jsonb_set(
+                    COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
+                    '{' || lower(current_side) || '}', 
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                ),
+                cumulative_volume = jsonb_set(
+                    COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
+                    '{' || lower(current_side) || '}', 
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                )
+            WHERE id = current_parent_id;
 
             -- Trigger binary matching check for this parent
             PERFORM public.calculate_binary_matching(current_parent_id);
@@ -543,7 +553,77 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 12. Wallet Update Logic for Payments
+-- 13. Rebuild Functions
+CREATE OR REPLACE FUNCTION public.rebuild_cumulative_volume()
+RETURNS VOID AS $$
+DECLARE
+    p RECORD;
+    current_parent_id UUID;
+    current_side TEXT;
+    package_amount NUMERIC;
+BEGIN
+    -- Reset all volumes and ranks first
+    UPDATE public.profiles
+    SET matching_volume = '{"left": 0, "right": 0}'::jsonb,
+        cumulative_volume = '{"left": 0, "right": 0}'::jsonb,
+        team_size = '{"left": 0, "right": 0}'::jsonb,
+        rank = 0,
+        rank_name = 'New Partner';
+
+    -- Re-process every finished package activation
+    FOR p IN 
+        SELECT * FROM public.payments 
+        WHERE type = 'package_activation' 
+        AND (status = 'finished' OR status = 'completed')
+        ORDER BY created_at ASC
+    LOOP
+        package_amount := p.amount;
+
+        -- Update user status
+        UPDATE public.profiles
+        SET active_package = package_amount,
+            package_amount = package_amount,
+            status = 'active'
+        WHERE id = p.uid;
+
+        -- Traverse up to update ancestors
+        SELECT parent_id, side INTO current_parent_id, current_side
+        FROM public.profiles
+        WHERE id = p.uid;
+
+        WHILE current_parent_id IS NOT NULL LOOP
+            UPDATE public.profiles
+            SET matching_volume = jsonb_set(
+                    COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
+                    '{' || lower(current_side) || '}', 
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                ),
+                cumulative_volume = jsonb_set(
+                    COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
+                    '{' || lower(current_side) || '}', 
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                ),
+                team_size = jsonb_set(
+                    COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
+                    '{' || lower(current_side) || '}', 
+                    ((COALESCE(team_size->>lower(current_side), '0'))::numeric + 1)::text::jsonb
+                )
+            WHERE id = current_parent_id;
+
+            -- Move up
+            SELECT parent_id, side INTO current_parent_id, current_side
+            FROM public.profiles
+            WHERE id = current_parent_id;
+        END LOOP;
+    END LOOP;
+
+    -- After updating all volumes, trigger rank checks for everyone
+    FOR p IN SELECT id FROM public.profiles LOOP
+        PERFORM public.check_and_update_rank(p.id);
+        PERFORM public.calculate_binary_matching(p.id);
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION public.update_wallets_on_payment()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -555,6 +635,16 @@ BEGIN
     IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
         SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid;
         
+        -- Ensure wallets is not null
+        current_wallets := COALESCE(current_wallets, '{
+            "master": {"balance": 0, "currency": "USDT"},
+            "referral": {"balance": 0, "currency": "USDT"},
+            "matching": {"balance": 0, "currency": "USDT"},
+            "rankBonus": {"balance": 0, "currency": "USDT"},
+            "incentive": {"balance": 0, "currency": "USDT"},
+            "rewards": {"balance": 0, "currency": "USDT"}
+        }'::jsonb);
+
         -- Determine which wallet to update based on payment type
         wallet_key := CASE 
             WHEN NEW.type = 'referral_bonus' THEN 'referral'
@@ -568,12 +658,17 @@ BEGIN
             ELSE 'master'
         END;
 
+        -- Ensure the specific wallet exists in the JSONB
+        IF NOT (current_wallets ? wallet_key) THEN
+            current_wallets := jsonb_set(current_wallets, '{' || wallet_key || '}', '{"balance": 0, "currency": "USDT"}'::jsonb);
+        END IF;
+
         -- Update the specific wallet and the master wallet (except for deposits/withdrawals which are already master)
         IF wallet_key != 'master' THEN
             UPDATE public.profiles
             SET wallets = jsonb_set(
-                    jsonb_set(wallets, '{' || wallet_key || ',balance}', ((current_wallets->wallet_key->>'balance')::numeric + NEW.amount)::text::jsonb),
-                    '{master,balance}', ((current_wallets->'master'->>'balance')::numeric + NEW.amount)::text::jsonb
+                    jsonb_set(current_wallets, '{' || wallet_key || ',balance}', ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
+                    '{master,balance}', ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
                 ),
                 total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
             WHERE id = NEW.uid;
@@ -581,13 +676,13 @@ BEGIN
             -- Handle master wallet updates (deposits, withdrawals, package activations)
             new_balance := CASE 
                 WHEN NEW.type = 'withdrawal' OR (NEW.type = 'package_activation' AND NEW.method = 'WALLET') THEN 
-                    ((current_wallets->'master'->>'balance')::numeric - NEW.amount)
+                    ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric - NEW.amount)
                 ELSE 
-                    ((current_wallets->'master'->>'balance')::numeric + NEW.amount)
+                    ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
             END;
 
             UPDATE public.profiles
-            SET wallets = jsonb_set(wallets, '{master,balance}', new_balance::text::jsonb)
+            SET wallets = jsonb_set(current_wallets, '{master,balance}', new_balance::text::jsonb)
             WHERE id = NEW.uid;
         END IF;
     END IF;
