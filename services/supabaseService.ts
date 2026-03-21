@@ -325,6 +325,13 @@ export const supabaseService = {
       .from('profiles')
       .upsert({ id: uid, ...data });
     if (error) throw error;
+    await supabase
+  .from('profiles')
+  .update({
+    status: 'active',
+    active_package: amount
+  })
+  .eq('id', uid);
   },
 
   async getUserProfile(uid: string) {
@@ -374,17 +381,41 @@ export const supabaseService = {
           throw new Error('Insufficient funds');
         }
 
-        // Log user deduction
-        await supabase.from('payments').insert([{
-          uid,
-          amount: -amount,
-          type: 'package_purchase',
-          status: 'finished',
-          method: 'INTERNAL',
-          created_at: new Date().toISOString()
-        }]);
-      }
+       async addFunds(uid: string, amount: number) {
+
+  const profile = await this.getUserProfile(uid);
+  if (!profile) throw new Error('User not found');
+
+  const currentBalance = profile.wallets?.master?.balance || 0;
+
+  const updatedWallets = {
+    ...profile.wallets,
+    master: {
+      ...profile.wallets?.master,
+      balance: currentBalance + amount
     }
+  };
+
+  // 🔥 MAIN FIX
+  const { error } = await supabase
+    .from('profiles')
+    .update({ wallets: updatedWallets })
+    .eq('id', uid);
+
+  if (error) throw error;
+
+  // optional log
+  await supabase.from('payments').insert([{
+    uid,
+    amount,
+    type: 'deposit',
+    status: 'finished',
+    method: 'INTERNAL',
+    created_at: new Date().toISOString()
+  }]);
+
+  return true;
+}
 
     // 2. Log the activation for the user (this will trigger all MLM logic in DB)
     const { error } = await supabase.from('payments').insert([{
