@@ -98,7 +98,10 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       try {
         await fetch('/api/email/welcome', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
           body: JSON.stringify({
             email: email,
             name: name || 'New Operator',

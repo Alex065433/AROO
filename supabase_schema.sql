@@ -297,16 +297,8 @@ BEGIN
     match_amount := LEAST(u_left_vol, u_right_vol);
 
     IF match_amount >= 50 THEN -- Minimum 1 pair ($50)
-        -- Dynamic bonus percent based on rank (matching constants.tsx)
-        bonus_percent := CASE 
-            WHEN current_rank <= 7 THEN 0.05
-            WHEN current_rank = 8 THEN 0.06
-            WHEN current_rank = 9 THEN 0.07
-            WHEN current_rank = 10 THEN 0.08
-            WHEN current_rank = 11 THEN 0.10
-            WHEN current_rank = 12 THEN 0.25
-            ELSE 0.05
-        END;
+        -- User request: $5 per pair ($50). This is 10%.
+        bonus_percent := 0.10;
 
         bonus_amount := match_amount * bonus_percent;
         
@@ -510,11 +502,11 @@ BEGIN
         -- Trigger rank check for the user themselves
         PERFORM public.check_and_update_rank(NEW.uid);
 
-        -- 2. DIRECT REFERRAL YIELD (5% to direct sponsor)
+        -- 2. DIRECT REFERRAL YIELD ($2.5 per $50 of package, which is 5%)
         SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid;
         
         IF sponsor_id IS NOT NULL THEN
-            referral_bonus := package_amount * 0.05;
+            referral_bonus := (package_amount / 50) * 2.5;
             
             INSERT INTO public.payments (uid, amount, type, status, order_description)
             VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'DIRECT REFERRAL YIELD from ' || NEW.uid);

@@ -95,8 +95,9 @@ app.post("/api/email/welcome", async (req, res) => {
   }
 
   try {
+    console.log(`Sending welcome email to ${email} for operator ${operatorId}`);
     const { data, error } = await resend.emails.send({
-      from: "Arowin Network <onboarding@resend.dev>",
+      from: "onboarding@resend.dev",
       to: [email],
       subject: "Welcome to Arowin Network - Your Node is Active!",
       html: `
