@@ -1,4 +1,4 @@
-import app from "./api/index";
+import app from "./api/payments/index";
 
 const PORT = 3000;
 

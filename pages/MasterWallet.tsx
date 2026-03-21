@@ -68,8 +68,8 @@ const MasterWallet: React.FC = () => {
 
   const createPayment = async () => {
   // ✅ Validation
-  if (!depositAmount || Number(depositAmount) < 50) {
-    setError("Minimum deposit is 50 USDT");
+  if (!depositAmount || Number(depositAmount) < 10) {
+    setError("Minimum deposit is 10 USDT");
     return;
   }
 
@@ -112,14 +112,13 @@ const MasterWallet: React.FC = () => {
       throw new Error(data.error || "Failed to create payment");
     }
 
-    // ✅ Redirect to NowPayments
-    if (data.invoice_url) {
+    // ✅ Display QR and Address instead of redirecting
+    if (data.pay_address) {
+      setPaymentData(data);
+    } else if (data.invoice_url) {
       window.location.href = data.invoice_url;
-    } else if (data.pay_address) {
-      // fallback if invoice_url not provided
-      alert(`Send payment to address: ${data.pay_address}`);
     } else {
-      setError("Payment created but no payment link received");
+      setError("Payment created but no payment details received");
     }
 
   } catch (err: any) {

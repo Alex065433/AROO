@@ -96,9 +96,17 @@ CREATE POLICY "Admins can delete profiles" ON public.profiles FOR DELETE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Payments: Users can view own payments
+-- Payments: Users can view/insert own payments
 CREATE POLICY "Users can view own payments" ON public.payments FOR SELECT USING (auth.uid() = uid);
+CREATE POLICY "Users can insert own payments" ON public.payments FOR INSERT WITH CHECK (auth.uid() = uid);
+CREATE POLICY "Users can update own payments" ON public.payments FOR UPDATE USING (auth.uid() = uid);
 CREATE POLICY "Admins can view all payments" ON public.payments FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+CREATE POLICY "Admins can insert all payments" ON public.payments FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+CREATE POLICY "Admins can update all payments" ON public.payments FOR UPDATE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
@@ -208,14 +216,34 @@ BEGIN
     match_amount := LEAST(u_left_vol, u_right_vol);
 
     IF match_amount >= 50 THEN -- Minimum 1 pair ($50)
+        -- Dynamic bonus percent based on rank (matching constants.tsx)
+        bonus_percent := CASE 
+            WHEN current_rank <= 7 THEN 0.05
+            WHEN current_rank = 8 THEN 0.06
+            WHEN current_rank = 9 THEN 0.07
+            WHEN current_rank = 10 THEN 0.08
+            WHEN current_rank = 11 THEN 0.10
+            WHEN current_rank = 12 THEN 0.25
+            ELSE 0.05
+        END;
+
         bonus_amount := match_amount * bonus_percent;
         
         -- Simple Daily Capping Logic (Simplified for SQL)
         daily_cap := CASE 
             WHEN current_rank = 1 THEN 250
-            WHEN current_rank = 2 THEN 500
-            WHEN current_rank = 3 THEN 1000
-            ELSE 2500
+            WHEN current_rank = 2 THEN 250
+            WHEN current_rank = 3 THEN 250
+            WHEN current_rank = 4 THEN 250
+            WHEN current_rank = 5 THEN 250
+            WHEN current_rank = 6 THEN 250
+            WHEN current_rank = 7 THEN 250
+            WHEN current_rank = 8 THEN 360
+            WHEN current_rank = 9 THEN 490
+            WHEN current_rank = 10 THEN 640
+            WHEN current_rank = 11 THEN 900
+            WHEN current_rank = 12 THEN 2500
+            ELSE 250
         END;
 
         IF today_date != TO_CHAR(NOW(), 'YYYY-MM-DD') THEN
@@ -245,7 +273,7 @@ BEGIN
 
             -- Log the bonus payment
             INSERT INTO public.payments (uid, amount, type, status, order_description)
-            VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'Binary matching bonus for ' || match_amount || ' volume');
+            VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'BINARY MATCHING DIVIDEND for ' || match_amount || ' volume');
         END IF;
     END IF;
 END;
@@ -283,37 +311,65 @@ BEGIN
         new_rank := 1;
     END IF;
 
-    -- Rank Criteria
-    IF u_left_vol >= 5000 AND u_right_vol >= 5000 AND u_rank < 2 THEN
-        new_rank := 2;
-        reward_amount := 100;
-    ELSIF u_left_vol >= 15000 AND u_right_vol >= 15000 AND u_rank < 3 THEN
-        new_rank := 3;
-        reward_amount := 250;
-    ELSIF u_left_vol >= 50000 AND u_right_vol >= 50000 AND u_rank < 4 THEN
-        new_rank := 4;
-        reward_amount := 1000;
-    ELSIF u_left_vol >= 150000 AND u_right_vol >= 150000 AND u_rank < 5 THEN
-        new_rank := 5;
+    -- Rank Criteria (matching constants.tsx)
+    IF u_left_vol >= 10000 AND u_right_vol >= 10000 AND u_rank < 12 THEN
+        new_rank := 12;
+        reward_amount := 25000;
+    ELSIF u_left_vol >= 5000 AND u_right_vol >= 5000 AND u_rank < 11 THEN
+        new_rank := 11;
+        reward_amount := 10000;
+    ELSIF u_left_vol >= 2500 AND u_right_vol >= 2500 AND u_rank < 10 THEN
+        new_rank := 10;
+        reward_amount := 5000;
+    ELSIF u_left_vol >= 1000 AND u_right_vol >= 1000 AND u_rank < 9 THEN
+        new_rank := 9;
         reward_amount := 2500;
+    ELSIF u_left_vol >= 500 AND u_right_vol >= 500 AND u_rank < 8 THEN
+        new_rank := 8;
+        reward_amount := 1000;
+    ELSIF u_left_vol >= 250 AND u_right_vol >= 250 AND u_rank < 7 THEN
+        new_rank := 7;
+        reward_amount := 500;
+    ELSIF u_left_vol >= 100 AND u_right_vol >= 100 AND u_rank < 6 THEN
+        new_rank := 6;
+        reward_amount := 250;
+    ELSIF u_left_vol >= 31 AND u_right_vol >= 31 AND u_rank < 5 THEN
+        new_rank := 5;
+        reward_amount := 100;
+    ELSIF u_left_vol >= 15 AND u_right_vol >= 15 AND u_rank < 4 THEN
+        new_rank := 4;
+        reward_amount := 50;
+    ELSIF u_left_vol >= 7 AND u_right_vol >= 7 AND u_rank < 3 THEN
+        new_rank := 3;
+        reward_amount := 25;
+    ELSIF u_left_vol >= 3 AND u_right_vol >= 3 AND u_rank < 2 THEN
+        new_rank := 2;
+        reward_amount := 10;
     END IF;
 
     IF new_rank > u_rank THEN
         UPDATE public.profiles
         SET rank = new_rank,
             rank_name = CASE 
-                WHEN new_rank = 1 THEN 'Partner'
+                WHEN new_rank = 1 THEN 'Starter'
                 WHEN new_rank = 2 THEN 'Bronze'
-                WHEN new_rank = 3 THEN 'Silver'
+                WHEN new_rank = 3 THEN 'Sliver'
                 WHEN new_rank = 4 THEN 'Gold'
-                WHEN new_rank = 5 THEN 'Platinum'
+                WHEN new_rank = 5 THEN 'Platina'
+                WHEN new_rank = 6 THEN 'Diamond'
+                WHEN new_rank = 7 THEN 'Blue Sapphire'
+                WHEN new_rank = 8 THEN 'Ruby Eite'
+                WHEN new_rank = 9 THEN 'Emerald Crown'
+                WHEN new_rank = 10 THEN 'Titanium King'
+                WHEN new_rank = 11 THEN 'Royal Lengend'
+                WHEN new_rank = 12 THEN 'Global Ambassador'
                 ELSE rank_name
             END
         WHERE id = user_id;
 
         IF reward_amount > 0 THEN
             INSERT INTO public.payments (uid, amount, type, status, order_description)
-            VALUES (user_id, reward_amount, 'rank_reward', 'finished', 'Reward for reaching Rank ' || new_rank);
+            VALUES (user_id, reward_amount, 'rank_reward', 'finished', 'RANK PROTOCOL BONUS for reaching Rank ' || new_rank);
         END IF;
     END IF;
 END;
@@ -331,7 +387,7 @@ DECLARE
 BEGIN
     -- Only process if payment is finished and type is package_activation
     -- Handle both INSERT and UPDATE
-    IF NEW.status = 'finished' AND NEW.type = 'package_activation' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'finished'))) THEN
+    IF (NEW.status = 'finished' OR NEW.status = 'completed') AND NEW.type = 'package_activation' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
         package_amount := NEW.amount;
 
         -- 1. Update the user's own package info and status
@@ -369,7 +425,7 @@ BEGIN
             referral_bonus := package_amount * 0.05;
             
             INSERT INTO public.payments (uid, amount, type, status, order_description)
-            VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'Direct referral bonus from ' || NEW.uid);
+            VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'DIRECT REFERRAL YIELD from ' || NEW.uid);
             
             -- Trigger rank check for sponsor
             PERFORM public.check_and_update_rank(sponsor_id);
@@ -417,7 +473,7 @@ DECLARE
     new_balance NUMERIC;
 BEGIN
     -- Only process if status is finished
-    IF NEW.status = 'finished' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status != 'finished'))) THEN
+    IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
         SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid;
         
         -- Determine which wallet to update based on payment type

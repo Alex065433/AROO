@@ -14,8 +14,8 @@ let supabaseClient: any = null;
 const getSupabase = () => {
   if (supabaseClient) return supabaseClient;
   
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   
   if (!supabaseUrl || !supabaseServiceKey) {
     console.warn("Supabase environment variables are missing. Database operations will fail.");
@@ -293,8 +293,6 @@ app.post("/api/payments/ipn", async (req, res) => {
       }
 
       // 2. Update payment status in Supabase
-      // The DB triggers (on_payment_update_wallets and on_payment_update_process_package) 
-      // will handle wallet updates and MLM logic automatically when status becomes 'finished'
       const { error: dbError } = await supabase
         .from('payments')
         .update({ status: payment_status, updated_at: new Date().toISOString() })
@@ -304,12 +302,30 @@ app.post("/api/payments/ipn", async (req, res) => {
         console.error("Supabase IPN Update Error:", dbError.message);
       }
 
-      // 3. If it was a package purchase and it's finished, we might need to ensure 
-      // a package_activation record exists if the trigger doesn't handle 'deposit' -> 'activation' transition
-      // But usually, the user buys a package, we create a 'package_activation' record with 'waiting' status,
-      // and NOWPayments updates THAT record.
+      // 3. Update user wallet if finished
+      if (payment_status === 'finished') {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('wallets')
+          .eq('id', paymentData.uid)
+          .single();
+        
+        if (profile) {
+          const updatedWallets = {
+            ...profile.wallets,
+            master: {
+              ...profile.wallets?.master,
+              balance: (profile.wallets?.master?.balance || 0) + Number(price_amount)
+            }
+          };
+          await supabase
+            .from('profiles')
+            .update({ wallets: updatedWallets })
+            .eq('id', paymentData.uid);
+        }
+      }
       
-      console.log(`IPN processed for ${payment_id}. DB triggers will handle wallet/MLM logic.`);
+      console.log(`IPN processed for ${payment_id}. Wallet updated.`);
       
       return res.status(200).send("OK");
     } catch (err: any) {

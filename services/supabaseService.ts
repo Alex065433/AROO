@@ -177,11 +177,17 @@ export const supabaseService = {
     // If an explicit parent is provided in additionalData, use it
     if (additionalData.parentId) {
       // Verify parent exists
-      const { data: explicitParent } = await supabase
-        .from('profiles')
-        .select('id, operator_id')
-        .or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`)
-        .single();
+      // Check if it's a UUID or an operator ID
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
+      let query = supabase.from('profiles').select('id, operator_id');
+      
+      if (isUuid) {
+        query = query.or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`);
+      } else {
+        query = query.eq('operator_id', additionalData.parentId);
+      }
+      
+      const { data: explicitParent } = await query.single();
       
       if (explicitParent) {
         // Even with explicit parent, find the next available spot on that side
@@ -325,13 +331,6 @@ export const supabaseService = {
       .from('profiles')
       .upsert({ id: uid, ...data });
     if (error) throw error;
-    await supabase
-  .from('profiles')
-  .update({
-    status: 'active',
-    active_package: amount
-  })
-  .eq('id', uid);
   },
 
   async getUserProfile(uid: string) {
@@ -364,6 +363,20 @@ export const supabaseService = {
           throw new Error('Insufficient admin funds');
         }
 
+        // Deduct from admin wallet
+        const updatedWallets = {
+          ...adminProfile.wallets,
+          master: {
+            ...adminProfile.wallets?.master,
+            balance: (adminProfile.wallets?.master?.balance || 0) - amount
+          }
+        };
+
+        await supabase
+          .from('profiles')
+          .update({ wallets: updatedWallets })
+          .eq('id', adminId);
+
         // Log admin deduction
         await supabase.from('payments').insert([{
           uid: adminId,
@@ -381,41 +394,21 @@ export const supabaseService = {
           throw new Error('Insufficient funds');
         }
 
-       async addFunds(uid: string, amount: number) {
+        // Deduct from wallet
+        const updatedWallets = {
+          ...profile.wallets,
+          master: {
+            ...profile.wallets?.master,
+            balance: (profile.wallets?.master?.balance || 0) - amount
+          }
+        };
 
-  const profile = await this.getUserProfile(uid);
-  if (!profile) throw new Error('User not found');
-
-  const currentBalance = profile.wallets?.master?.balance || 0;
-
-  const updatedWallets = {
-    ...profile.wallets,
-    master: {
-      ...profile.wallets?.master,
-      balance: currentBalance + amount
+        await supabase
+          .from('profiles')
+          .update({ wallets: updatedWallets })
+          .eq('id', uid);
+      }
     }
-  };
-
-  // 🔥 MAIN FIX
-  const { error } = await supabase
-    .from('profiles')
-    .update({ wallets: updatedWallets })
-    .eq('id', uid);
-
-  if (error) throw error;
-
-  // optional log
-  await supabase.from('payments').insert([{
-    uid,
-    amount,
-    type: 'deposit',
-    status: 'finished',
-    method: 'INTERNAL',
-    created_at: new Date().toISOString()
-  }]);
-
-  return true;
-}
 
     // 2. Log the activation for the user (this will trigger all MLM logic in DB)
     const { error } = await supabase.from('payments').insert([{
@@ -424,15 +417,59 @@ export const supabaseService = {
       type: 'package_activation',
       status: 'finished',
       method: 'INTERNAL',
+      order_description: 'INCENTIVE POOL ACCRUAL',
       created_at: new Date().toISOString()
     }]);
 
     if (error) throw error;
 
-    // 3. Add Notification
+    // 3. Update user status and active package
+    await supabase
+      .from('profiles')
+      .update({
+        status: 'active',
+        active_package: amount
+      })
+      .eq('id', uid);
+
+    // 4. Add Notification
     const pkg = PACKAGES.find(p => p.price === amount);
     await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
     
+    return true;
+  },
+
+  async addFunds(uid: string, amount: number) {
+    const profile = await this.getUserProfile(uid);
+    if (!profile) throw new Error('User not found');
+
+    const currentBalance = profile.wallets?.master?.balance || 0;
+
+    const updatedWallets = {
+      ...profile.wallets,
+      master: {
+        ...profile.wallets?.master,
+        balance: currentBalance + amount
+      }
+    };
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ wallets: updatedWallets })
+      .eq('id', uid);
+
+    if (error) throw error;
+
+    // Log the deposit/fund addition
+    await supabase.from('payments').insert([{
+      uid,
+      amount,
+      type: 'deposit',
+      status: 'finished',
+      method: 'INTERNAL',
+      created_at: new Date().toISOString()
+    }]);
+
     return true;
   },
 
@@ -711,18 +748,24 @@ export const supabaseService = {
       uid,
       amount: payableAmount,
       type,
-      status: 'completed',
+      status: 'finished',
       method: 'INTERNAL',
       created_at: new Date().toISOString()
     }]);
   },
 
   async getBinaryTree(rootUid: string) {
-    const { data: rootProfile, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .or(`id.eq.${rootUid},operator_id.eq.${rootUid}`)
-      .single();
+    // Check if rootUid is a UUID or an operator ID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rootUid);
+    let query = supabase.from('profiles').select('*');
+    
+    if (isUuid) {
+      query = query.or(`id.eq.${rootUid},operator_id.eq.${rootUid}`);
+    } else {
+      query = query.eq('operator_id', rootUid);
+    }
+    
+    const { data: rootProfile, error } = await query.single();
     
     if (error || !rootProfile) return {};
 
@@ -1032,21 +1075,6 @@ export const supabaseService = {
       console.error('Error in manual income sync:', error);
       throw error;
     }
-  },
-
-  async addFunds(uid: string, amount: number) {
-    // Log transaction - the DB trigger on_payment_update_wallets will handle the wallet update
-    const { error } = await supabase.from('payments').insert([{
-      uid,
-      amount,
-      type: 'deposit',
-      status: 'finished',
-      method: 'INTERNAL',
-      created_at: new Date().toISOString()
-    }]);
-
-    if (error) throw error;
-    return true;
   },
 
   async updateUser(uid: string, data: any) {
