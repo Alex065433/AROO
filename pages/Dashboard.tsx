@@ -577,6 +577,24 @@ const Dashboard: React.FC = () => {
             <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
               <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">System Management</h4>
               <div className="space-y-4">
+                <button 
+                  onClick={async () => {
+                    setIsProcessing(true);
+                    try {
+                      await supabaseService.rebuildTreeCounts();
+                      setNotification("Binary Tree Counts Rebuilt Successfully");
+                    } catch (err) {
+                      console.error('Rebuild Failed:', err);
+                      setNotification("Rebuild Failed: " + (err as Error).message);
+                    }
+                    setIsProcessing(false);
+                  }}
+                  disabled={isProcessing}
+                  className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
+                >
+                  {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                  REBUILD TREE COUNTS
+                </button>
                 <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
                   ACCESS CORE DASHBOARD
                 </button>

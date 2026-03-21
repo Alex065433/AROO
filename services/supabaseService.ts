@@ -920,6 +920,13 @@ export const supabaseService = {
     return true;
   },
 
+  // Admin Functions
+  async rebuildTreeCounts() {
+    const { error } = await supabase.rpc('rebuild_team_sizes');
+    if (error) throw error;
+    return true;
+  },
+
   async getAbsoluteRoot() {
     const { data, error } = await supabase
       .from('profiles')

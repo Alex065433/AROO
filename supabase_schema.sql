@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
         "referral": {"balance": 0, "currency": "USDT"},
         "matching": {"balance": 0, "currency": "USDT"},
         "rankBonus": {"balance": 0, "currency": "USDT"},
+        "incentive": {"balance": 0, "currency": "USDT"},
         "rewards": {"balance": 0, "currency": "USDT"}
     }'::jsonb,
     team_size JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
@@ -157,22 +158,20 @@ CREATE OR REPLACE FUNCTION public.update_ancestors_team_size()
 RETURNS TRIGGER AS $$
 DECLARE
     current_parent_id UUID;
-    current_child_id UUID;
     current_side TEXT;
 BEGIN
     current_parent_id := NEW.parent_id;
-    current_child_id := NEW.id;
     current_side := NEW.side;
 
     WHILE current_parent_id IS NOT NULL LOOP
         -- Update the parent's team size
         IF current_side = 'LEFT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{left}', ((team_size->>'left')::int + 1)::text::jsonb)
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), '{left}', ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
             WHERE id = current_parent_id;
         ELSIF current_side = 'RIGHT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{right}', ((team_size->>'right')::int + 1)::text::jsonb)
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), '{right}', ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
             WHERE id = current_parent_id;
         END IF;
 
@@ -186,10 +185,86 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.update_ancestors_team_size_on_delete()
+RETURNS TRIGGER AS $$
+DECLARE
+    current_parent_id UUID;
+    current_side TEXT;
+BEGIN
+    current_parent_id := OLD.parent_id;
+    current_side := OLD.side;
+
+    WHILE current_parent_id IS NOT NULL LOOP
+        -- Update the parent's team size (decrement)
+        IF current_side = 'LEFT' THEN
+            UPDATE public.profiles
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), '{left}', (GREATEST(0, (COALESCE(team_size->>'left', '0'))::int - 1))::text::jsonb)
+            WHERE id = current_parent_id;
+        ELSIF current_side = 'RIGHT' THEN
+            UPDATE public.profiles
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), '{right}', (GREATEST(0, (COALESCE(team_size->>'right', '0'))::int - 1))::text::jsonb)
+            WHERE id = current_parent_id;
+        END IF;
+
+        -- Move up to the next parent
+        SELECT parent_id, side INTO current_parent_id, current_side
+        FROM public.profiles
+        WHERE id = current_parent_id;
+    END LOOP;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 DROP TRIGGER IF EXISTS on_user_inserted_update_team_size ON public.profiles;
 CREATE TRIGGER on_user_inserted_update_team_size
   AFTER INSERT ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size();
+
+DROP TRIGGER IF EXISTS on_user_deleted_update_team_size ON public.profiles;
+CREATE TRIGGER on_user_deleted_update_team_size
+  AFTER DELETE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size_on_delete();
+
+-- Function to rebuild all team sizes from scratch
+CREATE OR REPLACE FUNCTION public.rebuild_team_sizes()
+RETURNS VOID AS $$
+DECLARE
+    p RECORD;
+BEGIN
+    -- Reset all counts
+    UPDATE public.profiles SET team_size = '{"left": 0, "right": 0}'::jsonb;
+    
+    -- For each profile, update all its ancestors
+    FOR p IN SELECT id, parent_id, side FROM public.profiles WHERE parent_id IS NOT NULL LOOP
+        DECLARE
+            curr_parent_id UUID := p.parent_id;
+            curr_side TEXT := p.side;
+            next_parent_id UUID;
+            next_side TEXT;
+        BEGIN
+            WHILE curr_parent_id IS NOT NULL LOOP
+                IF curr_side = 'LEFT' THEN
+                    UPDATE public.profiles
+                    SET team_size = jsonb_set(team_size, '{left}', ((team_size->>'left')::int + 1)::text::jsonb)
+                    WHERE id = curr_parent_id;
+                ELSIF curr_side = 'RIGHT' THEN
+                    UPDATE public.profiles
+                    SET team_size = jsonb_set(team_size, '{right}', ((team_size->>'right')::int + 1)::text::jsonb)
+                    WHERE id = curr_parent_id;
+                END IF;
+                
+                SELECT parent_id, side INTO next_parent_id, next_side
+                FROM public.profiles
+                WHERE id = curr_parent_id;
+                
+                curr_parent_id := next_parent_id;
+                curr_side := next_side;
+            END LOOP;
+        END;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 10. Binary Income Logic: Volume and Matching
 CREATE OR REPLACE FUNCTION public.calculate_binary_matching(user_id UUID)
@@ -415,6 +490,10 @@ BEGIN
             ELSE 3
         END) AS i;
 
+        -- 1.2 Incentive Pool Accrual (1% to the user themselves)
+        INSERT INTO public.payments (uid, amount, type, status, order_description)
+        VALUES (NEW.uid, package_amount * 0.01, 'incentive_accrual', 'finished', 'INCENTIVE POOL ACCRUAL for Package ' || package_amount);
+
         -- Trigger rank check for the user themselves
         PERFORM public.check_and_update_rank(NEW.uid);
 
@@ -480,7 +559,8 @@ BEGIN
         wallet_key := CASE 
             WHEN NEW.type = 'referral_bonus' THEN 'referral'
             WHEN NEW.type = 'matching_bonus' THEN 'matching'
-            WHEN NEW.type = 'rank_reward' THEN 'rank_reward'
+            WHEN NEW.type = 'rank_reward' THEN 'rankBonus'
+            WHEN NEW.type = 'incentive_accrual' THEN 'incentive'
             WHEN NEW.type = 'team_collection' THEN 'rewards'
             WHEN NEW.type = 'deposit' THEN 'master'
             WHEN NEW.type = 'withdrawal' THEN 'master'
