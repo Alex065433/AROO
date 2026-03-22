@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     active_package NUMERIC DEFAULT 0,
     package_amount NUMERIC DEFAULT 0,
     total_income NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'inactive',
     wallets JSONB DEFAULT '{
         "master": {"balance": 0, "currency": "USDT"},
         "referral": {"balance": 0, "currency": "USDT"},
@@ -90,34 +91,34 @@ ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 -- Profiles: Users can read their own profile, admins can read all, 
 -- and all authenticated users can view basic profile info for tree rendering.
 CREATE POLICY "Profiles are viewable by authenticated users" ON public.profiles FOR SELECT USING (auth.uid() IS NOT NULL);
-CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid()::uuid = id);
 CREATE POLICY "Admins can update all profiles" ON public.profiles FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 CREATE POLICY "Admins can delete profiles" ON public.profiles FOR DELETE USING (
-  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 
 -- Payments: Users can view/insert own payments
-CREATE POLICY "Users can view own payments" ON public.payments FOR SELECT USING (auth.uid() = uid);
-CREATE POLICY "Users can insert own payments" ON public.payments FOR INSERT WITH CHECK (auth.uid() = uid);
-CREATE POLICY "Users can update own payments" ON public.payments FOR UPDATE USING (auth.uid() = uid);
+CREATE POLICY "Users can view own payments" ON public.payments FOR SELECT USING (auth.uid()::uuid = uid);
+CREATE POLICY "Users can insert own payments" ON public.payments FOR INSERT WITH CHECK (auth.uid()::uuid = uid);
+CREATE POLICY "Users can update own payments" ON public.payments FOR UPDATE USING (auth.uid()::uuid = uid);
 CREATE POLICY "Admins can view all payments" ON public.payments FOR SELECT USING (
-  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 CREATE POLICY "Admins can insert all payments" ON public.payments FOR INSERT WITH CHECK (
-  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 CREATE POLICY "Admins can update all payments" ON public.payments FOR UPDATE USING (
-  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 
 -- Team Collection: Users can view own nodes
-CREATE POLICY "Users can view own nodes" ON public.team_collection FOR SELECT USING (auth.uid() = uid);
+CREATE POLICY "Users can view own nodes" ON public.team_collection FOR SELECT USING (auth.uid()::uuid = uid);
 
 -- Tickets: Users can view/create own tickets
-CREATE POLICY "Users can view own tickets" ON public.tickets FOR SELECT USING (auth.uid() = uid);
-CREATE POLICY "Users can create tickets" ON public.tickets FOR INSERT WITH CHECK (auth.uid() = uid);
+CREATE POLICY "Users can view own tickets" ON public.tickets FOR SELECT USING (auth.uid()::uuid = uid);
+CREATE POLICY "Users can create tickets" ON public.tickets FOR INSERT WITH CHECK (auth.uid()::uuid = uid);
 
 -- 7. Trigger for New User
 -- This automatically creates a profile when a user signs up via Supabase Auth
@@ -388,8 +389,12 @@ BEGIN
 
     -- CRITICAL: Rank only activates if package is $150 or more
     IF u_active_pkg IS NULL OR u_active_pkg < 150 THEN
-        IF u_rank > 0 THEN
-            UPDATE public.profiles SET rank = 0, rank_name = 'New Partner' WHERE id = user_id;
+        IF u_rank > 0 OR rank_name != 'Inactive' THEN
+            UPDATE public.profiles 
+            SET rank = 0, 
+                rank_name = 'Inactive',
+                status = 'inactive'
+            WHERE id = user_id;
         END IF;
         RETURN;
     END IF;
@@ -484,7 +489,7 @@ BEGIN
         UPDATE public.profiles
         SET active_package = package_amount,
             package_amount = package_amount,
-            status = 'active'
+            status = CASE WHEN package_amount >= 150 THEN 'active' ELSE 'inactive' END
         WHERE id = NEW.uid;
 
         -- ONLY process MLM logic (nodes, referral, volume) if package is $150 or more
@@ -623,7 +628,7 @@ BEGIN
         UPDATE public.profiles
         SET active_package = package_amount,
             package_amount = package_amount,
-            status = 'active'
+            status = CASE WHEN package_amount >= 150 THEN 'active' ELSE 'inactive' END
         WHERE id = p.uid;
 
         -- Traverse up to update ancestors
