@@ -37,6 +37,10 @@ export interface User {
     right: number;
   };
   matchedPairs: number;
+  daily_income?: {
+    date: string;
+    amount: number;
+  };
   role: 'user' | 'admin';
 }
 

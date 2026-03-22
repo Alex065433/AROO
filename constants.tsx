@@ -68,6 +68,7 @@ export const MOCK_USER: User = {
   },
   teamSize: { left: 22, right: 18 },
   matchedPairs: 18,
+  daily_income: { date: '2026-03-22', amount: 45.00 },
   role: 'user' as const
 };
 

@@ -8,7 +8,7 @@ import {
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
   QrCode
 } from 'lucide-react';
-import { MOCK_USER } from '../constants';
+import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
 
@@ -708,19 +708,54 @@ const Dashboard: React.FC = () => {
         {[
           { key: 'referral', label: 'DIRECT REFERRAL YIELD' },
           { key: 'matching', label: 'BINARY MATCHING DIVIDEND' },
+          { key: 'capping', label: 'CAPPING INCOME' },
           { key: 'rankBonus', label: 'RANK PROTOCOL BONUS' },
           { key: 'rewards', label: 'INCENTIVE POOL ACCRUAL' }
-        ].map(item => (
-          <WalletCardRow 
-            key={item.key}
-            title={item.label}
-            amount={userWallets[item.key as keyof typeof userWallets].balance}
-            buttons={[
-              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: userWallets[item.key as keyof typeof userWallets].balance <= 0 },
-              { label: 'DETAILS', action: () => alert('Opening Detailed Ledger...') }
-            ]}
-          />
-        ))}
+        ].map(item => {
+          if (item.key === 'capping') {
+            const today = new Date().toISOString().split('T')[0];
+            const todayMatchingIncome = userData?.daily_income?.date === today ? userData.daily_income.amount : 0;
+            const userRank = RANKS.find(r => r.level === (userData?.rank || 1));
+            const dailyLimit = userRank?.dailyCapping || 250;
+            
+            return (
+              <div key="capping" className="w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10">
+                <div className="w-full py-3.5 px-6 flex justify-center items-center relative overflow-hidden bg-[#18181b]">
+                  <h3 className="text-white text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-3">
+                    CAPPING INCOME STATUS
+                  </h3>
+                </div>
+                <div className="p-10 text-center bg-[#0d0d0e]">
+                  <div className="flex flex-col items-center mb-10">
+                    <p className="text-4xl font-black text-slate-200 tracking-tight mb-2">
+                      {todayMatchingIncome.toFixed(2)} / {dailyLimit.toFixed(2)}
+                    </p>
+                    <p className="text-[#c0841a] text-[10px] font-black tracking-[0.2em] uppercase">Daily Matching Limit (USDT)</p>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-4">
+                    <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
+                      RANK: {userRank?.name || 'Starter'}
+                    </div>
+                    <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
+                      PAIR INCOME: ${userRank?.pairIncome || 5}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+          return (
+            <WalletCardRow 
+              key={item.key}
+              title={item.label}
+              amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
+              buttons={[
+                { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
+                { label: 'DETAILS', action: () => alert('Opening Detailed Ledger...') }
+              ]}
+            />
+          );
+        })}
       </div>
 
       <div className="bg-slate-900/20 border border-white/5 p-12 rounded-[48px] flex flex-col md:flex-row items-center gap-10">
