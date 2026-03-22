@@ -277,39 +277,8 @@ CREATE OR REPLACE FUNCTION public.update_user_wallet(
     p_description TEXT
 )
 RETURNS VOID AS $$
-DECLARE
-    current_wallets JSONB;
 BEGIN
-    -- Get current wallets
-    SELECT wallets INTO current_wallets FROM public.profiles WHERE id = user_id::uuid;
-    
-    -- Ensure wallet_key exists in JSONB
-    IF current_wallets IS NULL THEN
-        current_wallets := '{
-            "master": {"balance": 0, "currency": "USDT"},
-            "referral": {"balance": 0, "currency": "USDT"},
-            "matching": {"balance": 0, "currency": "USDT"},
-            "rankBonus": {"balance": 0, "currency": "USDT"},
-            "incentive": {"balance": 0, "currency": "USDT"},
-            "rewards": {"balance": 0, "currency": "USDT"}
-        }'::jsonb;
-    END IF;
-
-    IF NOT (current_wallets ? wallet_key) THEN
-        current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
-    END IF;
-
-    -- Update the specific wallet and total income
-    UPDATE public.profiles
-    SET total_income = total_income + amount,
-        wallets = jsonb_set(
-            current_wallets, 
-            ARRAY[wallet_key, 'balance'], 
-            ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + amount)::text::jsonb
-        )
-    WHERE id = user_id::uuid;
-
-    -- Log the payment
+    -- Log the payment. The trigger update_wallets_on_payment will handle the actual wallet updates.
     INSERT INTO public.payments (uid, amount, type, status, order_description)
     VALUES (user_id, amount, p_type, 'finished', p_description);
 END;
@@ -765,16 +734,7 @@ BEGIN
         )
         WHERE id = p_user_id;
 
-        -- Add to master wallet
-        UPDATE public.profiles
-        SET wallets = jsonb_set(
-            wallets,
-            ARRAY['master', 'balance'],
-            ((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_balance)::text::jsonb
-        )
-        WHERE id = p_user_id;
-
-        -- Log transaction
+        -- Log transaction. The trigger update_wallets_on_payment will handle adding to master wallet.
         INSERT INTO public.payments (uid, amount, type, status, order_description, created_at)
         VALUES (p_user_id, v_balance, 'claim', 'finished', 'Claimed ' || p_wallet_key || ' to Master Vault', NOW());
     END IF;

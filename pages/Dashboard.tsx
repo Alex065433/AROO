@@ -698,13 +698,36 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="max-w-4xl mx-auto px-4">
+        <div className="w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10">
+          <div className="w-full py-3.5 px-6 flex justify-center items-center relative overflow-hidden bg-emerald-900/40">
+            <h3 className="text-white text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-3">
+              <TrendingUp size={16} />
+              TOTAL ACCUMULATED INCOME
+            </h3>
+          </div>
+          <div className="p-10 text-center bg-[#0d0d0e]">
+            <div className="flex flex-col items-center mb-10">
+              <p className="text-4xl font-black text-emerald-500 tracking-tight mb-2">
+                {(userData.total_income || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </p>
+              <p className="text-slate-500 text-[10px] font-black tracking-[0.2em] uppercase">Total MLM Earnings (USDT)</p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-4">
+              <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-white/5 text-slate-400 border border-white/5">
+                RANK: {userData.rank_name || 'Partner'}
+              </div>
+              <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-white/5 text-slate-400 border border-white/5">
+                STATUS: {userData.status?.toUpperCase()}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <WalletCardRow 
           title="MASTER CONSOLIDATED VAULT"
           isMaster={true}
           amount={userWallets.master.balance}
           buttons={[
-            
-           
             { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') },
             { label: 'COLLECT ASSETS', color: 'bg-blue-600 text-white', action: () => navigate('/team-collection') }
           ]}
@@ -758,7 +781,7 @@ const Dashboard: React.FC = () => {
               amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
               buttons={[
                 { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
-                { label: 'DETAILS', action: () => alert('Opening Detailed Ledger...') }
+                { label: 'DETAILS', action: () => navigate('/master-wallet') }
               ]}
             />
           );

@@ -658,23 +658,23 @@ const MasterWallet: React.FC = () => {
                 transactions.map((tx, idx) => (
                   <div key={idx} className="flex justify-between items-center group cursor-pointer hover:translate-x-1 transition-all">
                     <div className="flex items-center gap-5">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tx.payment_status === 'finished' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
-                          {tx.payment_status === 'finished' ? <ArrowDownLeft size={18} /> : <RefreshCw size={18} className="animate-spin" />}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tx.status === 'finished' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                          {tx.status === 'finished' ? <ArrowDownLeft size={18} /> : <RefreshCw size={18} className="animate-spin" />}
                         </div>
                         <div>
                           <p className="text-sm font-bold text-white group-hover:text-orange-500 transition-colors">
-                            {tx.order_description || 'Inbound Deposit'}
+                            {tx.order_description || tx.type?.replace(/_/g, ' ').toUpperCase() || 'Inbound Deposit'}
                           </p>
                           <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mt-0.5">
-                            {tx.createdAt?.toDate ? tx.createdAt.toDate().toLocaleString() : 'Recent'}
+                            {tx.created_at ? new Date(tx.created_at).toLocaleString() : 'Recent'}
                           </p>
                         </div>
                     </div>
                     <div className="text-right">
-                        <span className={`text-sm font-black block ${tx.payment_status === 'finished' ? 'text-emerald-500' : 'text-slate-400'}`}>
-                          +{tx.pay_amount || tx.amount}
+                        <span className={`text-sm font-black block ${tx.status === 'finished' ? 'text-emerald-500' : 'text-slate-400'}`}>
+                          {tx.amount > 0 ? '+' : ''}{tx.amount}
                         </span>
-                        <span className="text-[8px] font-black text-slate-700 uppercase">{tx.payment_status}</span>
+                        <span className="text-[8px] font-black text-slate-700 uppercase">{tx.status}</span>
                     </div>
                   </div>
                 ))
