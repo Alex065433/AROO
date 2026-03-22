@@ -2,10 +2,10 @@
 import { Rank, User, TeamMember, Notification } from './types';
 
 const RANK_NAMES = [
-  'Starter', 'Bronze', 'Sliver',
+  'Starter', 'Bronze', 'Silver',
   'Gold', 'Platina', 'Diamond',
-  'Blue Sapphire', 'Ruby Eite', 'Emerald Crown',
-  'Titanium King', 'Royal Lengend', 'Global Ambassador'
+  'Blue Sapphire', 'Ruby Elite', 'Emerald Crown',
+  'Titanium King', 'Royal Legend', 'Global Ambassador'
 ];
 
 const RANK_DATA = [

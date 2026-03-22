@@ -26,16 +26,16 @@ BEGIN
                 IF curr_side = 'LEFT' THEN
                     UPDATE public.profiles
                     SET team_size = jsonb_set(team_size, '{left}', ((team_size->>'left')::int + 1)::text::jsonb)
-                    WHERE id = curr_parent_id;
+                    WHERE id = curr_parent_id::uuid;
                 ELSIF curr_side = 'RIGHT' THEN
                     UPDATE public.profiles
                     SET team_size = jsonb_set(team_size, '{right}', ((team_size->>'right')::int + 1)::text::jsonb)
-                    WHERE id = curr_parent_id;
+                    WHERE id = curr_parent_id::uuid;
                 END IF;
                 
                 SELECT parent_id, side INTO next_parent_id, next_side
                 FROM public.profiles
-                WHERE id = curr_parent_id;
+                WHERE id = curr_parent_id::uuid;
                 
                 curr_parent_id := next_parent_id;
                 curr_side := next_side;
@@ -44,7 +44,7 @@ BEGIN
     END LOOP;
 
     -- Rebuild matching_volume based on active packages
-    FOR pkg IN SELECT uid, amount FROM public.payments WHERE type = 'package_activation' AND payment_status = 'finished' LOOP
+    FOR pkg IN SELECT uid, amount FROM public.payments WHERE type = 'package_activation' AND status = 'finished' LOOP
         DECLARE
             p_profile RECORD;
             curr_parent_id UUID;
@@ -52,7 +52,7 @@ BEGIN
             next_parent_id UUID;
             next_side TEXT;
         BEGIN
-            SELECT parent_id, side INTO p_profile FROM public.profiles WHERE id = pkg.uid;
+            SELECT parent_id, side INTO p_profile FROM public.profiles WHERE id = pkg.uid::uuid;
             IF p_profile.parent_id IS NOT NULL THEN
                 curr_parent_id := p_profile.parent_id;
                 curr_side := p_profile.side;
@@ -61,16 +61,16 @@ BEGIN
                     IF curr_side = 'LEFT' THEN
                         UPDATE public.profiles
                         SET matching_volume = jsonb_set(matching_volume, '{left}', ((matching_volume->>'left')::numeric + pkg.amount)::text::jsonb)
-                        WHERE id = curr_parent_id;
+                        WHERE id = curr_parent_id::uuid;
                     ELSIF curr_side = 'RIGHT' THEN
                         UPDATE public.profiles
                         SET matching_volume = jsonb_set(matching_volume, '{right}', ((matching_volume->>'right')::numeric + pkg.amount)::text::jsonb)
-                        WHERE id = curr_parent_id;
+                        WHERE id = curr_parent_id::uuid;
                     END IF;
                     
                     SELECT parent_id, side INTO next_parent_id, next_side
                     FROM public.profiles
-                    WHERE id = curr_parent_id;
+                    WHERE id = curr_parent_id::uuid;
                     
                     curr_parent_id := next_parent_id;
                     curr_side := next_side;
@@ -95,16 +95,16 @@ BEGIN
         IF current_side = 'LEFT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(team_size, '{left}', (GREATEST(0, (team_size->>'left')::int - 1))::text::jsonb)
-            WHERE id = current_parent_id;
+            WHERE id = current_parent_id::uuid;
         ELSIF current_side = 'RIGHT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(team_size, '{right}', (GREATEST(0, (team_size->>'right')::int - 1))::text::jsonb)
-            WHERE id = current_parent_id;
+            WHERE id = current_parent_id::uuid;
         END IF;
 
         SELECT parent_id, side INTO current_parent_id, current_side
         FROM public.profiles
-        WHERE id = current_parent_id;
+        WHERE id = current_parent_id::uuid;
     END LOOP;
 
     RETURN OLD;

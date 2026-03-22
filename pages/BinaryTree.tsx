@@ -198,6 +198,25 @@ const BinaryTree: React.FC = () => {
     }
   };
 
+  const handleGoUp = async () => {
+    if (!viewRootId) return;
+    const { data: currentProfile } = await supabaseService.getUserProfile(viewRootId) as any;
+    if (currentProfile && currentProfile.parent_id) {
+      setViewRootId(currentProfile.parent_id);
+    }
+  };
+
+  const handleResetView = async () => {
+    if (userProfile) {
+      let rootId = userProfile.id;
+      if (userProfile.role === 'admin') {
+        const absRoot = await supabaseService.getAbsoluteRoot() as any;
+        if (absRoot) rootId = absRoot.id;
+      }
+      setViewRootId(rootId);
+    }
+  };
+
   const activePath = getPathToRoot(selectedNodeId);
   const selectedNode = selectedNodeId ? treeData[selectedNodeId] : null;
 
@@ -415,7 +434,23 @@ const BinaryTree: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div>
           <h2 className="text-4xl font-black uppercase tracking-tight text-white italic">Network Architecture</h2>
-          <p className="text-slate-500 mt-2 font-medium">Visualization of your institutional binary growth nodes.</p>
+          <div className="flex items-center gap-4 mt-2">
+            <p className="text-slate-500 font-medium">Visualization of your institutional binary growth nodes.</p>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={handleGoUp}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-white/5 flex items-center gap-2"
+              >
+                <ArrowLeft size={12} /> Go Up
+              </button>
+              <button 
+                onClick={handleResetView}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-white/5 flex items-center gap-2"
+              >
+                <RefreshCw size={12} /> Reset View
+              </button>
+            </div>
+          </div>
         </div>
         
         <div className="flex items-center gap-4">

@@ -41,13 +41,13 @@ BEGIN
         SET active_package = package_amount,
             package_amount = package_amount,
             status = 'active'
-        WHERE id = NEW.uid;
+        WHERE id = NEW.uid::uuid;
 
         -- 1.1 Generate Team Collection Nodes
         -- (3 nodes for $50, 7 for $100, 15 for $250, 31 for $500, 63 for $1000)
         INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
         SELECT 
-            NEW.uid,
+            NEW.uid::uuid,
             'NODE-' || substring(gen_random_uuid()::text from 1 for 8) || '-' || i,
             'Node ' || i || ' (Package ' || package_amount || ')',
             0,
@@ -64,19 +64,19 @@ BEGIN
 
         -- 1.2 Incentive Pool Accrual (1% to the user themselves)
         INSERT INTO public.payments (uid, amount, type, status, order_description)
-        VALUES (NEW.uid, package_amount * 0.01, 'incentive_accrual', 'finished', 'INCENTIVE POOL ACCRUAL for Package ' || package_amount);
+        VALUES (NEW.uid::uuid, package_amount * 0.01, 'incentive_accrual', 'finished', 'INCENTIVE POOL ACCRUAL for Package ' || package_amount);
 
         -- Trigger rank check for the user themselves
-        PERFORM public.check_and_update_rank(NEW.uid);
+        PERFORM public.check_and_update_rank(NEW.uid::uuid);
 
         -- 2. Referral Bonus (5% to direct sponsor)
-        SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid;
+        SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid::uuid;
         
         IF sponsor_id IS NOT NULL THEN
             referral_bonus := package_amount * 0.05;
             
             INSERT INTO public.payments (uid, amount, type, status, order_description)
-            VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'DIRECT REFERRAL YIELD from ' || NEW.uid);
+            VALUES (sponsor_id, referral_bonus, 'referral_bonus', 'finished', 'DIRECT REFERRAL YIELD from ' || NEW.uid::text);
             
             -- Trigger rank check for sponsor
             PERFORM public.check_and_update_rank(sponsor_id);
@@ -85,33 +85,33 @@ BEGIN
         -- 3. Traverse up to update ancestors' volume
         SELECT parent_id, side INTO current_parent_id, current_side
         FROM public.profiles
-        WHERE id = NEW.uid;
+        WHERE id = NEW.uid::uuid;
 
         WHILE current_parent_id IS NOT NULL LOOP
             -- Update the parent's matching volume AND cumulative volume
             UPDATE public.profiles
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
-                    '{' || lower(current_side) || '}', 
+                    ARRAY[lower(current_side)], 
                     ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
-                    '{' || lower(current_side) || '}', 
+                    ARRAY[lower(current_side)], 
                     ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
                 )
-            WHERE id = current_parent_id;
+            WHERE id = current_parent_id::uuid;
 
             -- Trigger binary matching check for this parent
-            PERFORM public.calculate_binary_matching(current_parent_id);
+            PERFORM public.calculate_binary_matching(current_parent_id::uuid);
             
             -- Trigger rank check for this parent
-            PERFORM public.check_and_update_rank(current_parent_id);
+            PERFORM public.check_and_update_rank(current_parent_id::uuid);
 
             -- Move up to the next parent
             SELECT parent_id, side INTO current_parent_id, current_side
             FROM public.profiles
-            WHERE id = current_parent_id;
+            WHERE id = current_parent_id::uuid;
         END LOOP;
     END IF;
     RETURN NEW;
@@ -132,12 +132,12 @@ BEGIN
     SELECT rank, (cumulative_volume->>'left')::numeric, (cumulative_volume->>'right')::numeric, active_package
     INTO u_rank, u_left_vol, u_right_vol, u_active_pkg
     FROM public.profiles
-    WHERE id = user_id;
+    WHERE id = user_id::uuid;
 
     -- Only active users can have ranks
     IF u_active_pkg IS NULL OR u_active_pkg <= 0 THEN
         IF u_rank > 0 THEN
-            UPDATE public.profiles SET rank = 0, rank_name = 'New Partner' WHERE id = user_id;
+            UPDATE public.profiles SET rank = 0, rank_name = 'New Partner' WHERE id = user_id::uuid;
         END IF;
         RETURN;
     END IF;
@@ -191,19 +191,19 @@ BEGIN
             rank_name = CASE 
                 WHEN new_rank = 1 THEN 'Starter'
                 WHEN new_rank = 2 THEN 'Bronze'
-                WHEN new_rank = 3 THEN 'Sliver'
+                WHEN new_rank = 3 THEN 'Silver'
                 WHEN new_rank = 4 THEN 'Gold'
                 WHEN new_rank = 5 THEN 'Platina'
                 WHEN new_rank = 6 THEN 'Diamond'
                 WHEN new_rank = 7 THEN 'Blue Sapphire'
-                WHEN new_rank = 8 THEN 'Ruby Eite'
+                WHEN new_rank = 8 THEN 'Ruby Elite'
                 WHEN new_rank = 9 THEN 'Emerald Crown'
                 WHEN new_rank = 10 THEN 'Titanium King'
-                WHEN new_rank = 11 THEN 'Royal Lengend'
+                WHEN new_rank = 11 THEN 'Royal Legend'
                 WHEN new_rank = 12 THEN 'Global Ambassador'
                 ELSE rank_name
             END
-        WHERE id = user_id;
+        WHERE id = user_id::uuid;
 
         IF reward_amount > 0 THEN
             INSERT INTO public.payments (uid, amount, type, status, order_description)
@@ -223,7 +223,7 @@ DECLARE
 BEGIN
     -- Only process if status is finished
     IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
-        SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid;
+        SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid::uuid;
         
         -- Ensure wallets is not null
         current_wallets := COALESCE(current_wallets, '{
@@ -250,18 +250,18 @@ BEGIN
 
         -- Ensure the specific wallet exists in the JSONB
         IF NOT (current_wallets ? wallet_key) THEN
-            current_wallets := jsonb_set(current_wallets, '{' || wallet_key || '}', '{"balance": 0, "currency": "USDT"}'::jsonb);
+            current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
         END IF;
 
         -- Update the specific wallet and the master wallet (except for deposits/withdrawals which are already master)
         IF wallet_key != 'master' THEN
             UPDATE public.profiles
             SET wallets = jsonb_set(
-                    jsonb_set(current_wallets, '{' || wallet_key || ',balance}', ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
-                    '{master,balance}', ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
+                    jsonb_set(current_wallets, ARRAY[wallet_key, 'balance'], ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
+                    ARRAY['master', 'balance'], ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
                 ),
                 total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
-            WHERE id = NEW.uid;
+            WHERE id = NEW.uid::uuid;
         ELSE
             -- Handle master wallet updates (deposits, withdrawals, package activations)
             new_balance := CASE 
@@ -272,8 +272,8 @@ BEGIN
             END;
 
             UPDATE public.profiles
-            SET wallets = jsonb_set(current_wallets, '{master,balance}', new_balance::text::jsonb)
-            WHERE id = NEW.uid;
+            SET wallets = jsonb_set(current_wallets, ARRAY['master', 'balance'], new_balance::text::jsonb)
+            WHERE id = NEW.uid::uuid;
         END IF;
     END IF;
     RETURN NEW;

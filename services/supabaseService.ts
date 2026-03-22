@@ -475,26 +475,33 @@ export const supabaseService = {
 
   // Daily and Weekly Payout System
   async processDailyPayouts() {
-    // Daily payouts are now handled by database triggers on package activation.
-    // This function can be used to manually trigger rank checks if needed.
-    const { data: users } = await supabase.from('profiles').select('id');
-    if (!users) return;
-
-    for (const user of users) {
-      // We can call a RPC if we had one, but for now we just let the triggers do the work.
-      // Or we can manually trigger a rank check by updating a field.
-      await supabase.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', user.id);
-    }
+    const { error } = await supabase.rpc('process_daily_payouts');
+    if (error) throw error;
     return true;
   },
 
   async processBinaryMatching() {
-    // Handled by DB triggers
+    const { error } = await supabase.rpc('process_daily_payouts');
+    if (error) throw error;
     return true;
   },
 
   async processRankAndRewards() {
-    // Handled by DB triggers
+    const { error } = await supabase.rpc('process_rank_and_rewards');
+    if (error) throw error;
+    return true;
+  },
+
+  async claimWallet(walletKey: string) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    const { error } = await supabase.rpc('claim_wallet', {
+      p_user_id: user.id,
+      p_wallet_key: walletKey
+    });
+
+    if (error) throw error;
     return true;
   },
 
@@ -762,19 +769,26 @@ export const supabaseService = {
   async getBinaryTree(rootUid: string) {
     // Check if rootUid is a UUID or an operator ID
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rootUid);
-    let query = supabase.from('profiles').select('*');
+    let rootId = rootUid;
     
-    if (isUuid) {
-      query = query.or(`id.eq.${rootUid},operator_id.eq.${rootUid}`);
-    } else {
-      query = query.eq('operator_id', rootUid);
+    if (!isUuid) {
+      const { data: rootProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('operator_id', rootUid)
+        .single();
+      if (rootProfile) rootId = rootProfile.id;
+      else return {};
     }
     
-    const { data: rootProfile, error } = await query.single();
+    // Fetch the entire downline in one recursive query
+    const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: rootId });
     
-    if (error || !rootProfile) return {};
+    if (error || !downline || downline.length === 0) return {};
 
     const tree: Record<string, any> = {};
+    const rootProfile = downline.find(p => p.id === rootId);
+    if (!rootProfile) return {};
 
     const buildNode = (node: any, path: string) => {
       tree[path] = {
@@ -795,34 +809,19 @@ export const supabaseService = {
 
     buildNode(rootProfile, 'root');
 
-    // Optimized fetch: Fetch levels iteratively to reduce query count and increase depth
-    let currentLevelNodes = [{ id: rootProfile.id, path: 'root' }];
-    const maxDepth = 10; // Increased depth to 10 levels (~1023 nodes)
-
-    for (let depth = 0; depth < maxDepth; depth++) {
-      const parentIds = currentLevelNodes.map(n => n.id);
-      if (parentIds.length === 0) break;
-
-      const { data: children, error: fetchError } = await supabase
-        .from('profiles')
-        .select('*')
-        .in('parent_id', parentIds);
-
-      if (fetchError || !children || children.length === 0) break;
-
-      const nextLevelNodes: { id: string, path: string }[] = [];
-      
+    // Build the tree structure by matching parent_id and side
+    const processChildren = (parentId: string, parentPath: string) => {
+      const children = downline.filter(p => p.parent_id === parentId);
       children.forEach(child => {
-        const parent = currentLevelNodes.find(p => p.id === child.parent_id);
-        if (parent && child.side) {
-          const childPath = `${parent.path}-${child.side.toLowerCase()}`;
+        if (child.side) {
+          const childPath = `${parentPath}-${child.side.toLowerCase()}`;
           buildNode(child, childPath);
-          nextLevelNodes.push({ id: child.id, path: childPath });
+          processChildren(child.id, childPath);
         }
       });
+    };
 
-      currentLevelNodes = nextLevelNodes;
-    }
+    processChildren(rootId, 'root');
 
     return tree;
   },

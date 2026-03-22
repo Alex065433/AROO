@@ -246,18 +246,25 @@ const Dashboard: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleClaim = (walletKey: string) => {
-    const claimAmount = userWallets[walletKey]?.balance || 0;
-    if (claimAmount <= 0) return;
-
-    setUserWallets((prev: any) => ({
-      ...prev,
-      master: { ...prev.master, balance: (prev.master?.balance || 0) + claimAmount },
-      [walletKey]: { ...prev[walletKey], balance: 0 }
-    }));
-
-    setNotification(`Successfully claimed ${(claimAmount || 0).toFixed(2)} USDT to Vault`);
-    setTimeout(() => setNotification(null), 3000);
+  const handleClaim = async (walletKey: string) => {
+    setIsProcessing(true);
+    try {
+      await supabaseService.claimWallet(walletKey);
+      setNotification(`Successfully claimed to Vault`);
+      
+      // Refresh user data
+      const user = supabaseService.getCurrentUser();
+      if (user) {
+        const profile = await supabaseService.getUserProfile(user.id || user.uid);
+        if (profile) setUserData(profile);
+      }
+    } catch (err) {
+      console.error('Claim Failed:', err);
+      setNotification("Claim Failed: " + (err as Error).message);
+    } finally {
+      setIsProcessing(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
   };
 
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
@@ -710,7 +717,7 @@ const Dashboard: React.FC = () => {
           { key: 'matching', label: 'BINARY MATCHING DIVIDEND' },
           { key: 'capping', label: 'CAPPING INCOME' },
           { key: 'rankBonus', label: 'RANK PROTOCOL BONUS' },
-          { key: 'rewards', label: 'INCENTIVE POOL ACCRUAL' }
+          { key: 'incentive', label: 'INCENTIVE POOL ACCRUAL' }
         ].map(item => {
           if (item.key === 'capping') {
             const today = new Date().toISOString().split('T')[0];
