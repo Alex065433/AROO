@@ -26,7 +26,7 @@ const TeamCollection: React.FC = () => {
           sNo: idx + 1,
           selected: false,
           username: n.node_id,
-          masterWallet: '5.25 USDT' // Simulated available amount per node
+          masterWallet: `${(parseFloat(n.balance) || 0).toFixed(2)} USDT`
         })));
       }
     } catch (err) {
@@ -112,13 +112,13 @@ const TeamCollection: React.FC = () => {
                 <div className="space-y-1">
                    <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Total Available in Selected Nodes</p>
                    <p className="text-3xl font-black text-orange-500">
-                     {(teamList.filter(m => m.selected).length * 5.25 || 0).toFixed(2)} USDT
+                     {teamList.filter(m => m.selected).reduce((acc, m) => acc + (parseFloat(m.balance) || 0), 0).toFixed(2)} USDT
                    </p>
                 </div>
                 <div className="w-full md:w-auto">
                    <div className="relative">
                       <div className="w-full md:w-64 bg-slate-900 border border-white/10 rounded-2xl px-6 py-4 text-white font-black text-center">
-                        {(teamList.filter(m => m.selected).length * 5.25 || 0).toFixed(2)}
+                        {teamList.filter(m => m.selected).reduce((acc, m) => acc + (parseFloat(m.balance) || 0), 0).toFixed(2)}
                       </div>
                       <label className="absolute -top-3 left-6 bg-slate-900 px-2 text-[10px] font-black text-slate-600 uppercase">Target Amount</label>
                    </div>

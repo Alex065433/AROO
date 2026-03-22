@@ -296,13 +296,12 @@ BEGIN
     -- Calculate matching amount
     match_amount := LEAST(u_left_vol, u_right_vol);
 
-    IF match_amount >= 50 THEN -- Minimum 1 pair ($50)
-        -- User request: $5 per pair ($50). This is 10%.
-        bonus_percent := 0.10;
-
-        bonus_amount := match_amount * bonus_percent;
+    IF match_amount >= 1 THEN -- Minimum 1 pair ($50 unit)
+        -- User request: $5 per pair ($50).
+        bonus_amount := match_amount * 5;
         
         -- Simple Daily Capping Logic (Simplified for SQL)
+        -- Capping is in dollars, so we compare with today_income (dollars)
         daily_cap := CASE 
             WHEN current_rank = 1 THEN 250
             WHEN current_rank = 2 THEN 250
@@ -336,17 +335,17 @@ BEGIN
                     '{master,balance}', ((current_wallets->'master'->>'balance')::numeric + bonus_amount)::text::jsonb
                 ),
                 daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
-                -- Deduct matched volume
+                -- Deduct matched volume (in units)
                 matching_volume = jsonb_build_object(
                     'left', u_left_vol - match_amount,
                     'right', u_right_vol - match_amount
                 ),
-                matched_pairs = matched_pairs + floor(match_amount / 50)
+                matched_pairs = matched_pairs + floor(match_amount)
             WHERE id = user_id;
 
             -- Log the bonus payment
             INSERT INTO public.payments (uid, amount, type, status, order_description)
-            VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'BINARY MATCHING DIVIDEND for ' || match_amount || ' volume');
+            VALUES (user_id, bonus_amount, 'matching_bonus', 'finished', 'BINARY MATCHING DIVIDEND for ' || (match_amount * 50) || ' volume (' || match_amount || ' pairs)');
         END IF;
     END IF;
 END;
@@ -526,12 +525,12 @@ BEGIN
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                     '{' || lower(current_side) || '}', 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                     '{' || lower(current_side) || '}', 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 )
             WHERE id = current_parent_id;
 
@@ -551,7 +550,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 13. Rebuild Functions
+-- 14. Update Node Balances (Mining Simulation)
+CREATE OR REPLACE FUNCTION public.update_node_balances()
+RETURNS VOID AS $$
+BEGIN
+    -- Each active node generates 0.25 USDT per day (0.5% of $50 unit)
+    UPDATE public.team_collection
+    SET balance = balance + (0.25 * EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 86400)
+    WHERE eligible = TRUE;
+    
+    -- Update updated_at to NOW()
+    UPDATE public.team_collection
+    SET updated_at = NOW()
+    WHERE eligible = TRUE;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Add updated_at to team_collection if not exists
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='team_collection' AND column_name='updated_at') THEN
+        ALTER TABLE public.team_collection ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+    END IF;
+END $$;
 CREATE OR REPLACE FUNCTION public.rebuild_cumulative_volume()
 RETURNS VOID AS $$
 DECLARE
@@ -594,12 +615,12 @@ BEGIN
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                     '{' || lower(current_side) || '}', 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                     '{' || lower(current_side) || '}', 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 ),
                 team_size = jsonb_set(
                     COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 

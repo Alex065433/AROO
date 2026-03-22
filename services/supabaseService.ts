@@ -521,6 +521,9 @@ export const supabaseService = {
 
   // Team Collection
   async getTeamCollection(uid: string) {
+    // Sync node balances first
+    await supabase.rpc('update_node_balances');
+
     const { data, error } = await supabase
       .from('team_collection')
       .select('*')
@@ -541,15 +544,16 @@ export const supabaseService = {
 
     let totalCollected = 0;
     for (const node of nodes) {
-      // For simulation, each node gives 5.25 USDT
-      totalCollected += 5.25;
+      totalCollected += parseFloat(node.balance || 0);
       
-      // Reset node balance (if we were tracking it)
+      // Reset node balance
       await supabase
         .from('team_collection')
-        .update({ balance: 0 })
+        .update({ balance: 0, updated_at: new Date().toISOString() })
         .eq('node_id', node.node_id);
     }
+
+    if (totalCollected <= 0) return 0;
 
     // 2. Add to user's master wallet via payment record (trigger will handle wallet update)
     await supabase.from('payments').insert([{
@@ -558,7 +562,8 @@ export const supabaseService = {
       type: 'team_collection',
       status: 'finished',
       method: 'INTERNAL',
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      order_description: `Consolidated collection from ${nodeIds.length} nodes`
     }]);
 
     return totalCollected;

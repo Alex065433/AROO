@@ -100,8 +100,9 @@ const WalletCardRow: React.FC<{
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [userData, setUserData] = useState<any>(MOCK_USER);
-  const [userWallets, setUserWallets] = useState(MOCK_USER.wallets);
+  const [userData, setUserData] = useState<any>(null);
+  const [userWallets, setUserWallets] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -146,6 +147,28 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
+    const fetchUserData = async () => {
+      setLoading(true);
+      try {
+        const user = supabaseService.getCurrentUser();
+        if (user) {
+          const profile = await supabaseService.getUserProfile(user.id || user.uid);
+          if (profile) {
+            setUserData(profile);
+            setUserWallets(profile.wallets);
+          }
+        } else {
+          navigate('/login');
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserData();
+
     const checkAdminStatus = async () => {
       try {
         const response = await fetch('/api/health');
@@ -165,10 +188,7 @@ const Dashboard: React.FC = () => {
           const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           if (profile) {
             setUserData(profile);
-            setUserWallets({
-              ...MOCK_USER.wallets,
-              ...(profile.wallets || {})
-            });
+            setUserWallets(profile.wallets || {});
           }
         } catch (err) {
           console.error('Error fetching profile:', err);
@@ -226,13 +246,13 @@ const Dashboard: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleClaim = (walletKey: keyof typeof MOCK_USER.wallets) => {
-    const claimAmount = userWallets[walletKey].balance;
+  const handleClaim = (walletKey: string) => {
+    const claimAmount = userWallets[walletKey]?.balance || 0;
     if (claimAmount <= 0) return;
 
-    setUserWallets(prev => ({
+    setUserWallets((prev: any) => ({
       ...prev,
-      master: { ...prev.master, balance: prev.master.balance + claimAmount },
+      master: { ...prev.master, balance: (prev.master?.balance || 0) + claimAmount },
       [walletKey]: { ...prev[walletKey], balance: 0 }
     }));
 
@@ -258,10 +278,7 @@ const Dashboard: React.FC = () => {
           const profile = await supabaseService.getUserProfile(userData.id);
           if (profile) {
             setUserData(profile);
-            setUserWallets({
-              ...MOCK_USER.wallets,
-              ...(profile.wallets || {})
-            });
+            setUserWallets(profile.wallets || {});
           }
         }
       } else if (status === 'waiting' || status === 'confirming' || status === 'sending') {
@@ -292,6 +309,20 @@ const Dashboard: React.FC = () => {
       setTimeout(() => setNotification(null), 3000);
     }, 1500);
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0b0e11] flex flex-col items-center justify-center gap-6">
+        <div className="w-20 h-20 relative">
+          <div className="absolute inset-0 border-4 border-orange-500/20 rounded-full"></div>
+          <div className="absolute inset-0 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <p className="text-slate-500 font-black uppercase tracking-[0.3em] text-xs animate-pulse">Synchronizing Node...</p>
+      </div>
+    );
+  }
+
+  if (!userData) return null;
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 relative">
