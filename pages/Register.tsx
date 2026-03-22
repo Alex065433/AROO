@@ -72,33 +72,62 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-    
+
     setIsSubmitting(true);
     setError(null);
-    
+
     try {
-      // Supabase Registration (Real Logic)
-      const user = await supabaseService.register(email, password, sponsorId, side || 'LEFT', {
-        name: name || 'New Operator',
-        mobile: mobile || '',
-        withdrawalPassword: withdrawalPassword,
-        twoFactorPin: twoFactorPin || '123456',
-        parentId: parentId
-      });
-      
+      // 1. Convert sponsor operator_id → UUID
+      const sponsorUser = await supabaseService.findUserByOperatorId(sponsorId);
+
+      if (!sponsorUser) {
+        setError('Invalid Sponsor ID');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 2. Convert parent operator_id → UUID (if exists)
+      let parentUUID = null;
+
+      if (parentId) {
+        const parentUser = await supabaseService.findUserByOperatorId(parentId);
+        if (!parentUser) {
+          setError('Invalid Parent ID');
+          setIsSubmitting(false);
+          return;
+        }
+        parentUUID = parentUser.id;
+      }
+
+      // 3. Register with UUIDs
+      const user = await supabaseService.register(
+        email,
+        password,
+        sponsorUser.id,
+        side || 'LEFT',
+        {
+          name: name || 'New Operator',
+          mobile: mobile || '',
+          withdrawalPassword: withdrawalPassword,
+          twoFactorPin: twoFactorPin || '123456',
+          parentId: parentUUID
+        }
+      );
+
       setRegisteredUser(user);
       setIsSubmitting(false);
       setIsSuccess(true);
 
-      // Send Welcome Email
+      // 4. Send Welcome Email
       try {
         await fetch('/api/email/welcome', {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
@@ -112,10 +141,12 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         console.error('Failed to send welcome email:', emailErr);
       }
 
+      // 5. Redirect
       setTimeout(() => {
         onLogin();
         navigate('/dashboard');
-      }, 5000); // Increased timeout to let user see the ID
+      }, 5000);
+
     } catch (err: any) {
       console.error('Registration failed:', err);
       setError(supabaseService.formatError(err));
