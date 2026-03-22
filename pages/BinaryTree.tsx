@@ -30,6 +30,8 @@ interface NodeData {
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
   team_size?: { left: number; right: number };
+  sponsorId?: string;
+  email?: string;
 }
 
 const TREE_DATA: Record<string, NodeData> = {
@@ -39,7 +41,8 @@ const TREE_DATA: Record<string, NodeData> = {
 const BinaryTree: React.FC = () => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [treeData, setTreeData] = useState<Record<string, NodeData>>(TREE_DATA);
+  const [treeData, setTreeData] = useState<Record<string, NodeData>>({});
+  const [isTreeLoading, setIsTreeLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | 'ledger' | null>(null);
   const [totalReferrals, setTotalReferrals] = useState(0);
@@ -106,10 +109,6 @@ const BinaryTree: React.FC = () => {
             }
             
             setViewRootId(rootId);
-            const dynamicTree = await supabaseService.getBinaryTree(rootId);
-            if (Object.keys(dynamicTree).length > 0) {
-              setTreeData(dynamicTree);
-            }
           }
           const payments = await supabaseService.getPayments(user.id || user.uid);
           setTransactions(payments);
@@ -127,9 +126,14 @@ const BinaryTree: React.FC = () => {
   useEffect(() => {
     if (viewRootId) {
       const fetchTree = async () => {
-        const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
-        if (Object.keys(dynamicTree).length > 0) {
+        setIsTreeLoading(true);
+        try {
+          const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
           setTreeData(dynamicTree);
+        } catch (err) {
+          console.error('Error fetching tree:', err);
+        } finally {
+          setIsTreeLoading(false);
         }
       };
       fetchTree();
@@ -174,18 +178,6 @@ const BinaryTree: React.FC = () => {
     }, 1500);
   };
 
-  // Calculate path from selected node to root
-  const getPathToRoot = (nodeId: string | null): string[] => {
-    if (!nodeId) return [];
-    const path = [nodeId];
-    let current = treeData[nodeId];
-    while (current && current.parentId) {
-      path.push(current.parentId);
-      current = treeData[current.parentId];
-    }
-    return path;
-  };
-
   const handleSelect = (id: string) => {
     if (selectedNodeId === id) {
       const node = treeData[id];
@@ -217,8 +209,16 @@ const BinaryTree: React.FC = () => {
     }
   };
 
-  const activePath = getPathToRoot(selectedNodeId);
   const selectedNode = selectedNodeId ? treeData[selectedNodeId] : null;
+
+  // Find downline members of the selected node
+  const downlineMembers = useMemo(() => {
+    if (!selectedNodeId) return [];
+    return Object.keys(treeData)
+      .filter(path => path.startsWith(`${selectedNodeId}-`))
+      .map(path => treeData[path])
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [selectedNodeId, treeData]);
 
   return (
     <div className="space-y-0 animate-in fade-in duration-500 relative min-h-[800px]">
@@ -537,12 +537,28 @@ const BinaryTree: React.FC = () => {
       <div className="flex flex-col lg:flex-row gap-8 items-start relative">
         {/* Main Tree Container */}
         <div className="w-full lg:flex-1 h-[700px] md:h-[850px] relative">
-          <D3BinaryTree 
-            data={treeData}
-            onSelect={handleSelect}
-            onInvite={handleInvite}
-            userProfile={userProfile}
-          />
+          {isTreeLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0b] rounded-[40px] border border-white/5">
+              <div className="flex flex-col items-center gap-4">
+                <RefreshCw className="text-orange-500 animate-spin" size={48} />
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Synchronizing Network Data...</p>
+              </div>
+            </div>
+          ) : Object.keys(treeData).length === 0 ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0b] rounded-[40px] border border-white/5">
+              <div className="flex flex-col items-center gap-4">
+                <AlertCircle className="text-slate-700" size={48} />
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No Network Data Found</p>
+              </div>
+            </div>
+          ) : (
+            <D3BinaryTree 
+              data={treeData}
+              onSelect={handleSelect}
+              onInvite={handleInvite}
+              userProfile={userProfile}
+            />
+          )}
         </div>
 
         {/* Profile Sidebar (Chain Details) */}
@@ -598,7 +614,9 @@ const BinaryTree: React.FC = () => {
                     { label: 'Network Registry ID', val: selectedNode.id, icon: Globe },
                     { label: 'Synchronization Date', val: selectedNode.joinDate, icon: Zap },
                     { label: 'Team Node Count', val: `${selectedNode.totalTeam} Partners`, icon: Award },
-                    { label: 'Placement Protocol', val: `${selectedNode.side} BRANCH`, icon: Share2 }
+                    { label: 'Placement Protocol', val: `${selectedNode.side} BRANCH`, icon: Share2 },
+                    { label: 'Sponsor ID', val: selectedNode.sponsorId || 'N/A', icon: UserPlus },
+                    { label: 'Contact Email', val: selectedNode.email || 'N/A', icon: Globe }
                   ].map((item, idx) => (
                     <div key={idx} className="flex items-center gap-5 p-4 bg-white/[0.02] border border-white/5 rounded-2xl group hover:bg-white/5 transition-colors">
                       <div className="p-2.5 bg-slate-800 rounded-xl text-slate-500 group-hover:text-orange-500 transition-colors">
@@ -611,6 +629,40 @@ const BinaryTree: React.FC = () => {
                     </div>
                   ))}
                 </div>
+
+                {/* Downline Members List */}
+                {downlineMembers.length > 0 && (
+                  <div className="mt-8 pt-8 border-t border-white/5">
+                    <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] mb-4">Downline Members ({downlineMembers.length})</h4>
+                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                      {downlineMembers.map((member, idx) => (
+                        <div 
+                          key={idx} 
+                          className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group"
+                          onClick={() => {
+                            // Find the path of this member in treeData
+                            const path = Object.keys(treeData).find(k => treeData[k].uid === member.uid);
+                            if (path) setSelectedNodeId(path);
+                          }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-[10px] font-black text-slate-500 group-hover:text-orange-500 transition-colors">
+                              {member.name?.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold text-slate-200">{member.name}</p>
+                              <p className="text-[8px] text-slate-600 uppercase tracking-widest">{member.rank}</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[9px] font-black text-slate-400">{member.id}</p>
+                            <p className="text-[7px] text-slate-600 uppercase tracking-widest">{member.side} Side</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-8 space-y-3">

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import GlassCard from '../components/GlassCard';
-import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight } from 'lucide-react';
+import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight, RefreshCw } from 'lucide-react';
 import { supabaseService } from '../services/supabaseService';
 
 const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
@@ -67,16 +67,23 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
 
 const ReferralProgram: React.FC = () => {
   const [user, setUser] = useState<any>(null);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const fetchUser = async () => {
+    const fetchData = async () => {
+      setIsLoading(true);
       const currentUser = supabaseService.getCurrentUser();
       if (currentUser) {
         const profile = await supabaseService.getUserProfile(currentUser.id);
         setUser(profile);
+        
+        const refs = await supabaseService.getReferrals(currentUser.id);
+        setReferrals(refs);
       }
+      setIsLoading(false);
     };
-    fetchUser();
+    fetchData();
   }, []);
 
   const operatorId = user?.operator_id || 'ARW-XXXX';
@@ -93,7 +100,7 @@ const ReferralProgram: React.FC = () => {
               <Users className="text-emerald-500" size={20} />
               <div className="flex flex-col">
                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500/60">Active Directs</span>
-                 <span className="text-lg font-black text-white">{(user?.team_size?.left || 0) + (user?.team_size?.right || 0)} Partners</span>
+                 <span className="text-lg font-black text-white">{referrals.length} Partners</span>
               </div>
            </div>
         </div>
@@ -102,6 +109,61 @@ const ReferralProgram: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
         <ReferralLinkCard side="LEFT" operatorId={operatorId} />
         <ReferralLinkCard side="RIGHT" operatorId={operatorId} />
+      </div>
+
+      {/* Direct Referrals List */}
+      <div className="bg-[#111112] border border-white/5 rounded-[40px] p-10">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-blue-500/20 rounded-xl text-blue-500">
+              <Users size={20} />
+            </div>
+            <h3 className="text-xl font-bold uppercase tracking-widest">Direct Referral Network</h3>
+          </div>
+          <div className="px-4 py-1.5 bg-white/5 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">
+            {referrals.length} Total
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="flex justify-center py-20">
+            <RefreshCw className="text-orange-500 animate-spin" size={32} />
+          </div>
+        ) : referrals.length === 0 ? (
+          <div className="text-center py-20 bg-white/[0.02] rounded-3xl border border-dashed border-white/5">
+            <p className="text-slate-500 text-sm font-medium">No direct referrals found yet. Share your link to start building!</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {referrals.map((ref, idx) => (
+              <div key={idx} className="p-6 bg-white/[0.02] border border-white/5 rounded-3xl hover:bg-white/5 transition-all group">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-lg font-black text-slate-500 group-hover:text-orange-500 transition-colors">
+                    {ref.name?.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">{ref.name}</h4>
+                    <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">{ref.operator_id}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-4 border-t border-white/5">
+                  <div>
+                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Rank</p>
+                    <p className="text-[10px] font-bold text-orange-500 uppercase tracking-widest mt-0.5">{ref.rank_name || 'Partner'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Package</p>
+                    <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mt-0.5">${ref.active_package || 0}</p>
+                  </div>
+                </div>
+                <div className="mt-4 pt-4 border-t border-white/5">
+                   <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Joined On</p>
+                   <p className="text-[10px] font-bold text-slate-400 mt-0.5">{new Date(ref.created_at).toLocaleDateString()}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

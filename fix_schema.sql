@@ -20,11 +20,19 @@ BEGIN
         -- Update the parent's team size
         IF current_side = 'LEFT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{left}', ((team_size->>'left')::int + 1)::text::jsonb)
+            SET team_size = jsonb_set(
+                    COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
+                    '{left}', 
+                    ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb
+                )
             WHERE id = current_parent_id::uuid;
         ELSIF current_side = 'RIGHT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{right}', ((team_size->>'right')::int + 1)::text::jsonb)
+            SET team_size = jsonb_set(
+                    COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
+                    '{right}', 
+                    ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb
+                )
             WHERE id = current_parent_id::uuid;
         END IF;
 

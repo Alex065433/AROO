@@ -356,17 +356,57 @@ export const supabaseService = {
     // 1. Handle payment deduction unless it's free
     if (!isFree) {
       if (adminId) {
-        // Log admin deduction. The trigger update_wallets_on_payment will handle the actual wallet update.
-        // We use negative amount to indicate deduction.
+        const adminProfile = await this.getUserProfile(adminId);
+        if (!adminProfile) throw new Error('Admin not found');
+        
+        if ((adminProfile.wallets?.master?.balance || 0) < amount) {
+          throw new Error('Insufficient admin funds');
+        }
+
+        // Deduct from admin wallet
+        const updatedWallets = {
+          ...adminProfile.wallets,
+          master: {
+            ...adminProfile.wallets?.master,
+            balance: (adminProfile.wallets?.master?.balance || 0) - amount
+          }
+        };
+
+        await supabase
+          .from('profiles')
+          .update({ wallets: updatedWallets })
+          .eq('id', adminId);
+
+        // Log admin deduction
         await supabase.from('payments').insert([{
           uid: adminId,
           amount: -amount,
           type: 'admin_fund_usage',
           status: 'finished',
           method: 'INTERNAL',
-          order_description: `Activated package for ${uid}`,
           created_at: new Date().toISOString()
         }]);
+      } else {
+        // Deduct from user's own master wallet
+        const profile = await this.getUserProfile(uid);
+        if (!profile) throw new Error('User not found');
+        if ((profile.wallets?.master?.balance || 0) < amount) {
+          throw new Error('Insufficient funds');
+        }
+
+        // Deduct from wallet
+        const updatedWallets = {
+          ...profile.wallets,
+          master: {
+            ...profile.wallets?.master,
+            balance: (profile.wallets?.master?.balance || 0) - amount
+          }
+        };
+
+        await supabase
+          .from('profiles')
+          .update({ wallets: updatedWallets })
+          .eq('id', uid);
       }
     }
 
@@ -376,8 +416,8 @@ export const supabaseService = {
       amount,
       type: 'package_activation',
       status: 'finished',
-      method: isFree ? 'FREE' : 'WALLET', // WALLET method triggers deduction in DB
-      order_description: 'Package Activation',
+      method: 'INTERNAL',
+      order_description: 'INCENTIVE POOL ACCRUAL',
       created_at: new Date().toISOString()
     }]);
 
@@ -669,10 +709,56 @@ export const supabaseService = {
   },
 
   async addIncome(uid: string, amount: number, type: string) {
-    // Log transaction. The trigger update_wallets_on_payment will handle the actual wallet updates and capping.
+    const profile = await this.getUserProfile(uid);
+    if (!profile) return;
+
+    let payableAmount = amount;
+
+    // Only apply daily capping to matching income
+    if (type === 'matching_income') {
+      const today = new Date().toISOString().split('T')[0];
+      const dailyIncome = profile.daily_income || { date: '', amount: 0 };
+      
+      let currentDailyAmount = dailyIncome.date === today ? dailyIncome.amount : 0;
+      
+      // Capping based on rank
+      const rankData = RANKS.find(r => r.level === (profile.rank || 1));
+      const capping = rankData?.dailyCapping || 250;
+
+      const remainingCapping = capping - currentDailyAmount;
+      if (remainingCapping <= 0) return; // Capped for today
+
+      payableAmount = Math.min(amount, remainingCapping);
+
+      // Update daily income tracking for capping
+      await supabase
+        .from('profiles')
+        .update({ 
+          daily_income: { date: today, amount: currentDailyAmount + payableAmount }
+        })
+        .eq('id', uid);
+    }
+    
+    // Update Wallets
+    const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
+    updatedWallets.master.balance += payableAmount;
+    if (type === 'referral_bonus') updatedWallets.referral.balance += payableAmount;
+    if (type === 'matching_income') updatedWallets.matching.balance += payableAmount;
+    if (type === 'rank_bonus') updatedWallets.rankBonus.balance += payableAmount;
+    if (type === 'reward_income') updatedWallets.rewards.balance += payableAmount;
+    
+    await supabase
+      .from('profiles')
+      .update({ 
+        wallets: updatedWallets,
+        total_income: (profile.total_income || 0) + payableAmount
+      })
+      .eq('id', uid);
+
+    // Log transaction
     await supabase.from('payments').insert([{
       uid,
-      amount: amount,
+      amount: payableAmount,
       type,
       status: 'finished',
       method: 'INTERNAL',
@@ -698,10 +784,19 @@ export const supabaseService = {
     // Fetch the entire downline in one recursive query
     const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: rootId });
     
-    if (error || !downline || downline.length === 0) return {};
+    let finalDownline = downline;
+    if (error || !downline || downline.length === 0) {
+      // Fallback: fetch at least the root node if RPC fails or returns nothing
+      const { data: rootNode } = await supabase.from('profiles').select('*').eq('id', rootId).single();
+      if (rootNode) {
+        finalDownline = [rootNode];
+      } else {
+        return {};
+      }
+    }
 
     const tree: Record<string, any> = {};
-    const rootProfile = downline.find(p => p.id === rootId);
+    const rootProfile = finalDownline.find((p: any) => p.id === rootId);
     if (!rootProfile) return {};
 
     const buildNode = (node: any, path: string) => {
@@ -713,9 +808,11 @@ export const supabaseService = {
         joinDate: node.created_at?.split('T')[0],
         totalTeam: (node.team_size?.left || 0) + (node.team_size?.right || 0),
         team_size: node.team_size || { left: 0, right: 0 },
-        leftVolume: (node.matching_volume?.left || 0).toFixed(2) || '0.00',
-        rightVolume: (node.matching_volume?.right || 0).toFixed(2) || '0.00',
+        leftVolume: ((node.matching_volume?.left || 0) * 50).toFixed(2),
+        rightVolume: ((node.matching_volume?.right || 0) * 50).toFixed(2),
         parentId: node.parent_id,
+        sponsorId: node.sponsor_id,
+        email: node.email,
         side: node.side || 'ROOT',
         uid: node.id
       };
@@ -725,8 +822,8 @@ export const supabaseService = {
 
     // Build the tree structure by matching parent_id and side
     const processChildren = (parentId: string, parentPath: string) => {
-      const children = downline.filter(p => p.parent_id === parentId);
-      children.forEach(child => {
+      const children = finalDownline.filter((p: any) => p.parent_id === parentId);
+      children.forEach((child: any) => {
         if (child.side) {
           const childPath = `${parentPath}-${child.side.toLowerCase()}`;
           buildNode(child, childPath);

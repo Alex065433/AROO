@@ -242,6 +242,15 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
           .attr("font-size", "8px")
           .text(d.data.id);
 
+        // Rank
+        el.append("text")
+          .attr("text-anchor", "middle")
+          .attr("y", 35)
+          .attr("fill", d.data.rank !== 'Partner' ? "#f59e0b" : "rgba(255,255,255,0.3)")
+          .attr("font-size", "7px")
+          .attr("font-weight", "bold")
+          .text(d.data.rank.toUpperCase());
+
         // Leg Counts
         const leftCount = d.data.team_size?.left || 0;
         const rightCount = d.data.team_size?.right || 0;
@@ -255,7 +264,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
           .attr("fill", "#f97316")
           .attr("font-size", "8px")
           .attr("font-weight", "bold")
-          .text(`L: ${leftCount}`);
+          .text(`L: ${leftCount} (${d.data.leftVolume})`);
 
         // Right Leg
         statsGroup.append("text")
@@ -264,7 +273,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
           .attr("fill", "#f97316")
           .attr("font-size", "8px")
           .attr("font-weight", "bold")
-          .text(`R: ${rightCount}`);
+          .text(`R: ${rightCount} (${d.data.rightVolume})`);
           
         // Total Referrals (if available, otherwise use totalTeam)
         statsGroup.append("text")

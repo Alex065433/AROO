@@ -172,12 +172,12 @@ BEGIN
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
                 )
             WHERE id = current_parent_id::uuid;
 
