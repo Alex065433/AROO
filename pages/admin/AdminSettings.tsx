@@ -3,22 +3,58 @@ import React, { useState } from 'react';
 import { 
   Save, Globe, Shield, Wallet, 
   Percent, AlertTriangle, Upload,
-  CheckCircle2, RefreshCw
+  CheckCircle2, RefreshCw, Database
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { ArowinLogo } from '../../components/ArowinLogo';
+import { supabaseService } from '../../services/supabaseService';
 
 const AdminSettings: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
+  const [isRebuilding, setIsRebuilding] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('Settings updated successfully!');
+
+  const [isProcessingPayouts, setIsProcessingPayouts] = useState(false);
 
   const handleSave = () => {
     setIsSaving(true);
     setTimeout(() => {
       setIsSaving(false);
+      setSuccessMessage('Settings updated successfully!');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     }, 1500);
+  };
+
+  const handleRebuild = async () => {
+    setIsRebuilding(true);
+    try {
+      await supabaseService.rebuildTreeCounts();
+      setSuccessMessage('Network counts rebuilt successfully!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) {
+      console.error('Rebuild failed:', err);
+      alert('Failed to rebuild network counts. Please ensure the SQL schema is updated.');
+    } finally {
+      setIsRebuilding(false);
+    }
+  };
+
+  const handleProcessPayouts = async () => {
+    setIsProcessingPayouts(true);
+    try {
+      await supabaseService.processDailyPayouts();
+      setSuccessMessage('Daily payouts processed successfully!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) {
+      console.error('Payout processing failed:', err);
+      alert('Failed to process daily payouts. Check system logs.');
+    } finally {
+      setIsProcessingPayouts(false);
+    }
   };
 
   return (
@@ -46,7 +82,7 @@ const AdminSettings: React.FC = () => {
           className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-3 text-emerald-500 font-bold text-sm"
         >
           <CheckCircle2 size={20} />
-          Settings updated successfully!
+          {successMessage}
         </motion.div>
       )}
 
@@ -152,6 +188,53 @@ const AdminSettings: React.FC = () => {
                 <input type="checkbox" className="sr-only peer" defaultChecked />
                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-indigo-600"></div>
               </label>
+            </div>
+          </div>
+        </div>
+
+        {/* System Tools */}
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="px-8 py-6 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
+            <Database className="text-indigo-600" size={20} />
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">System Tools</h3>
+          </div>
+          <div className="p-8 space-y-6">
+            <div className="flex items-center justify-between p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-indigo-500/10 text-indigo-500 rounded-xl">
+                  <RefreshCw size={24} className={isRebuilding ? 'animate-spin' : ''} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">Rebuild Network Counts</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">Recalculate Left/Right team sizes and volumes for all users. Use this if tree statistics appear out of sync.</p>
+                </div>
+              </div>
+              <button 
+                onClick={handleRebuild}
+                disabled={isRebuilding}
+                className="px-6 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-indigo-500 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50"
+              >
+                {isRebuilding ? 'Processing...' : 'Run Rebuild'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl">
+                  <Wallet size={24} className={isProcessingPayouts ? 'animate-spin' : ''} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">Process Daily Payouts</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md">Manually trigger binary matching income and daily cap resets. This is usually automated but can be run manually for testing.</p>
+                </div>
+              </div>
+              <button 
+                onClick={handleProcessPayouts}
+                disabled={isProcessingPayouts}
+                className="px-6 py-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-black uppercase tracking-widest transition-all disabled:opacity-50"
+              >
+                {isProcessingPayouts ? 'Processing...' : 'Run Payouts'}
+              </button>
             </div>
           </div>
         </div>

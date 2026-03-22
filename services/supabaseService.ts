@@ -800,14 +800,17 @@ export const supabaseService = {
     if (!rootProfile) return {};
 
     const buildNode = (node: any, path: string) => {
+      const leftCount = parseInt(node.team_size?.left || '0');
+      const rightCount = parseInt(node.team_size?.right || '0');
+      
       tree[path] = {
         id: node.operator_id,
         name: node.name,
         rank: node.rank_name || 'Partner',
         status: node.active_package > 0 ? 'Active' : 'Pending',
         joinDate: node.created_at?.split('T')[0],
-        totalTeam: (node.team_size?.left || 0) + (node.team_size?.right || 0),
-        team_size: node.team_size || { left: 0, right: 0 },
+        totalTeam: leftCount + rightCount,
+        team_size: { left: leftCount, right: rightCount },
         leftVolume: ((node.matching_volume?.left || 0) * 50).toFixed(2),
         rightVolume: ((node.matching_volume?.right || 0) * 50).toFixed(2),
         parentId: node.parent_id,
@@ -821,18 +824,42 @@ export const supabaseService = {
     buildNode(rootProfile, 'root');
 
     // Build the tree structure by matching parent_id and side
+    // We use a map for faster lookup
+    const nodesByParent: Record<string, any[]> = {};
+    finalDownline.forEach((p: any) => {
+      if (p.parent_id) {
+        if (!nodesByParent[p.parent_id]) nodesByParent[p.parent_id] = [];
+        nodesByParent[p.parent_id].push(p);
+      }
+    });
+
     const processChildren = (parentId: string, parentPath: string) => {
-      const children = finalDownline.filter((p: any) => p.parent_id === parentId);
+      const children = nodesByParent[parentId] || [];
       children.forEach((child: any) => {
         if (child.side) {
-          const childPath = `${parentPath}-${child.side.toLowerCase()}`;
-          buildNode(child, childPath);
-          processChildren(child.id, childPath);
+          const sideKey = child.side.toLowerCase();
+          const childPath = `${parentPath}-${sideKey}`;
+          
+          // Avoid infinite loops or duplicate paths
+          if (!tree[childPath]) {
+            buildNode(child, childPath);
+            processChildren(child.id, childPath);
+          }
         }
       });
     };
 
     processChildren(rootId, 'root');
+
+    // Add any "orphaned" nodes that were returned by the RPC but not connected in the tree
+    // This shouldn't happen with a correct binary tree, but helps debugging
+    finalDownline.forEach((node: any) => {
+      const alreadyInTree = Object.values(tree).some((n: any) => n.uid === node.id);
+      if (!alreadyInTree && node.id !== rootId) {
+        // Find a path for it or just add it as a top-level orphan
+        buildNode(node, `orphan-${node.id}`);
+      }
+    });
 
     return tree;
   },

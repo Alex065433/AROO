@@ -162,6 +162,32 @@ DECLARE
     current_parent_id UUID;
     current_side TEXT;
 BEGIN
+    -- Only proceed if we have a parent and a side
+    IF NEW.parent_id IS NULL OR NEW.side IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    -- If it's an update, only proceed if parent_id or side changed
+    -- OR if it was previously incomplete
+    IF (TG_OP = 'UPDATE') THEN
+        IF (OLD.parent_id IS NOT DISTINCT FROM NEW.parent_id AND OLD.side IS NOT DISTINCT FROM NEW.side) THEN
+            -- No change to placement, but maybe other fields changed. 
+            -- We don't need to update ancestor counts.
+            RETURN NEW;
+        END IF;
+        
+        -- If it was already fully placed (had parent and side), and now it's different,
+        -- we should ideally decrement old and increment new.
+        -- For now, to keep it simple and fix the "not adding" issue, 
+        -- we'll assume this is the initial placement or a fix-up.
+        -- If OLD had a parent, we skip to avoid double counting unless we implement decrement.
+        IF (OLD.parent_id IS NOT NULL AND OLD.side IS NOT NULL) THEN
+            -- Already counted once. If we want to support moves, we'd decrement here.
+            -- For this fix, we'll just return to avoid double counting.
+            RETURN NEW;
+        END IF;
+    END IF;
+
     current_parent_id := NEW.parent_id;
     current_side := NEW.side;
 
@@ -170,17 +196,17 @@ BEGIN
         IF current_side = 'LEFT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
-            WHERE id = current_parent_id::uuid;
+            WHERE id = current_parent_id;
         ELSIF current_side = 'RIGHT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
-            WHERE id = current_parent_id::uuid;
+            WHERE id = current_parent_id;
         END IF;
 
         -- Move up to the next parent
         SELECT parent_id, side INTO current_parent_id, current_side
         FROM public.profiles
-        WHERE id = current_parent_id::uuid;
+        WHERE id = current_parent_id;
     END LOOP;
 
     RETURN NEW;
@@ -223,6 +249,11 @@ CREATE TRIGGER on_user_inserted_update_team_size
   AFTER INSERT ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size();
 
+DROP TRIGGER IF EXISTS on_user_updated_update_team_size ON public.profiles;
+CREATE TRIGGER on_user_updated_update_team_size
+  AFTER UPDATE OF parent_id, side ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size();
+
 DROP TRIGGER IF EXISTS on_user_deleted_update_team_size ON public.profiles;
 CREATE TRIGGER on_user_deleted_update_team_size
   AFTER DELETE ON public.profiles
@@ -233,37 +264,39 @@ CREATE OR REPLACE FUNCTION public.rebuild_team_sizes()
 RETURNS VOID AS $$
 DECLARE
     p RECORD;
+    curr_parent_id UUID;
+    curr_side TEXT;
+    next_parent_id UUID;
+    next_side TEXT;
 BEGIN
-    -- Reset all counts
+    -- Reset all counts to 0
     UPDATE public.profiles SET team_size = '{"left": 0, "right": 0}'::jsonb;
     
-    -- For each profile, update all its ancestors
-    FOR p IN SELECT id, parent_id, side FROM public.profiles WHERE parent_id IS NOT NULL LOOP
-        DECLARE
-            curr_parent_id UUID := p.parent_id;
-            curr_side TEXT := p.side;
-            next_parent_id UUID;
-            next_side TEXT;
-        BEGIN
-            WHILE curr_parent_id IS NOT NULL LOOP
-                IF curr_side = 'LEFT' THEN
-                    UPDATE public.profiles
-                    SET team_size = jsonb_set(team_size, ARRAY['left'], ((team_size->>'left')::int + 1)::text::jsonb)
-                    WHERE id = curr_parent_id::uuid;
-                ELSIF curr_side = 'RIGHT' THEN
-                    UPDATE public.profiles
-                    SET team_size = jsonb_set(team_size, ARRAY['right'], ((team_size->>'right')::int + 1)::text::jsonb)
-                    WHERE id = curr_parent_id::uuid;
-                END IF;
-                
-                SELECT parent_id, side INTO next_parent_id, next_side
-                FROM public.profiles
-                WHERE id = curr_parent_id::uuid;
-                
-                curr_parent_id := next_parent_id;
-                curr_side := next_side;
-            END LOOP;
-        END;
+    -- For each profile, walk up its ancestors and increment the appropriate side
+    -- We only count nodes that are fully placed (have parent and side)
+    FOR p IN SELECT id, parent_id, side FROM public.profiles WHERE parent_id IS NOT NULL AND side IS NOT NULL LOOP
+        curr_parent_id := p.parent_id;
+        curr_side := p.side;
+        
+        WHILE curr_parent_id IS NOT NULL LOOP
+            IF curr_side = 'LEFT' THEN
+                UPDATE public.profiles
+                SET team_size = jsonb_set(team_size, ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
+                WHERE id = curr_parent_id;
+            ELSIF curr_side = 'RIGHT' THEN
+                UPDATE public.profiles
+                SET team_size = jsonb_set(team_size, ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
+                WHERE id = curr_parent_id;
+            END IF;
+            
+            -- Move up
+            SELECT parent_id, side INTO next_parent_id, next_side
+            FROM public.profiles
+            WHERE id = curr_parent_id;
+            
+            curr_parent_id := next_parent_id;
+            curr_side := next_side;
+        END LOOP;
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -277,8 +310,39 @@ CREATE OR REPLACE FUNCTION public.update_user_wallet(
     p_description TEXT
 )
 RETURNS VOID AS $$
+DECLARE
+    current_wallets JSONB;
 BEGIN
-    -- Log the payment. The trigger update_wallets_on_payment will handle the actual wallet updates.
+    -- Get current wallets
+    SELECT wallets INTO current_wallets FROM public.profiles WHERE id = user_id::uuid;
+    
+    -- Ensure wallet_key exists in JSONB
+    IF current_wallets IS NULL THEN
+        current_wallets := '{
+            "master": {"balance": 0, "currency": "USDT"},
+            "referral": {"balance": 0, "currency": "USDT"},
+            "matching": {"balance": 0, "currency": "USDT"},
+            "rankBonus": {"balance": 0, "currency": "USDT"},
+            "incentive": {"balance": 0, "currency": "USDT"},
+            "rewards": {"balance": 0, "currency": "USDT"}
+        }'::jsonb;
+    END IF;
+
+    IF NOT (current_wallets ? wallet_key) THEN
+        current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
+    END IF;
+
+    -- Update the specific wallet and total income
+    UPDATE public.profiles
+    SET total_income = total_income + amount,
+        wallets = jsonb_set(
+            current_wallets, 
+            ARRAY[wallet_key, 'balance'], 
+            ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + amount)::text::jsonb
+        )
+    WHERE id = user_id::uuid;
+
+    -- Log the payment
     INSERT INTO public.payments (uid, amount, type, status, order_description)
     VALUES (user_id, amount, p_type, 'finished', p_description);
 END;
@@ -734,7 +798,16 @@ BEGIN
         )
         WHERE id = p_user_id;
 
-        -- Log transaction. The trigger update_wallets_on_payment will handle adding to master wallet.
+        -- Add to master wallet
+        UPDATE public.profiles
+        SET wallets = jsonb_set(
+            wallets,
+            ARRAY['master', 'balance'],
+            ((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_balance)::text::jsonb
+        )
+        WHERE id = p_user_id;
+
+        -- Log transaction
         INSERT INTO public.payments (uid, amount, type, status, order_description, created_at)
         VALUES (p_user_id, v_balance, 'claim', 'finished', 'Claimed ' || p_wallet_key || ' to Master Vault', NOW());
     END IF;

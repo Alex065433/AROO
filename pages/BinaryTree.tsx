@@ -8,7 +8,7 @@ import {
   ArrowUpRight, ArrowDownLeft,
   History, RefreshCw,
   ArrowLeft, AlertCircle,
-  CheckCircle2
+  CheckCircle2, Users, Search, ArrowUpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
@@ -122,6 +122,20 @@ const BinaryTree: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  const refreshTree = async () => {
+    if (viewRootId) {
+      setIsTreeLoading(true);
+      try {
+        const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
+        setTreeData(dynamicTree);
+      } catch (err) {
+        console.error('Error refreshing tree:', err);
+      } finally {
+        setIsTreeLoading(false);
+      }
+    }
+  };
+
   // Fetch tree when viewRootId changes
   useEffect(() => {
     if (viewRootId) {
@@ -225,6 +239,7 @@ const BinaryTree: React.FC = () => {
       <LiveRatesTicker />
       
       <div className="p-8 space-y-8">
+
         {/* Invite Modal */}
       <AnimatePresence>
         {inviteModal && (
@@ -449,6 +464,13 @@ const BinaryTree: React.FC = () => {
               >
                 <RefreshCw size={12} /> Reset View
               </button>
+              <button 
+                onClick={refreshTree}
+                disabled={isTreeLoading}
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-orange-500/20 flex items-center gap-2 shadow-lg shadow-orange-950/20"
+              >
+                <RefreshCw size={12} className={isTreeLoading ? "animate-spin" : ""} /> Sync Network
+              </button>
             </div>
           </div>
         </div>
@@ -536,7 +558,7 @@ const BinaryTree: React.FC = () => {
 
       <div className="flex flex-col lg:flex-row gap-8 items-start relative">
         {/* Main Tree Container */}
-        <div className="w-full lg:flex-1 h-[700px] md:h-[850px] relative">
+        <div className="w-full lg:flex-1 h-[600px] md:h-[850px] relative">
           {isTreeLoading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0b] rounded-[40px] border border-white/5">
               <div className="flex flex-col items-center gap-4">
@@ -564,23 +586,34 @@ const BinaryTree: React.FC = () => {
         {/* Profile Sidebar (Chain Details) */}
         <AnimatePresence>
           {selectedNode && (
-            <motion.div
-              initial={{ x: 100, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: 100, opacity: 0 }}
-              className="fixed inset-y-0 right-0 w-full md:w-96 z-[150] md:relative md:z-0 md:h-[750px] bg-[#0d0d0e] border-l md:border border-white/5 md:rounded-[40px] shadow-2xl p-6 md:p-8 flex flex-col"
-            >
-              <div className="flex justify-between items-center mb-6 md:mb-8">
-                <div className="px-4 py-1.5 bg-orange-600 text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-orange-950/20">
-                  Node Analysis
+            <>
+              {/* Mobile Overlay Backdrop */}
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setSelectedNodeId(null)}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[140] lg:hidden"
+              />
+              
+              <motion.div
+                initial={{ x: '100%', opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: '100%', opacity: 0 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="fixed inset-y-0 right-0 w-full sm:w-[400px] lg:w-96 z-[150] lg:relative lg:z-0 lg:h-[850px] bg-[#0d0d0e] border-l lg:border border-white/5 lg:rounded-[40px] shadow-2xl p-6 md:p-8 flex flex-col"
+              >
+                <div className="flex justify-between items-center mb-6 md:mb-8">
+                  <div className="px-4 py-1.5 bg-orange-600 text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-orange-950/20">
+                    Node Analysis
+                  </div>
+                  <button 
+                    onClick={() => setSelectedNodeId(null)}
+                    className="p-2 text-slate-500 hover:text-white transition-colors bg-white/5 rounded-xl lg:bg-transparent"
+                  >
+                    <X size={24} />
+                  </button>
                 </div>
-                <button 
-                  onClick={() => setSelectedNodeId(null)}
-                  className="p-2 text-slate-500 hover:text-white transition-colors"
-                >
-                  <X size={24} />
-                </button>
-              </div>
 
               <div className="flex flex-col items-center text-center space-y-4 mb-10 pb-10 border-b border-white/5">
                 <div className="relative">
@@ -602,11 +635,27 @@ const BinaryTree: React.FC = () => {
                   <div className="p-5 bg-white/5 rounded-3xl border border-white/5">
                     <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Left Volume</p>
                     <p className="text-lg font-black text-white mt-1">{selectedNode.leftVolume} <span className="text-[10px] opacity-50">USDT</span></p>
+                    <p className="text-[10px] text-orange-500 font-bold mt-1">L: {selectedNode.team_size?.left || 0}</p>
                   </div>
                   <div className="p-5 bg-white/5 rounded-3xl border border-white/5">
                     <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Right Volume</p>
                     <p className="text-lg font-black text-white mt-1">{selectedNode.rightVolume} <span className="text-[10px] opacity-50">USDT</span></p>
+                    <p className="text-[10px] text-orange-500 font-bold mt-1">R: {selectedNode.team_size?.right || 0}</p>
                   </div>
+                </div>
+
+                <div className="p-5 bg-white/5 rounded-3xl border border-white/5 flex justify-between items-center">
+                  <div>
+                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Total Downline</p>
+                    <p className="text-lg font-black text-white mt-1">{downlineMembers.length} <span className="text-[10px] opacity-50">Members</span></p>
+                  </div>
+                  <button 
+                    onClick={refreshTree}
+                    className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl transition-colors group"
+                    title="Refresh Tree"
+                  >
+                    <RefreshCw className="w-5 h-5 text-slate-500 group-hover:text-orange-500 transition-colors" />
+                  </button>
                 </div>
 
                 <div className="space-y-4">
@@ -631,46 +680,59 @@ const BinaryTree: React.FC = () => {
                 </div>
 
                 {/* Downline Members List */}
-                {downlineMembers.length > 0 && (
-                  <div className="mt-8 pt-8 border-t border-white/5">
-                    <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em] mb-4">Downline Members ({downlineMembers.length})</h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
-                      {downlineMembers.map((member, idx) => (
+                <div className="mt-8 pt-8 border-t border-white/5">
+                  <div className="flex items-center justify-between mb-6">
+                    <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em]">Downline Members</h4>
+                    <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-bold text-white/40">{downlineMembers.length} Total</span>
+                  </div>
+                  
+                  <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-2">
+                    {downlineMembers.length > 0 ? (
+                      downlineMembers.map((member, idx) => (
                         <div 
-                          key={idx} 
-                          className="flex items-center justify-between p-3 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group"
+                          key={idx}
+                          className="p-4 bg-white/5 rounded-2xl border border-white/5 hover:border-orange-500/30 transition-all group cursor-pointer"
                           onClick={() => {
-                            // Find the path of this member in treeData
                             const path = Object.keys(treeData).find(k => treeData[k].uid === member.uid);
                             if (path) setSelectedNodeId(path);
                           }}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center text-[10px] font-black text-slate-500 group-hover:text-orange-500 transition-colors">
-                              {member.name?.charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-bold text-slate-200">{member.name}</p>
-                              <p className="text-[8px] text-slate-600 uppercase tracking-widest">{member.rank}</p>
-                            </div>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-sm font-black text-white group-hover:text-orange-500 transition-colors italic">
+                              {member.name}
+                            </p>
+                            <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
+                              member.status === 'Active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                            }`}>
+                              {member.status}
+                            </span>
                           </div>
-                          <div className="text-right">
-                            <p className="text-[9px] font-black text-slate-400">{member.id}</p>
-                            <p className="text-[7px] text-slate-600 uppercase tracking-widest">{member.side} Side</p>
+                          <div className="flex items-center justify-between text-[10px] text-white/30 font-bold">
+                            <span>ID: {member.id}</span>
+                            <span className="text-orange-500/60 uppercase tracking-widest">{member.rank}</span>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12 bg-white/[0.02] rounded-3xl border border-dashed border-white/5">
+                        <Users className="w-10 h-10 text-white/5 mx-auto mb-3" />
+                        <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">No Downline Detected</p>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
 
-              <div className="pt-8 space-y-3">
+              <div className="pt-8 space-y-3 mt-auto">
                  <button 
                    onClick={() => {
                      if (selectedNode.uid) {
                        setViewRootId(selectedNode.uid);
                        setSelectedNodeId(null);
+                       // Scroll to top of tree container on mobile
+                       if (window.innerWidth < 1024) {
+                         window.scrollTo({ top: 0, behavior: 'smooth' });
+                       }
                      }
                    }}
                    className="w-full py-4 bg-orange-600 hover:bg-orange-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-950/20 active:scale-95 flex items-center justify-center gap-3"
@@ -685,6 +747,7 @@ const BinaryTree: React.FC = () => {
                  </button>
               </div>
             </motion.div>
+            </>
           )}
         </AnimatePresence>
       </div>
