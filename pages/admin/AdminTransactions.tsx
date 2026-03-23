@@ -37,9 +37,9 @@ const AdminTransactions: React.FC = () => {
   });
 
   const stats = {
-    deposits: transactions.filter(t => t.type === 'deposit' && t.status === 'completed').reduce((sum, t) => sum + t.amount, 0),
-    withdrawals: transactions.filter(t => t.type === 'withdrawal' && t.status === 'completed').reduce((sum, t) => sum + t.amount, 0),
-    pending: transactions.filter(t => t.status === 'pending').length
+    deposits: transactions.filter(t => t.type === 'deposit' && (t.status === 'finished' || t.status === 'completed')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+    withdrawals: transactions.filter(t => t.type === 'withdrawal' && (t.status === 'finished' || t.status === 'completed')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+    pending: transactions.filter(t => t.status === 'waiting' || t.status === 'pending').length
   };
 
   return (

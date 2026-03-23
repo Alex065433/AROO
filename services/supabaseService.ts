@@ -155,27 +155,43 @@ export const supabaseService = {
     // 2. Find Sponsor and Binary Parent
     // Normalize Operator ID format
     let cleanSponsorId = sponsorId.trim();
-    if (/^\d{6}$/.test(cleanSponsorId)) {
-      cleanSponsorId = `ARW-${cleanSponsorId}`;
-    }
-    if (/^ARW\d{6}$/i.test(cleanSponsorId)) {
-      cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
+    const isSponsorUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSponsorId);
+    
+    let sponsorQuery = supabase.from('profiles').select('id');
+    
+    if (isSponsorUuid) {
+      sponsorQuery = sponsorQuery.eq('id', cleanSponsorId);
+    } else {
+      if (/^\d{6}$/.test(cleanSponsorId)) {
+        cleanSponsorId = `ARW-${cleanSponsorId}`;
+      }
+      if (/^ARW\d{6}$/i.test(cleanSponsorId)) {
+        cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
+      }
+      sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
     }
 
-    const { data: sponsor } = await supabase
-      .from('profiles')
-      .select('id')
-      .ilike('operator_id', cleanSponsorId)
-      .single();
+    const { data: sponsor, error: sponsorError } = await sponsorQuery.single();
 
-    if (!sponsor) throw new Error('Invalid Sponsor ID');
+    if (sponsorError || !sponsor) {
+      // Check if this is the first user (bootstrap)
+      const { count } = await supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true });
+      
+      if (count !== 0) {
+        throw new Error('Invalid Sponsor ID');
+      }
+      
+      // If it's the first user, they can be their own sponsor or have no sponsor
+    }
 
     // Find the correct parent in the binary tree
-    let parentId = sponsor.id;
+    let parentId = sponsor?.id || null;
     let finalSide = side;
     
     // If an explicit parent is provided in additionalData, use it
-    if (additionalData.parentId) {
+    if (additionalData.parentId && sponsor) {
       // Verify parent exists
       // Check if it's a UUID or an operator ID
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
@@ -201,7 +217,7 @@ export const supabaseService = {
           parentId = explicitParent.id;
           finalSide = side;
         }
-      } else {
+      } else if (sponsor) {
         // Fallback to spillover from sponsor if explicit parent not found
         try {
           const binaryResult = await this.findBinaryParent(sponsor.id, side);
@@ -211,7 +227,7 @@ export const supabaseService = {
           console.warn('Binary parent search failed, defaulting to sponsor:', err);
         }
       }
-    } else {
+    } else if (sponsor) {
       // Standard spillover logic from sponsor
       try {
         const binaryResult = await this.findBinaryParent(sponsor.id, side);
@@ -233,7 +249,7 @@ export const supabaseService = {
       mobile: additionalData.mobile || '',
       withdrawal_password: additionalData.withdrawalPassword || '',
       two_factor_pin: additionalData.twoFactorPin || '123456',
-      sponsor_id: sponsor.id,
+      sponsor_id: sponsor?.id || null,
       parent_id: parentId,
       side: finalSide,
       rank: 1,
@@ -784,7 +800,7 @@ export const supabaseService = {
     // Fetch the entire downline in one recursive query
     const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: rootId });
     
-    let finalDownline = downline;
+    let finalDownline = downline || [];
     if (error || !downline || downline.length === 0) {
       // Fallback: fetch at least the root node if RPC fails or returns nothing
       const { data: rootNode } = await supabase.from('profiles').select('*').eq('id', rootId).single();
@@ -796,6 +812,21 @@ export const supabaseService = {
     }
 
     const tree: Record<string, any> = {};
+    
+    // Map nodes by parent ID and side for efficient binary tree construction
+    const nodesByParent = new Map<string, Record<string, any>>();
+    finalDownline.forEach((p: any) => {
+      if (p.parent_id) {
+        if (!nodesByParent.has(p.parent_id)) {
+          nodesByParent.set(p.parent_id, {});
+        }
+        const parentChildren = nodesByParent.get(p.parent_id)!;
+        if (p.side) {
+          parentChildren[p.side.toUpperCase()] = p;
+        }
+      }
+    });
+
     const rootProfile = finalDownline.find((p: any) => p.id === rootId);
     if (!rootProfile) return {};
 
@@ -805,10 +836,10 @@ export const supabaseService = {
       
       tree[path] = {
         id: node.operator_id,
-        name: node.name,
+        name: node.name || node.operator_id,
         rank: node.rank_name || 'Partner',
-        status: node.active_package > 0 ? 'Active' : 'Pending',
-        joinDate: node.created_at?.split('T')[0],
+        status: node.status === 'active' ? 'Active' : 'Pending',
+        joinDate: node.created_at?.split('T')[0] || 'N/A',
         totalTeam: leftCount + rightCount,
         team_size: { left: leftCount, right: rightCount },
         leftVolume: ((node.matching_volume?.left || 0) * 50).toFixed(2),
@@ -819,49 +850,32 @@ export const supabaseService = {
         side: node.side || 'ROOT',
         uid: node.id
       };
+
+      // Recursively process children
+      const children = nodesByParent.get(node.id);
+      if (children) {
+        if (children.LEFT) buildNode(children.LEFT, `${path}-left`);
+        if (children.RIGHT) buildNode(children.RIGHT, `${path}-right`);
+      }
     };
 
     buildNode(rootProfile, 'root');
 
-    // Build the tree structure by matching parent_id and side
-    // We use a map for faster lookup
-    const nodesByParent: Record<string, any[]> = {};
-    finalDownline.forEach((p: any) => {
-      if (p.parent_id) {
-        if (!nodesByParent[p.parent_id]) nodesByParent[p.parent_id] = [];
-        nodesByParent[p.parent_id].push(p);
-      }
-    });
-
-    const processChildren = (parentId: string, parentPath: string) => {
-      const children = nodesByParent[parentId] || [];
-      children.forEach((child: any) => {
-        if (child.side) {
-          const sideKey = child.side.toLowerCase();
-          const childPath = `${parentPath}-${sideKey}`;
-          
-          // Avoid infinite loops or duplicate paths
-          if (!tree[childPath]) {
-            buildNode(child, childPath);
-            processChildren(child.id, childPath);
-          }
-        }
-      });
-    };
-
-    processChildren(rootId, 'root');
-
     // Add any "orphaned" nodes that were returned by the RPC but not connected in the tree
-    // This shouldn't happen with a correct binary tree, but helps debugging
     finalDownline.forEach((node: any) => {
       const alreadyInTree = Object.values(tree).some((n: any) => n.uid === node.id);
       if (!alreadyInTree && node.id !== rootId) {
-        // Find a path for it or just add it as a top-level orphan
         buildNode(node, `orphan-${node.id}`);
       }
     });
 
     return tree;
+  },
+
+  async rebuildNetwork() {
+    const { error } = await supabase.rpc('rebuild_network');
+    if (error) throw error;
+    return true;
   },
 
   async getBinaryChildren(parentId: string, parentPath: string) {
@@ -904,8 +918,28 @@ export const supabaseService = {
     return data;
   },
 
+  async getUserCount() {
+    const { count, error } = await supabase
+      .from('profiles')
+      .select('*', { count: 'exact', head: true });
+    
+    if (error) throw error;
+    return { count: count || 0 };
+  },
+
   async findUserByOperatorId(operatorId: string) {
     let cleanId = operatorId.trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+    
+    if (isUuid) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', cleanId)
+        .single();
+      if (!error && data) return data;
+    }
+
     if (/^\d{6}$/.test(cleanId)) {
       cleanId = `ARW-${cleanId}`;
     }
@@ -973,6 +1007,29 @@ export const supabaseService = {
     const { error } = await supabase.rpc('rebuild_cumulative_volume');
     if (error) throw error;
     return true;
+  },
+
+  async getTransactions(uid: string) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('uid', uid)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      // Fallback to payments if transactions table doesn't exist yet or has error
+      console.warn('Falling back to payments table for transactions');
+      const { data: payments, error: pError } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('uid', uid)
+        .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual'])
+        .order('created_at', { ascending: false });
+      
+      if (pError) return [];
+      return payments;
+    }
+    return data;
   },
 
   async getAbsoluteRoot() {

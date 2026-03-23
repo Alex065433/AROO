@@ -59,7 +59,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
       const rootNode = data['root'];
       if (!rootNode) return;
 
-      const buildHierarchy = (nodeId: string, path: string): any => {
+      const buildHierarchy = (path: string, depth: number = 0): any => {
         const node = data[path];
         if (!node) return null;
 
@@ -67,36 +67,46 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
         const rightPath = `${path}-right`;
 
         const children = [];
-        const leftChild = buildHierarchy(node.id, leftPath);
-        const rightChild = buildHierarchy(node.id, rightPath);
+        const leftChild = buildHierarchy(leftPath, depth + 1);
+        const rightChild = buildHierarchy(rightPath, depth + 1);
 
-        if (leftChild) children.push(leftChild);
-        else if (node.status !== 'Vacant') {
+        // For a binary tree, we want to ensure left is always index 0 and right is index 1
+        // even if they are vacant, to maintain visual structure.
+        
+        // Left child
+        if (leftChild) {
+          children.push(leftChild);
+        } else if (node.status !== 'Vacant') {
           children.push({
             id: `${node.id}-vacant-left`,
             name: 'Vacant',
             status: 'Vacant',
             side: 'LEFT',
             parentId: node.uid,
-            path: leftPath
+            path: leftPath,
+            depth: depth + 1
           });
         }
 
-        if (rightChild) children.push(rightChild);
-        else if (node.status !== 'Vacant') {
+        // Right child
+        if (rightChild) {
+          children.push(rightChild);
+        } else if (node.status !== 'Vacant') {
           children.push({
             id: `${node.id}-vacant-right`,
             name: 'Vacant',
             status: 'Vacant',
             side: 'RIGHT',
             parentId: node.uid,
-            path: rightPath
+            path: rightPath,
+            depth: depth + 1
           });
         }
 
         return {
           ...node,
           path,
+          depth,
           children: collapsedNodes.has(path) ? null : (children.length > 0 ? children : null),
           _children: children.length > 0 ? children : null,
           isCollapsed: collapsedNodes.has(path),
@@ -104,7 +114,9 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
         };
       };
 
-      const hierarchyData = buildHierarchy(rootNode.id, 'root');
+      const hierarchyData = buildHierarchy('root');
+      if (!hierarchyData) return;
+      
       const root = d3.hierarchy(hierarchyData);
 
       const width = containerRef.current.clientWidth;
@@ -163,16 +175,31 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
         .x(d => d.x)
         .y(d => d.y);
 
-      g.selectAll(".link")
+      const linkGroup = g.selectAll(".link-group")
         .data(root.links())
         .enter()
-        .append("path")
+        .append("g")
+        .attr("class", "link-group");
+
+      linkGroup.append("path")
         .attr("class", "link")
         .attr("d", linkGenerator)
         .attr("fill", "none")
         .attr("stroke", d => d.target.data.status === 'Vacant' ? "rgba(255,255,255,0.05)" : "rgba(249,115,22,0.3)")
         .attr("stroke-width", 2)
         .attr("stroke-dasharray", d => d.target.data.status === 'Vacant' ? "5,5" : "none");
+
+      // Link Labels
+      linkGroup.append("text")
+        .attr("class", "link-label")
+        .attr("x", d => (d.source.x + d.target.x) / 2)
+        .attr("y", d => (d.source.y + d.target.y) / 2)
+        .attr("dy", -5)
+        .attr("text-anchor", "middle")
+        .attr("fill", d => d.target.data.status === 'Vacant' ? "rgba(255,255,255,0.1)" : "rgba(249,115,22,0.5)")
+        .attr("font-size", "8px")
+        .attr("font-weight", "black")
+        .text(d => d.target.data.side);
 
       // Nodes
       const node = g.selectAll(".node")

@@ -41,7 +41,7 @@ const MasterWallet: React.FC = () => {
           }
 
           // Fetch real transactions
-          const payments = await supabaseService.getPayments(user.id || user.uid);
+          const payments = await supabaseService.getTransactions(user.id || user.uid);
           setTransactions(payments);
           setIsLoadingTransactions(false);
         } catch (err) {

@@ -16,6 +16,7 @@ import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
 
 import { D3BinaryTree } from '../components/D3BinaryTree';
+import { RecursiveBinaryTree } from '../components/RecursiveBinaryTree';
 
 interface NodeData {
   id: string;
@@ -46,6 +47,7 @@ const BinaryTree: React.FC = () => {
   const [userProfile, setUserProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | 'ledger' | null>(null);
   const [totalReferrals, setTotalReferrals] = useState(0);
+  const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchReferrals = async () => {
@@ -110,7 +112,8 @@ const BinaryTree: React.FC = () => {
             
             setViewRootId(rootId);
           }
-          const payments = await supabaseService.getPayments(user.id || user.uid);
+          // Fetch real transactions
+          const payments = await supabaseService.getTransactions(user.id || user.uid);
           setTransactions(payments);
           setIsLoadingTransactions(false);
         } catch (err) {
@@ -126,6 +129,9 @@ const BinaryTree: React.FC = () => {
     if (viewRootId) {
       setIsTreeLoading(true);
       try {
+        // First rebuild the network stats in the database
+        await supabaseService.rebuildNetwork();
+        // Then fetch the updated tree data
         const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
         setTreeData(dynamicTree);
       } catch (err) {
@@ -188,7 +194,8 @@ const BinaryTree: React.FC = () => {
     setTimeout(() => {
       setIsProcessing(false);
       setActiveTab(null);
-      alert('Action processed successfully');
+      setNotification('Action processed successfully');
+      setTimeout(() => setNotification(null), 3000);
     }, 1500);
   };
 
@@ -226,16 +233,40 @@ const BinaryTree: React.FC = () => {
   const selectedNode = selectedNodeId ? treeData[selectedNodeId] : null;
 
   // Find downline members of the selected node
-  const downlineMembers = useMemo(() => {
-    if (!selectedNodeId) return [];
-    return Object.keys(treeData)
-      .filter(path => path.startsWith(`${selectedNodeId}-`))
+  const { leftBranch, rightBranch, directLeft, directRight } = useMemo(() => {
+    if (!selectedNodeId) return { leftBranch: [], rightBranch: [], directLeft: null, directRight: null };
+    
+    const leftPathPrefix = `${selectedNodeId}-left`;
+    const rightPathPrefix = `${selectedNodeId}-right`;
+    
+    const leftBranch = Object.keys(treeData)
+      .filter(path => path.startsWith(leftPathPrefix))
       .map(path => treeData[path])
+      .filter(Boolean)
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      
+    const rightBranch = Object.keys(treeData)
+      .filter(path => path.startsWith(rightPathPrefix))
+      .map(path => treeData[path])
+      .filter(Boolean)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const directLeft = treeData[leftPathPrefix] || null;
+    const directRight = treeData[rightPathPrefix] || null;
+
+    return { leftBranch, rightBranch, directLeft, directRight };
   }, [selectedNodeId, treeData]);
+
+  const downlineMembers = useMemo(() => [...leftBranch, ...rightBranch], [leftBranch, rightBranch]);
 
   return (
     <div className="space-y-0 animate-in fade-in duration-500 relative min-h-[800px]">
+      {notification && (
+        <div className="fixed top-24 right-10 z-[100] bg-[#c0841a] text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-right duration-300 font-bold text-sm">
+          <CheckCircle2 size={18} />
+          {notification}
+        </div>
+      )}
       <LiveRatesTicker />
       
       <div className="p-8 space-y-8">
@@ -682,43 +713,96 @@ const BinaryTree: React.FC = () => {
                 {/* Downline Members List */}
                 <div className="mt-8 pt-8 border-t border-white/5">
                   <div className="flex items-center justify-between mb-6">
-                    <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em]">Downline Members</h4>
+                    <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em]">Downline Branches</h4>
                     <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-bold text-white/40">{downlineMembers.length} Total</span>
                   </div>
-                  
-                  <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-2">
-                    {downlineMembers.length > 0 ? (
-                      downlineMembers.map((member, idx) => (
-                        <div 
-                          key={idx}
-                          className="p-4 bg-white/5 rounded-2xl border border-white/5 hover:border-orange-500/30 transition-all group cursor-pointer"
-                          onClick={() => {
-                            const path = Object.keys(treeData).find(k => treeData[k].uid === member.uid);
-                            if (path) setSelectedNodeId(path);
-                          }}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm font-black text-white group-hover:text-orange-500 transition-colors italic">
-                              {member.name}
-                            </p>
-                            <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
-                              member.status === 'Active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
-                            }`}>
-                              {member.status}
-                            </span>
+
+                  {/* Left Branch Section */}
+                  <div className="mb-8">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                      <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Left Branch ({leftBranch.length})</h5>
+                    </div>
+                    
+                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                      {leftBranch.length > 0 ? (
+                        leftBranch.map((member, idx) => (
+                          <div 
+                            key={`left-${idx}`}
+                            className={`p-4 bg-white/5 rounded-2xl border transition-all group cursor-pointer ${
+                              directLeft?.uid === member.uid ? 'border-orange-500/50 bg-orange-500/5' : 'border-white/5 hover:border-orange-500/30'
+                            }`}
+                            onClick={() => {
+                              const path = Object.keys(treeData).find(k => treeData[k].uid === member.uid);
+                              if (path) setSelectedNodeId(path);
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-black text-white group-hover:text-orange-500 transition-colors italic">
+                                {member.name} {directLeft?.uid === member.uid && <span className="text-[8px] text-orange-500 ml-2">(DIRECT)</span>}
+                              </p>
+                              <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
+                                member.status === 'Active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                              }`}>
+                                {member.status}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-white/30 font-bold">
+                              <span>ID: {member.id}</span>
+                              <span className="text-orange-500/60 uppercase tracking-widest">{member.rank}</span>
+                            </div>
                           </div>
-                          <div className="flex items-center justify-between text-[10px] text-white/30 font-bold">
-                            <span>ID: {member.id}</span>
-                            <span className="text-orange-500/60 uppercase tracking-widest">{member.rank}</span>
-                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-8 bg-white/[0.02] rounded-3xl border border-dashed border-white/5">
+                          <p className="text-[9px] font-black text-white/10 uppercase tracking-widest">No Left Branch Members</p>
                         </div>
-                      ))
-                    ) : (
-                      <div className="text-center py-12 bg-white/[0.02] rounded-3xl border border-dashed border-white/5">
-                        <Users className="w-10 h-10 text-white/5 mx-auto mb-3" />
-                        <p className="text-[10px] font-black text-white/20 uppercase tracking-widest">No Downline Detected</p>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Branch Section */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                      <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Right Branch ({rightBranch.length})</h5>
+                    </div>
+                    
+                    <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                      {rightBranch.length > 0 ? (
+                        rightBranch.map((member, idx) => (
+                          <div 
+                            key={`right-${idx}`}
+                            className={`p-4 bg-white/5 rounded-2xl border transition-all group cursor-pointer ${
+                              directRight?.uid === member.uid ? 'border-orange-500/50 bg-orange-500/5' : 'border-white/5 hover:border-orange-500/30'
+                            }`}
+                            onClick={() => {
+                              const path = Object.keys(treeData).find(k => treeData[k].uid === member.uid);
+                              if (path) setSelectedNodeId(path);
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-sm font-black text-white group-hover:text-orange-500 transition-colors italic">
+                                {member.name} {directRight?.uid === member.uid && <span className="text-[8px] text-orange-500 ml-2">(DIRECT)</span>}
+                              </p>
+                              <span className={`text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-widest ${
+                                member.status === 'Active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                              }`}>
+                                {member.status}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-white/30 font-bold">
+                              <span>ID: {member.id}</span>
+                              <span className="text-orange-500/60 uppercase tracking-widest">{member.rank}</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-8 bg-white/[0.02] rounded-3xl border border-dashed border-white/5">
+                          <p className="text-[9px] font-black text-white/10 uppercase tracking-widest">No Right Branch Members</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

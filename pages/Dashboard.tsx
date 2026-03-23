@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -10,7 +9,9 @@ import {
 } from 'lucide-react';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
+
 import { supabaseService } from '../services/supabaseService';
+import { supabase } from '../services/supabase';
 
 const Modal: React.FC<{ 
   title: string; 
@@ -100,8 +101,9 @@ const WalletCardRow: React.FC<{
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [userData, setUserData] = useState<any>(null);
-  const [userWallets, setUserWallets] = useState<any>(null);
+  const [userData, setUserData] = useState<any>(MOCK_USER);
+  const [userWallets, setUserWallets] = useState<any>(MOCK_USER.wallets);
+  const [income, setIncome] = useState(0);
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<string | null>(null);
@@ -121,6 +123,49 @@ const Dashboard: React.FC = () => {
   const [paymentData, setPaymentData] = useState<any>(null);
 
   const [adminStatus, setAdminStatus] = useState<{status: string} | null>(null);
+
+  const fetchAllData = async () => {
+    setLoading(true);
+    try {
+      // 1. Get current authenticated user
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        navigate('/login');
+        return;
+      }
+
+      const userId = user.id;
+
+      // 2. Fetch profile and transactions in parallel
+      const [profileResponse, transactionsData] = await Promise.all([
+        supabaseService.getUserProfile(userId),
+        supabaseService.getTransactions(userId)
+      ]);
+
+      // 3. Handle profile data
+      if (profileResponse) {
+        setUserData(profileResponse);
+        setUserWallets(profileResponse.wallets || MOCK_USER.wallets);
+      }
+
+      // 4. Handle transactions and calculate total income
+      console.log("USER ID:", userId);
+      console.log("INCOME TRANSACTIONS:", transactionsData);
+
+      const total = (transactionsData || [])
+        .filter((t: any) => t.status === 'finished' || t.status === 'completed' || !t.status) // Transactions table might not have status if it's only for finished ones
+        .reduce((sum: number, t: any) => {
+          return sum + Number(t.amount || 0);
+        }, 0);
+      setIncome(total);
+
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleDeposit = async () => {
     if (!userData) return;
@@ -147,27 +192,7 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    const fetchUserData = async () => {
-      setLoading(true);
-      try {
-        const user = supabaseService.getCurrentUser();
-        if (user) {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid);
-          if (profile) {
-            setUserData(profile);
-            setUserWallets(profile.wallets);
-          }
-        } else {
-          navigate('/login');
-        }
-      } catch (error) {
-        console.error('Error fetching user data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchUserData();
+    fetchAllData();
 
     const checkAdminStatus = async () => {
       try {
@@ -182,16 +207,16 @@ const Dashboard: React.FC = () => {
     };
     checkAdminStatus();
 
-    const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user) {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
         try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          const profile = await supabaseService.getUserProfile(session.user.id);
           if (profile) {
             setUserData(profile);
-            setUserWallets(profile.wallets || {});
+            setUserWallets(profile.wallets || MOCK_USER.wallets);
           }
         } catch (err) {
-          console.error('Error fetching profile:', err);
+          console.error('Error updating profile on auth change:', err);
         }
       }
     });
@@ -201,7 +226,6 @@ const Dashboard: React.FC = () => {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
         const response = await fetch('/api/rates/binance');
         if (!response.ok) {
-          // If server returns an error, we might still get JSON with fallback data
           const errorData = await response.json().catch(() => ({}));
           if (Array.isArray(errorData)) {
             const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
@@ -216,18 +240,18 @@ const Dashboard: React.FC = () => {
           setBinanceRates(filtered);
         }
       } catch (error) {
-        // Only log if it's a real network error or critical failure
         console.warn('Binance rates sync issue:', error);
       }
     };
 
     fetchRates();
-    const interval = setInterval(fetchRates, 10000); // Update every 10 seconds
+    const interval = setInterval(fetchRates, 10000);
+
     return () => {
-      unsubscribe();
+      subscription.unsubscribe();
       clearInterval(interval);
     };
-  }, []);
+  }, [navigate]);
 
   const generateNewAddress = () => {
     setIsGenerating(true);
@@ -280,14 +304,8 @@ const Dashboard: React.FC = () => {
         setNotification('Deposit confirmed! Your balance will update shortly.');
         setActiveModal(null);
         setPaymentData(null);
-        // Refresh profile
-        if (userData) {
-          const profile = await supabaseService.getUserProfile(userData.id);
-          if (profile) {
-            setUserData(profile);
-            setUserWallets(profile.wallets || {});
-          }
-        }
+        // Refresh data
+        fetchAllData();
       } else if (status === 'waiting' || status === 'confirming' || status === 'sending') {
         setNotification(`Payment status: ${status}. Please wait...`);
       } else {
@@ -595,10 +613,8 @@ const Dashboard: React.FC = () => {
                   try {
                     await supabaseService.activatePackage(userData.id, 1000);
                     setNotification("MLM Protocol Triggered: 1000 USDT Package Active");
-                    // Refresh profile
-                    const profile = await supabaseService.getUserProfile(userData.id);
-                    setUserData(profile);
-                    setUserWallets({ ...MOCK_USER.wallets, ...(profile.wallets || {}) });
+                    // Refresh data
+                    fetchAllData();
                   } catch (err) {
                     console.error('MLM Trigger Failed:', err);
                   }
@@ -708,7 +724,7 @@ const Dashboard: React.FC = () => {
           <div className="p-10 text-center bg-[#0d0d0e]">
             <div className="flex flex-col items-center mb-10">
               <p className="text-4xl font-black text-emerald-500 tracking-tight mb-2">
-                {(userData.total_income || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {income.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
               <p className="text-slate-500 text-[10px] font-black tracking-[0.2em] uppercase">Total MLM Earnings (USDT)</p>
             </div>
@@ -726,7 +742,7 @@ const Dashboard: React.FC = () => {
         <WalletCardRow 
           title="MASTER CONSOLIDATED VAULT"
           isMaster={true}
-          amount={userWallets.master.balance}
+          amount={userWallets?.master?.balance || 0}
           buttons={[
             { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') },
             { label: 'COLLECT ASSETS', color: 'bg-blue-600 text-white', action: () => navigate('/team-collection') }

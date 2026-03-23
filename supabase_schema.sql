@@ -193,11 +193,11 @@ BEGIN
 
     WHILE current_parent_id IS NOT NULL LOOP
         -- Update the parent's team size
-        IF current_side = 'LEFT' THEN
+        IF UPPER(current_side) = 'LEFT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
             WHERE id = current_parent_id;
-        ELSIF current_side = 'RIGHT' THEN
+        ELSIF UPPER(current_side) = 'RIGHT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
             WHERE id = current_parent_id;
@@ -224,11 +224,11 @@ BEGIN
 
     WHILE current_parent_id IS NOT NULL LOOP
         -- Update the parent's team size (decrement)
-        IF current_side = 'LEFT' THEN
+        IF UPPER(current_side) = 'LEFT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], (GREATEST(0, (COALESCE(team_size->>'left', '0'))::int - 1))::text::jsonb)
             WHERE id = current_parent_id::uuid;
-        ELSIF current_side = 'RIGHT' THEN
+        ELSIF UPPER(current_side) = 'RIGHT' THEN
             UPDATE public.profiles
             SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], (GREATEST(0, (COALESCE(team_size->>'right', '0'))::int - 1))::text::jsonb)
             WHERE id = current_parent_id::uuid;
@@ -279,11 +279,11 @@ BEGIN
         curr_side := p.side;
         
         WHILE curr_parent_id IS NOT NULL LOOP
-            IF curr_side = 'LEFT' THEN
+            IF UPPER(curr_side) = 'LEFT' THEN
                 UPDATE public.profiles
                 SET team_size = jsonb_set(team_size, ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
                 WHERE id = curr_parent_id;
-            ELSIF curr_side = 'RIGHT' THEN
+            ELSIF UPPER(curr_side) = 'RIGHT' THEN
                 UPDATE public.profiles
                 SET team_size = jsonb_set(team_size, ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
                 WHERE id = curr_parent_id;
@@ -638,24 +638,27 @@ BEGIN
 
             WHILE current_parent_id IS NOT NULL LOOP
                 -- Update the parent's matching volume AND cumulative volume
-                UPDATE public.profiles
-                SET matching_volume = jsonb_set(
-                        COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
-                        ARRAY[lower(current_side)], 
-                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                    ),
-                    cumulative_volume = jsonb_set(
-                        COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
-                        ARRAY[lower(current_side)], 
-                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                    )
-                WHERE id = current_parent_id::uuid;
+                -- Only if side is LEFT or RIGHT
+                IF UPPER(current_side) IN ('LEFT', 'RIGHT') THEN
+                    UPDATE public.profiles
+                    SET matching_volume = jsonb_set(
+                            COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
+                            ARRAY[lower(current_side)], 
+                            ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                        ),
+                        cumulative_volume = jsonb_set(
+                            COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
+                            ARRAY[lower(current_side)], 
+                            ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                        )
+                    WHERE id = current_parent_id::uuid;
 
-                -- Trigger binary matching check for this parent
-                PERFORM public.calculate_binary_matching(current_parent_id::uuid);
-                
-                -- Trigger rank check for this parent
-                PERFORM public.check_and_update_rank(current_parent_id::uuid);
+                    -- Trigger binary matching check for this parent
+                    PERFORM public.calculate_binary_matching(current_parent_id::uuid);
+                    
+                    -- Trigger rank check for this parent
+                    PERFORM public.check_and_update_rank(current_parent_id::uuid);
+                END IF;
 
                 -- Move up to the next parent
                 SELECT parent_id, side INTO current_parent_id, current_side
@@ -670,16 +673,71 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 14. Update Node Balances (Mining Simulation)
 CREATE OR REPLACE FUNCTION public.get_binary_downline(root_id UUID)
-RETURNS SETOF public.profiles AS $$
+RETURNS TABLE (
+    id UUID,
+    parent_id UUID,
+    side TEXT,
+    operator_id TEXT,
+    name TEXT,
+    rank_name TEXT,
+    active_package NUMERIC,
+    team_size JSONB,
+    matching_volume JSONB,
+    cumulative_volume JSONB,
+    created_at TIMESTAMPTZ,
+    email TEXT,
+    sponsor_id TEXT,
+    status TEXT,
+    depth INT,
+    path TEXT
+) AS $$
 BEGIN
     RETURN QUERY
     WITH RECURSIVE downline AS (
-        -- Base case: the root node
-        SELECT * FROM public.profiles WHERE id = root_id::uuid
+        -- Anchor member
+        SELECT 
+            p.id, 
+            p.parent_id, 
+            p.side, 
+            p.operator_id, 
+            p.name, 
+            p.rank_name, 
+            p.active_package, 
+            p.team_size, 
+            p.matching_volume, 
+            p.cumulative_volume, 
+            p.created_at, 
+            p.email, 
+            p.sponsor_id,
+            p.status,
+            0 as depth,
+            p.id::text as path
+        FROM public.profiles p
+        WHERE p.id = root_id
+
         UNION ALL
-        -- Recursive step: find children of nodes already in the downline
-        SELECT p.* FROM public.profiles p
+
+        -- Recursive step
+        SELECT 
+            p.id, 
+            p.parent_id, 
+            p.side, 
+            p.operator_id, 
+            p.name, 
+            p.rank_name, 
+            p.active_package, 
+            p.team_size, 
+            p.matching_volume, 
+            p.cumulative_volume, 
+            p.created_at, 
+            p.email, 
+            p.sponsor_id,
+            p.status,
+            d.depth + 1,
+            d.path || '->' || p.id::text
+        FROM public.profiles p
         JOIN downline d ON p.parent_id = d.id
+        WHERE d.depth < 20 -- Safety limit
     )
     SELECT * FROM downline;
 END;
@@ -751,18 +809,20 @@ BEGIN
         WHERE id = p.uid::uuid;
 
         WHILE current_parent_id IS NOT NULL LOOP
-            UPDATE public.profiles
-            SET matching_volume = jsonb_set(
-                    COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
-                    ARRAY[lower(current_side)], 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                ),
-                cumulative_volume = jsonb_set(
-                    COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
-                    ARRAY[lower(current_side)], 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                )
-            WHERE id = current_parent_id;
+            IF UPPER(current_side) IN ('LEFT', 'RIGHT') THEN
+                UPDATE public.profiles
+                SET matching_volume = jsonb_set(
+                        COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
+                        ARRAY[lower(current_side)], 
+                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                    ),
+                    cumulative_volume = jsonb_set(
+                        COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
+                        ARRAY[lower(current_side)], 
+                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                    )
+                WHERE id = current_parent_id;
+            END IF;
 
             SELECT parent_id, side INTO current_parent_id, current_side
             FROM public.profiles
@@ -774,6 +834,14 @@ BEGIN
     FOR p IN SELECT id FROM public.profiles LOOP
         PERFORM public.check_and_update_rank(p.id);
     END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION public.rebuild_network()
+RETURNS VOID AS $$
+BEGIN
+    PERFORM public.rebuild_team_sizes();
+    PERFORM public.rebuild_cumulative_volume();
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -845,6 +913,36 @@ BEGIN
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+-- Transactions table for income logging
+DROP TABLE IF EXISTS public.transactions CASCADE;
+CREATE TABLE public.transactions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    uid UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    amount NUMERIC NOT NULL,
+    type TEXT NOT NULL, -- referral, matching, rank, incentive, collection
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS on transactions
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for transactions
+DROP POLICY IF EXISTS "Users can view their own transactions" ON public.transactions;
+CREATE POLICY "Users can view their own transactions"
+    ON public.transactions FOR SELECT
+    USING (auth.uid()::uuid = uid);
+
+DROP POLICY IF EXISTS "Admins can view all transactions" ON public.transactions;
+CREATE POLICY "Admins can view all transactions"
+    ON public.transactions FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE id = auth.uid()::uuid AND role = 'admin'
+        )
+    );
+
 CREATE OR REPLACE FUNCTION public.update_wallets_on_payment()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -893,6 +991,10 @@ BEGIN
                 ),
                 total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
             WHERE id = NEW.uid::uuid;
+
+            -- Log to transactions table
+            INSERT INTO public.transactions (uid, amount, type, description)
+            VALUES (NEW.uid::uuid, NEW.amount, wallet_key, NEW.order_description || ' (' || NEW.type || ')');
         ELSE
             -- Handle master wallet updates (deposits, withdrawals, package activations)
             new_balance := CASE 

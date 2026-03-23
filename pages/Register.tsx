@@ -17,7 +17,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
-  const [sponsorId, setSponsorId] = useState('ARW-REF-882');
+  const [sponsorId, setSponsorId] = useState('');
   const [parentId, setParentId] = useState<string | null>(null);
   const [sponsorName, setSponsorName] = useState<string | null>(null);
   const [parentName, setParentName] = useState<string | null>(null);
@@ -83,12 +83,18 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
     try {
       // 1. Convert sponsor operator_id → UUID
-      const sponsorUser = await supabaseService.findUserByOperatorId(sponsorId);
+      let sponsorUser = await supabaseService.findUserByOperatorId(sponsorId);
+      let sponsorUUID = sponsorUser?.id || null;
 
       if (!sponsorUser) {
-        setError('Invalid Sponsor ID');
-        setIsSubmitting(false);
-        return;
+        // Check if this is the first user (bootstrap)
+        const { count } = await supabaseService.getUserCount();
+        if (count !== 0) {
+          setError('Invalid Sponsor ID');
+          setIsSubmitting(false);
+          return;
+        }
+        // If first user, allow null sponsor
       }
 
       // 2. Convert parent operator_id → UUID (if exists)
@@ -108,7 +114,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       const user = await supabaseService.register(
         email,
         password,
-        sponsorUser.id,
+        sponsorUUID || '', // Pass empty string if null, register will handle it
         side || 'LEFT',
         {
           name: name || 'New Operator',
@@ -245,10 +251,10 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
             <div className="md:col-span-2 space-y-3">
               <label className="text-[10px] font-black text-orange-500 uppercase tracking-[0.3em] ml-1">Sponsor Protocol ID</label>
               <input 
-                required 
                 type="text" 
                 value={sponsorId}
                 onChange={(e) => setSponsorId(e.target.value)}
+                placeholder="ARW-XXXXXX"
                 className="w-full bg-slate-900/60 border border-orange-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none focus:border-orange-500/50" 
               />
               {sponsorName && (
