@@ -18,7 +18,7 @@ const AdminCustomers: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
   const [fundAmount, setFundAmount] = useState('');
-  const [selectedPackage, setSelectedPackage] = useState('150');
+  const [selectedPackage, setSelectedPackage] = useState('50');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
@@ -103,13 +103,23 @@ const AdminCustomers: React.FC = () => {
 
   const handleActivatePackage = async () => {
     if (!selectedUser) return;
+    
+    const amount = parseFloat(selectedPackage);
+    const balance = Number(selectedUser.wallets?.master?.balance || 0);
+    
+    if (balance < amount) {
+      alert(`Insufficient balance! User has $${balance.toFixed(2)}, but package costs $${amount}.`);
+      return;
+    }
+    
+    if (!confirm(`Are you sure you want to activate the $${amount} package for ${selectedUser.name}?`)) return;
+    
     setIsProcessing(true);
     try {
-      await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), {
-        adminId: supabaseService.getCurrentUser()?.id
-      });
+      await supabaseService.activatePackage(selectedUser.id, amount);
       alert('Package activated successfully');
       fetchUsers();
+      setIsEditPanelOpen(false);
     } catch (error) {
       console.error('Error activating package:', error);
       alert('Error activating package: ' + (error as any).message);

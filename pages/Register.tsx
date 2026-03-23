@@ -281,6 +281,39 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               </div>
             )}
 
+            {!parentId && (
+              <div className="md:col-span-2 space-y-3">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-1">Placement Side</label>
+                <div className="flex gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setSide('LEFT')}
+                    className={`flex-1 py-4 rounded-2xl border-2 transition-all font-black uppercase tracking-widest text-xs ${
+                      side === 'LEFT' 
+                        ? 'bg-orange-500/20 border-orange-500 text-orange-500' 
+                        : 'bg-slate-900/40 border-white/5 text-slate-500 hover:border-white/10'
+                    }`}
+                  >
+                    Left Leg
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSide('RIGHT')}
+                    className={`flex-1 py-4 rounded-2xl border-2 transition-all font-black uppercase tracking-widest text-xs ${
+                      side === 'RIGHT' 
+                        ? 'bg-orange-500/20 border-orange-500 text-orange-500' 
+                        : 'bg-slate-900/40 border-white/5 text-slate-500 hover:border-white/10'
+                    }`}
+                  >
+                    Right Leg
+                  </button>
+                </div>
+                <p className="text-[9px] text-slate-600 uppercase tracking-widest ml-1">
+                  Choose which side of your sponsor's network you want to be placed on.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-3">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Full Legal Name</label>
               <input 

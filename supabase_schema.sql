@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     carry_forward JSONB DEFAULT '{"left": 0, "right": 0}'::jsonb,
     daily_income JSONB DEFAULT '{"date": "", "amount": 0}'::jsonb,
     matched_pairs INTEGER DEFAULT 0,
+    last_incentive_payout TIMESTAMPTZ,
     role TEXT DEFAULT 'user',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -81,6 +82,31 @@ CREATE INDEX IF NOT EXISTS idx_profiles_parent_id ON public.profiles(parent_id);
 CREATE INDEX IF NOT EXISTS idx_profiles_sponsor_id ON public.profiles(sponsor_id);
 CREATE INDEX IF NOT EXISTS idx_payments_uid ON public.payments(uid);
 CREATE INDEX IF NOT EXISTS idx_team_collection_uid ON public.team_collection(uid);
+
+-- 5.1 Unique Constraint for Binary Tree Structure
+-- This ensures that a parent can only have one child on the LEFT and one on the RIGHT
+-- First, clean up any existing duplicates to avoid error 23505
+DO $$ 
+BEGIN
+    -- Update duplicates to have NULL parent_id and side, keeping only the first one created
+    UPDATE public.profiles
+    SET parent_id = NULL, side = NULL
+    WHERE id IN (
+        SELECT id
+        FROM (
+            SELECT id, 
+                   ROW_NUMBER() OVER (PARTITION BY parent_id, side ORDER BY created_at ASC) as row_num
+            FROM public.profiles
+            WHERE parent_id IS NOT NULL AND side IS NOT NULL
+        ) t
+        WHERE t.row_num > 1
+    );
+
+    -- Now try to add the constraint if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_parent_side') THEN
+        ALTER TABLE public.profiles ADD CONSTRAINT unique_parent_side UNIQUE (parent_id, side);
+    END IF;
+END $$;
 
 -- 6. RLS Policies (Row Level Security)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -161,52 +187,82 @@ RETURNS TRIGGER AS $$
 DECLARE
     current_parent_id UUID;
     current_side TEXT;
+    volume_to_add NUMERIC := 0;
+    should_increment_team_size BOOLEAN := FALSE;
 BEGIN
     -- Only proceed if we have a parent and a side
     IF NEW.parent_id IS NULL OR NEW.side IS NULL THEN
         RETURN NEW;
     END IF;
 
-    -- If it's an update, only proceed if parent_id or side changed
-    -- OR if it was previously incomplete
-    IF (TG_OP = 'UPDATE') THEN
-        IF (OLD.parent_id IS NOT DISTINCT FROM NEW.parent_id AND OLD.side IS NOT DISTINCT FROM NEW.side) THEN
-            -- No change to placement, but maybe other fields changed. 
-            -- We don't need to update ancestor counts.
+    IF TG_OP = 'INSERT' THEN
+        should_increment_team_size := TRUE;
+        IF NEW.active_package >= 50 THEN
+            volume_to_add := NEW.active_package / 50;
+        END IF;
+    ELSIF TG_OP = 'UPDATE' THEN
+        -- Case 1: Initial placement (parent_id/side changed from NULL)
+        IF (OLD.parent_id IS NULL OR OLD.side IS NULL) AND (NEW.parent_id IS NOT NULL AND NEW.side IS NOT NULL) THEN
+            should_increment_team_size := TRUE;
+            IF NEW.active_package >= 50 THEN
+                volume_to_add := NEW.active_package / 50;
+            END IF;
+        -- Case 2: Package activation/upgrade (active_package changed)
+        ELSIF (OLD.active_package IS DISTINCT FROM NEW.active_package) AND NEW.active_package >= 50 THEN
+            -- Calculate difference in units
+            IF COALESCE(OLD.active_package, 0) < 50 THEN
+                volume_to_add := NEW.active_package / 50;
+            ELSE
+                volume_to_add := (NEW.active_package - OLD.active_package) / 50;
+            END IF;
+        -- Case 3: Move (parent_id or side changed)
+        ELSIF (OLD.parent_id IS DISTINCT FROM NEW.parent_id OR OLD.side IS DISTINCT FROM NEW.side) THEN
+             -- For now, we don't support moves with automatic volume re-calculation
+             -- because it would require decrementing old ancestors.
+             RETURN NEW;
+        ELSE
             RETURN NEW;
         END IF;
-        
-        -- If it was already fully placed (had parent and side), and now it's different,
-        -- we should ideally decrement old and increment new.
-        -- For now, to keep it simple and fix the "not adding" issue, 
-        -- we'll assume this is the initial placement or a fix-up.
-        -- If OLD had a parent, we skip to avoid double counting unless we implement decrement.
-        IF (OLD.parent_id IS NOT NULL AND OLD.side IS NOT NULL) THEN
-            -- Already counted once. If we want to support moves, we'd decrement here.
-            -- For this fix, we'll just return to avoid double counting.
-            RETURN NEW;
-        END IF;
+    END IF;
+
+    IF volume_to_add <= 0 AND NOT should_increment_team_size THEN
+        RETURN NEW;
     END IF;
 
     current_parent_id := NEW.parent_id;
     current_side := NEW.side;
 
     WHILE current_parent_id IS NOT NULL LOOP
-        -- Update the parent's team size
-        IF UPPER(current_side) = 'LEFT' THEN
-            UPDATE public.profiles
-            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
-            WHERE id = current_parent_id;
-        ELSIF UPPER(current_side) = 'RIGHT' THEN
-            UPDATE public.profiles
-            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
-            WHERE id = current_parent_id;
-        END IF;
+        -- Update the parent's team size and volume
+        UPDATE public.profiles
+        SET 
+            team_size = CASE 
+                WHEN should_increment_team_size THEN
+                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(team_size->>lower(current_side), '0'))::int + 1)::text::jsonb)
+                ELSE team_size
+            END,
+            matching_volume = CASE 
+                WHEN volume_to_add > 0 THEN 
+                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                ELSE matching_volume 
+            END,
+            cumulative_volume = CASE 
+                WHEN volume_to_add > 0 THEN 
+                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+        ELSE cumulative_volume 
+    END
+WHERE id = current_parent_id::uuid;
 
-        -- Move up to the next parent
-        SELECT parent_id, side INTO current_parent_id, current_side
-        FROM public.profiles
-        WHERE id = current_parent_id;
+-- Trigger matching and rank check for this parent if volume was added
+IF volume_to_add > 0 THEN
+    PERFORM public.calculate_binary_matching(current_parent_id::uuid);
+    PERFORM public.check_and_update_rank(current_parent_id::uuid);
+END IF;
+
+-- Move up to the next parent
+SELECT parent_id, side INTO current_parent_id, current_side
+FROM public.profiles
+WHERE id = current_parent_id::uuid;
     END LOOP;
 
     RETURN NEW;
@@ -251,7 +307,7 @@ CREATE TRIGGER on_user_inserted_update_team_size
 
 DROP TRIGGER IF EXISTS on_user_updated_update_team_size ON public.profiles;
 CREATE TRIGGER on_user_updated_update_team_size
-  AFTER UPDATE OF parent_id, side ON public.profiles
+  AFTER UPDATE OF parent_id, side, active_package ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size();
 
 DROP TRIGGER IF EXISTS on_user_deleted_update_team_size ON public.profiles;
@@ -282,17 +338,17 @@ BEGIN
             IF UPPER(curr_side) = 'LEFT' THEN
                 UPDATE public.profiles
                 SET team_size = jsonb_set(team_size, ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
-                WHERE id = curr_parent_id;
+                WHERE id = curr_parent_id::uuid;
             ELSIF UPPER(curr_side) = 'RIGHT' THEN
                 UPDATE public.profiles
                 SET team_size = jsonb_set(team_size, ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
-                WHERE id = curr_parent_id;
+                WHERE id = curr_parent_id::uuid;
             END IF;
             
             -- Move up
             SELECT parent_id, side INTO next_parent_id, next_side
             FROM public.profiles
-            WHERE id = curr_parent_id;
+            WHERE id = curr_parent_id::uuid;
             
             curr_parent_id := next_parent_id;
             curr_side := next_side;
@@ -332,17 +388,7 @@ BEGIN
         current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
     END IF;
 
-    -- Update the specific wallet and total income
-    UPDATE public.profiles
-    SET total_income = total_income + amount,
-        wallets = jsonb_set(
-            current_wallets, 
-            ARRAY[wallet_key, 'balance'], 
-            ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + amount)::text::jsonb
-        )
-    WHERE id = user_id::uuid;
-
-    -- Log the payment
+    -- Log the payment - the database trigger will handle wallet and total_income updates
     INSERT INTO public.payments (uid, amount, type, status, order_description)
     VALUES (user_id, amount, p_type, 'finished', p_description);
 END;
@@ -362,6 +408,7 @@ DECLARE
     today_income NUMERIC;
     today_date TEXT := TO_CHAR(NOW(), 'YYYY-MM-DD');
     u_active_pkg NUMERIC;
+    u_matched_pairs INTEGER;
 BEGIN
     -- Get current volumes, wallets, and rank for capping
     SELECT 
@@ -370,13 +417,14 @@ BEGIN
         rank, 
         (COALESCE(daily_income->>'amount', '0'))::numeric, 
         COALESCE(daily_income->>'date', TO_CHAR(NOW(), 'YYYY-MM-DD')),
-        active_package
-    INTO u_left_vol, u_right_vol, current_rank, today_income, today_date, u_active_pkg
+        active_package,
+        COALESCE(matched_pairs, 0)
+    INTO u_left_vol, u_right_vol, current_rank, today_income, today_date, u_active_pkg, u_matched_pairs
     FROM public.profiles
     WHERE id = user_id::uuid;
 
-    -- CRITICAL: Binary matching only activates if package is $150 or more
-    IF u_active_pkg IS NULL OR u_active_pkg < 150 THEN
+    -- CRITICAL: Binary matching only activates if package is $50 or more
+    IF u_active_pkg IS NULL OR u_active_pkg < 50 THEN
         RETURN;
     END IF;
 
@@ -384,34 +432,45 @@ BEGIN
     match_amount := LEAST(u_left_vol, u_right_vol);
 
     IF match_amount >= 1 THEN -- Minimum 1 pair ($50 unit)
-        -- Determine pair income and daily cap based on rank
+        -- 2:1 or 1:2 logic for the VERY FIRST pair
+        IF u_matched_pairs = 0 THEN
+            IF (u_left_vol >= 2 AND u_right_vol >= 1) OR (u_left_vol >= 1 AND u_right_vol >= 2) THEN
+                -- Eligible for first pair
+                match_amount := 1;
+            ELSE
+                -- Not eligible yet
+                RETURN;
+            END IF;
+        END IF;
+
+        -- Determine pair income and daily cap based on rank (Page 11)
         CASE 
             WHEN current_rank = 1 THEN -- Starter
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 2 THEN -- Bronze
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 3 THEN -- Silver
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 4 THEN -- Gold
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 5 THEN -- Platina
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 6 THEN -- Diamond
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 7 THEN -- Blue Sapphire
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
             WHEN current_rank = 8 THEN -- Ruby Elite
-                dollars_per_unit := 6; daily_cap := 360;
+                dollars_per_unit := 6.0; daily_cap := 360;
             WHEN current_rank = 9 THEN -- Emerald Crown
-                dollars_per_unit := 7; daily_cap := 490;
+                dollars_per_unit := 7.0; daily_cap := 490;
             WHEN current_rank = 10 THEN -- Titanium King
-                dollars_per_unit := 8; daily_cap := 640;
+                dollars_per_unit := 8.0; daily_cap := 640;
             WHEN current_rank = 11 THEN -- Royal Legend
-                dollars_per_unit := 10; daily_cap := 900;
+                dollars_per_unit := 10.0; daily_cap := 900;
             WHEN current_rank = 12 THEN -- Global Ambassador
-                dollars_per_unit := 25; daily_cap := 2500;
+                dollars_per_unit := 25.0; daily_cap := 2500;
             ELSE
-                dollars_per_unit := 5; daily_cap := 250;
+                dollars_per_unit := 5.0; daily_cap := 250;
         END CASE;
 
         bonus_amount := match_amount * dollars_per_unit;
@@ -435,14 +494,38 @@ BEGIN
             );
 
             -- Update daily income and deduct matched volume
-            UPDATE public.profiles
-            SET daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
-                matching_volume = jsonb_build_object(
-                    'left', u_left_vol - match_amount,
-                    'right', u_right_vol - match_amount
-                ),
-                matched_pairs = matched_pairs + floor(match_amount)
-            WHERE id = user_id::uuid;
+            IF u_matched_pairs = 0 THEN
+                -- First pair deduction (2:1 or 1:2)
+                IF u_left_vol >= 2 AND u_right_vol >= 1 THEN
+                    UPDATE public.profiles
+                    SET daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
+                        matching_volume = jsonb_build_object(
+                            'left', u_left_vol - 2,
+                            'right', u_right_vol - 1
+                        ),
+                        matched_pairs = 1
+                    WHERE id = user_id::uuid;
+                ELSIF u_left_vol >= 1 AND u_right_vol >= 2 THEN
+                    UPDATE public.profiles
+                    SET daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
+                        matching_volume = jsonb_build_object(
+                            'left', u_left_vol - 1,
+                            'right', u_right_vol - 2
+                        ),
+                        matched_pairs = 1
+                    WHERE id = user_id::uuid;
+                END IF;
+            ELSE
+                -- Subsequent pairs (1:1)
+                UPDATE public.profiles
+                SET daily_income = jsonb_build_object('date', TO_CHAR(NOW(), 'YYYY-MM-DD'), 'amount', today_income + bonus_amount),
+                    matching_volume = jsonb_build_object(
+                        'left', u_left_vol - match_amount,
+                        'right', u_right_vol - match_amount
+                    ),
+                    matched_pairs = u_matched_pairs + floor(match_amount)
+                WHERE id = user_id::uuid;
+            END IF;
         END IF;
     END IF;
 END;
@@ -464,8 +547,8 @@ BEGIN
     FROM public.profiles
     WHERE id = user_id::uuid;
 
-    -- CRITICAL: Rank only activates if package is $150 or more
-    IF u_active_pkg IS NULL OR u_active_pkg < 150 THEN
+    -- CRITICAL: Rank only activates if package is $50 or more
+    IF u_active_pkg IS NULL OR u_active_pkg < 50 THEN
         IF u_rank > 0 THEN
             UPDATE public.profiles 
             SET rank = 0, 
@@ -478,45 +561,34 @@ BEGIN
 
     new_rank := u_rank;
 
-    -- Rank 1: Starter (Active Account >= 150)
-    IF u_rank = 0 AND u_active_pkg >= 150 THEN
+    -- Rank 1: Starter (Active Account >= 50)
+    IF u_rank = 0 AND u_active_pkg >= 50 THEN
         new_rank := 1;
     END IF;
 
-    -- Rank Criteria (matching constants.tsx)
-    IF u_left_vol >= 10000 AND u_right_vol >= 10000 AND u_rank < 12 THEN
+    -- Rank Criteria (matching Page 10)
+    IF u_left_vol >= 70000 AND u_right_vol >= 70000 AND u_rank < 12 THEN
         new_rank := 12;
-        reward_amount := 25000;
-    ELSIF u_left_vol >= 5000 AND u_right_vol >= 5000 AND u_rank < 11 THEN
+    ELSIF u_left_vol >= 30000 AND u_right_vol >= 30000 AND u_rank < 11 THEN
         new_rank := 11;
-        reward_amount := 10000;
-    ELSIF u_left_vol >= 2500 AND u_right_vol >= 2500 AND u_rank < 10 THEN
+    ELSIF u_left_vol >= 15000 AND u_right_vol >= 15000 AND u_rank < 10 THEN
         new_rank := 10;
-        reward_amount := 5000;
-    ELSIF u_left_vol >= 1000 AND u_right_vol >= 1000 AND u_rank < 9 THEN
+    ELSIF u_left_vol >= 7000 AND u_right_vol >= 7000 AND u_rank < 9 THEN
         new_rank := 9;
-        reward_amount := 2500;
-    ELSIF u_left_vol >= 500 AND u_right_vol >= 500 AND u_rank < 8 THEN
+    ELSIF u_left_vol >= 3000 AND u_right_vol >= 3000 AND u_rank < 8 THEN
         new_rank := 8;
-        reward_amount := 1000;
-    ELSIF u_left_vol >= 250 AND u_right_vol >= 250 AND u_rank < 7 THEN
+    ELSIF u_left_vol >= 1500 AND u_right_vol >= 1500 AND u_rank < 7 THEN
         new_rank := 7;
-        reward_amount := 500;
-    ELSIF u_left_vol >= 100 AND u_right_vol >= 100 AND u_rank < 6 THEN
+    ELSIF u_left_vol >= 700 AND u_right_vol >= 700 AND u_rank < 6 THEN
         new_rank := 6;
-        reward_amount := 250;
-    ELSIF u_left_vol >= 31 AND u_right_vol >= 31 AND u_rank < 5 THEN
+    ELSIF u_left_vol >= 300 AND u_right_vol >= 300 AND u_rank < 5 THEN
         new_rank := 5;
-        reward_amount := 100;
-    ELSIF u_left_vol >= 15 AND u_right_vol >= 15 AND u_rank < 4 THEN
+    ELSIF u_left_vol >= 150 AND u_right_vol >= 150 AND u_rank < 4 THEN
         new_rank := 4;
-        reward_amount := 50;
-    ELSIF u_left_vol >= 7 AND u_right_vol >= 7 AND u_rank < 3 THEN
+    ELSIF u_left_vol >= 70 AND u_right_vol >= 70 AND u_rank < 3 THEN
         new_rank := 3;
-        reward_amount := 25;
-    ELSIF u_left_vol >= 3 AND u_right_vol >= 3 AND u_rank < 2 THEN
+    ELSIF u_left_vol >= 30 AND u_right_vol >= 30 AND u_rank < 2 THEN
         new_rank := 2;
-        reward_amount := 10;
     END IF;
 
     IF new_rank > u_rank THEN
@@ -538,16 +610,6 @@ BEGIN
                 ELSE rank_name
             END
         WHERE id = user_id::uuid;
-
-        IF reward_amount > 0 THEN
-            PERFORM public.update_user_wallet(
-                user_id, 
-                'rankBonus', 
-                reward_amount, 
-                'rank_reward', 
-                'RANK PROTOCOL BONUS for reaching Rank ' || new_rank
-            );
-        END IF;
     END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -557,47 +619,43 @@ RETURNS TRIGGER AS $$
 DECLARE
     current_parent_id UUID;
     current_side TEXT;
-    package_amount NUMERIC;
-    sponsor_id UUID;
+    v_package_amount NUMERIC;
+    v_sponsor_id UUID;
     sponsor_wallets JSONB;
-    referral_bonus NUMERIC;
+    v_referral_bonus NUMERIC;
 BEGIN
     -- Only process if payment is finished and type is package_activation
     -- Handle both INSERT and UPDATE
     IF (NEW.status = 'finished' OR NEW.status = 'completed') AND NEW.type = 'package_activation' AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
-        package_amount := NEW.amount;
+        v_package_amount := NEW.amount;
 
         -- 1. Update the user's own package info and status
         UPDATE public.profiles
-        SET active_package = package_amount,
-            package_amount = package_amount,
-            status = CASE WHEN package_amount >= 150 THEN 'active' ELSE 'inactive' END
+        SET active_package = v_package_amount,
+            package_amount = v_package_amount,
+            status = CASE WHEN v_package_amount >= 50 THEN 'active' ELSE 'inactive' END
         WHERE id = NEW.uid::uuid;
 
-        -- ONLY process MLM logic (nodes, referral, volume) if package is $150 or more
-        IF package_amount >= 150 THEN
-            -- 1.1 Generate Team Collection Nodes
-            -- User request: 150$ -> 3 nodes.
-            -- We'll adjust the ladder: 
-            -- < 150: 0 nodes
-            -- 150-249: 3 nodes
-            -- 250-499: 15 nodes
-            -- 500-999: 31 nodes
-            -- 1000+: 63 nodes
+        -- MLM logic (nodes, referral, volume) for ALL packages >= $50
+        IF v_package_amount >= 50 THEN
+            -- 1.1 Generate Team Collection Nodes (Page 13)
             INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
             SELECT 
                 NEW.uid::uuid,
                 'NODE-' || substring(gen_random_uuid()::text from 1 for 8) || '-' || i,
-                'Node ' || i || ' (Package ' || package_amount || ')',
+                'Node ' || i || ' (Package ' || v_package_amount || ')',
                 0,
                 true,
                 NOW()
             FROM generate_series(1, CASE 
-                WHEN package_amount >= 1000 THEN 63
-                WHEN package_amount >= 500 THEN 31
-                WHEN package_amount >= 250 THEN 15
-                WHEN package_amount >= 150 THEN 3
-                ELSE 0
+                WHEN v_package_amount >= 12750 THEN 255
+                WHEN v_package_amount >= 6350 THEN 127
+                WHEN v_package_amount >= 3150 THEN 63
+                WHEN v_package_amount >= 1550 THEN 31
+                WHEN v_package_amount >= 750 THEN 15
+                WHEN v_package_amount >= 350 THEN 7
+                WHEN v_package_amount >= 150 THEN 3
+                ELSE 1
             END) AS i
             ON CONFLICT (node_id) DO NOTHING;
 
@@ -605,73 +663,90 @@ BEGIN
             PERFORM public.update_user_wallet(
                 NEW.uid::uuid, 
                 'incentive', 
-                package_amount * 0.01, 
+                v_package_amount * 0.01, 
                 'incentive_accrual', 
-                'INCENTIVE POOL ACCRUAL for Package ' || package_amount
+                'INCENTIVE POOL ACCRUAL for Package ' || v_package_amount
             );
 
             -- Trigger rank check for the user themselves
             PERFORM public.check_and_update_rank(NEW.uid::uuid);
 
-            -- 2. DIRECT REFERRAL YIELD (10% - $5 per $50 unit)
-            SELECT p.sponsor_id INTO sponsor_id FROM public.profiles p WHERE p.id = NEW.uid::uuid;
+            -- 2. DIRECT REFERRAL YIELD (5% - $2.5 per $50 unit)
+            SELECT p.sponsor_id INTO v_sponsor_id FROM public.profiles p WHERE p.id = NEW.uid::uuid;
             
-            IF sponsor_id IS NOT NULL THEN
-                referral_bonus := (package_amount / 50) * 5; -- Changed from 2.5 to 5 (10%)
+            IF v_sponsor_id IS NOT NULL THEN
+                v_referral_bonus := (v_package_amount / 50) * 2.5; -- 5% of package
                 
                 PERFORM public.update_user_wallet(
-                    sponsor_id, 
+                    v_sponsor_id, 
                     'referral', 
-                    referral_bonus, 
+                    v_referral_bonus, 
                     'referral_bonus', 
                     'DIRECT REFERRAL YIELD from ' || NEW.uid::text
                 );
                 
                 -- Trigger rank check for sponsor
-                PERFORM public.check_and_update_rank(sponsor_id);
+                PERFORM public.check_and_update_rank(v_sponsor_id);
             END IF;
 
-            -- 3. Traverse up to update ancestors' volume for BINARY MATCHING DIVIDEND
-            SELECT parent_id, side INTO current_parent_id, current_side
-            FROM public.profiles
-            WHERE id = NEW.uid::uuid;
-
-            WHILE current_parent_id IS NOT NULL LOOP
-                -- Update the parent's matching volume AND cumulative volume
-                -- Only if side is LEFT or RIGHT
-                IF UPPER(current_side) IN ('LEFT', 'RIGHT') THEN
-                    UPDATE public.profiles
-                    SET matching_volume = jsonb_set(
-                            COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
-                            ARRAY[lower(current_side)], 
-                            ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                        ),
-                        cumulative_volume = jsonb_set(
-                            COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
-                            ARRAY[lower(current_side)], 
-                            ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
-                        )
-                    WHERE id = current_parent_id::uuid;
-
-                    -- Trigger binary matching check for this parent
-                    PERFORM public.calculate_binary_matching(current_parent_id::uuid);
-                    
-                    -- Trigger rank check for this parent
-                    PERFORM public.check_and_update_rank(current_parent_id::uuid);
-                END IF;
-
-                -- Move up to the next parent
-                SELECT parent_id, side INTO current_parent_id, current_side
-                FROM public.profiles
-                WHERE id = current_parent_id::uuid;
-            END LOOP;
+            -- 3. Volume propagation is now handled by the update_ancestors_team_size trigger 
+            -- on the profiles table, which fires when active_package is updated above.
         END IF;
     END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 14. Update Node Balances (Mining Simulation)
+-- 15. Process Weekly Incentives (ROI/Weekly Earning)
+CREATE OR REPLACE FUNCTION public.process_weekly_incentives()
+RETURNS VOID AS $$
+DECLARE
+    r RECORD;
+    incentive_amount NUMERIC;
+BEGIN
+    FOR r IN 
+        SELECT id, rank, last_incentive_payout, active_package
+        FROM public.profiles 
+        WHERE status = 'active' 
+          AND active_package >= 50
+          AND (last_incentive_payout IS NULL OR last_incentive_payout < NOW() - INTERVAL '7 days')
+    LOOP
+        -- Determine weekly incentive based on rank (matching constants.tsx)
+        CASE 
+            WHEN r.rank = 1 THEN incentive_amount := 4;
+            WHEN r.rank = 2 THEN incentive_amount := 6;
+            WHEN r.rank = 3 THEN incentive_amount := 10;
+            WHEN r.rank = 4 THEN incentive_amount := 16;
+            WHEN r.rank = 5 THEN incentive_amount := 31;
+            WHEN r.rank = 6 THEN incentive_amount := 50;
+            WHEN r.rank = 7 THEN incentive_amount := 125;
+            WHEN r.rank = 8 THEN incentive_amount := 250;
+            WHEN r.rank = 9 THEN incentive_amount := 500;
+            WHEN r.rank = 10 THEN incentive_amount := 1000;
+            WHEN r.rank = 11 THEN incentive_amount := 2500;
+            WHEN r.rank = 12 THEN incentive_amount := 10000;
+            ELSE incentive_amount := 0;
+        END CASE;
+
+        IF incentive_amount > 0 THEN
+            -- Pay the incentive
+            PERFORM public.update_user_wallet(
+                r.id, 
+                'incentive', 
+                incentive_amount, 
+                'weekly_incentive', 
+                'WEEKLY PROTOCOL INCENTIVE for Rank ' || r.rank
+            );
+
+            -- Update last payout date
+            UPDATE public.profiles 
+            SET last_incentive_payout = NOW() 
+            WHERE id = r.id;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION public.get_binary_downline(root_id UUID)
 RETURNS TABLE (
     id UUID,
@@ -686,7 +761,7 @@ RETURNS TABLE (
     cumulative_volume JSONB,
     created_at TIMESTAMPTZ,
     email TEXT,
-    sponsor_id TEXT,
+    sponsor_id UUID,
     status TEXT,
     depth INT,
     path TEXT
@@ -713,10 +788,10 @@ BEGIN
             0 as depth,
             p.id::text as path
         FROM public.profiles p
-        WHERE p.id = root_id
-
+        WHERE p.id = root_id::uuid
+        
         UNION ALL
-
+        
         -- Recursive step
         SELECT 
             p.id, 
@@ -772,7 +847,7 @@ DECLARE
     p RECORD;
     current_parent_id UUID;
     current_side TEXT;
-    package_amount NUMERIC;
+    v_package_amount NUMERIC;
 BEGIN
     -- 1. Rebuild team sizes first
     PERFORM public.rebuild_team_sizes();
@@ -794,13 +869,13 @@ BEGIN
         AND (status = 'finished' OR status = 'completed')
         ORDER BY created_at ASC
     LOOP
-        package_amount := p.amount;
+        v_package_amount := p.amount;
 
         -- Update user status
         UPDATE public.profiles
-        SET active_package = package_amount,
-            package_amount = package_amount,
-            status = CASE WHEN package_amount >= 150 THEN 'active' ELSE 'inactive' END
+        SET active_package = v_package_amount,
+            package_amount = v_package_amount,
+            status = CASE WHEN v_package_amount >= 50 THEN 'active' ELSE 'inactive' END
         WHERE id = p.uid::uuid;
 
         -- Traverse up to update ancestors
@@ -814,19 +889,19 @@ BEGIN
                 SET matching_volume = jsonb_set(
                         COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
                     ),
                     cumulative_volume = jsonb_set(
                         COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50))::text::jsonb
+                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
                     )
-                WHERE id = current_parent_id;
+                WHERE id = current_parent_id::uuid;
             END IF;
 
             SELECT parent_id, side INTO current_parent_id, current_side
             FROM public.profiles
-            WHERE id = current_parent_id;
+            WHERE id = current_parent_id::uuid;
         END LOOP;
     END LOOP;
 
@@ -896,7 +971,7 @@ BEGIN
     );
 
     -- 2. Calculate matching for all active users
-    FOR p IN SELECT id FROM public.profiles WHERE active_package >= 150 LOOP
+    FOR p IN SELECT id FROM public.profiles WHERE active_package >= 50 LOOP
         PERFORM public.calculate_binary_matching(p.id);
     END LOOP;
 END;
@@ -908,7 +983,7 @@ RETURNS VOID AS $$
 DECLARE
     p RECORD;
 BEGIN
-    FOR p IN SELECT id FROM public.profiles WHERE active_package >= 150 LOOP
+    FOR p IN SELECT id FROM public.profiles WHERE active_package >= 50 LOOP
         PERFORM public.check_and_update_rank(p.id);
     END LOOP;
 END;
@@ -966,11 +1041,11 @@ BEGIN
 
         -- Determine which wallet to update based on payment type
         wallet_key := CASE 
-            WHEN NEW.type = 'referral_bonus' THEN 'referral'
-            WHEN NEW.type = 'matching_bonus' THEN 'matching'
-            WHEN NEW.type = 'rank_reward' THEN 'rankBonus'
-            WHEN NEW.type = 'incentive_accrual' THEN 'incentive'
-            WHEN NEW.type = 'team_collection' THEN 'rewards'
+            WHEN NEW.type IN ('referral_bonus', 'referral_income') THEN 'referral'
+            WHEN NEW.type IN ('matching_bonus', 'matching_income') THEN 'matching'
+            WHEN NEW.type IN ('rank_reward', 'rank_bonus') THEN 'rankBonus'
+            WHEN NEW.type IN ('incentive_accrual', 'weekly_incentive', 'incentive_income') THEN 'incentive'
+            WHEN NEW.type IN ('team_collection', 'reward_income', 'node_income') THEN 'rewards'
             WHEN NEW.type = 'deposit' THEN 'master'
             WHEN NEW.type = 'withdrawal' THEN 'master'
             WHEN NEW.type = 'package_activation' THEN 'master'
@@ -989,7 +1064,7 @@ BEGIN
                     jsonb_set(current_wallets, ARRAY[wallet_key, 'balance'], ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
                     ARRAY['master', 'balance'], ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
                 ),
-                total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
+                total_income = COALESCE(total_income, 0) + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
             WHERE id = NEW.uid::uuid;
 
             -- Log to transactions table
@@ -1000,8 +1075,10 @@ BEGIN
             new_balance := CASE 
                 WHEN NEW.type = 'withdrawal' OR (NEW.type = 'package_activation' AND NEW.method = 'WALLET') THEN 
                     ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric - NEW.amount)
-                ELSE 
+                WHEN NEW.type = 'deposit' THEN
                     ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
+                ELSE 
+                    (COALESCE(current_wallets->'master'->>'balance', '0'))::numeric
             END;
 
             UPDATE public.profiles

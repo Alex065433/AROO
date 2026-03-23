@@ -5,8 +5,9 @@ import {
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
-  QrCode
+  QrCode, Search, ShieldAlert
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
 
@@ -108,6 +109,44 @@ const Dashboard: React.FC = () => {
   const [notification, setNotification] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [adminSearchId, setAdminSearchId] = useState('');
+  const [adminFundAmount, setAdminFundAmount] = useState('');
+  const [adminFoundUser, setAdminFoundUser] = useState<any>(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const handleAdminSearch = async () => {
+    if (!adminSearchId) return;
+    setIsSearching(true);
+    try {
+      const user = await supabaseService.findUserByOperatorId(adminSearchId);
+      setAdminFoundUser(user);
+      if (!user) {
+        setNotification("System: Node ID not found in network");
+      }
+    } catch (err) {
+      console.error('Search failed:', err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleAdminAddFunds = async () => {
+    if (!adminFoundUser || !adminFundAmount) return;
+    setIsProcessing(true);
+    try {
+      await supabaseService.addFunds(adminFoundUser.id, parseFloat(adminFundAmount));
+      setNotification(`System: ${adminFundAmount} USDT Credited to ${adminFoundUser.operator_id}`);
+      setAdminFundAmount('');
+      setAdminFoundUser(null);
+      setAdminSearchId('');
+      fetchAllData();
+    } catch (err) {
+      console.error('Fund Addition Failed:', err);
+      setNotification("System Error: Fund Injection Failed");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
   
   const [depositAddress, setDepositAddress] = useState('0x71C7656EC7ab88b098defB751B7401B5f6d8976F');
   const [isCopied, setIsCopied] = useState(false);
@@ -153,12 +192,16 @@ const Dashboard: React.FC = () => {
       console.log("USER ID:", userId);
       console.log("INCOME TRANSACTIONS:", transactionsData);
 
-      const total = (transactionsData || [])
-        .filter((t: any) => t.status === 'finished' || t.status === 'completed' || !t.status) // Transactions table might not have status if it's only for finished ones
-        .reduce((sum: number, t: any) => {
-          return sum + Number(t.amount || 0);
-        }, 0);
-      setIncome(total);
+      // Use total_income from profile as the primary source of truth
+      const profileIncome = Number(profileResponse?.total_income || 0);
+      
+      // Calculate from transactions as a secondary check/fallback
+      const calculatedTotal = (transactionsData || [])
+        .filter((t: any) => t.status === 'finished' || t.status === 'completed' || !t.status)
+        .reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+      
+      // Use the larger of the two to ensure we reflect all income
+      setIncome(Math.max(profileIncome, calculatedTotal));
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -629,51 +672,168 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">System Management</h4>
+              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Node Fund Injection</h4>
+              <p className="text-[10px] text-slate-600 font-bold uppercase leading-relaxed">Directly inject USDT liquidity into any network node by Operator ID.</p>
+              
               <div className="space-y-4">
-                <button 
-                  onClick={async () => {
-                    setIsProcessing(true);
-                    try {
-                      await supabaseService.rebuildTreeCounts();
-                      setNotification("Binary Tree Counts Rebuilt Successfully");
-                    } catch (err) {
-                      console.error('Rebuild Failed:', err);
-                      setNotification("Rebuild Failed: " + (err as Error).message);
-                    }
-                    setIsProcessing(false);
-                  }}
-                  disabled={isProcessing}
-                  className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
-                >
-                  {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                  REBUILD TREE COUNTS
-                </button>
-                <button 
-                  onClick={async () => {
-                    setIsProcessing(true);
-                    try {
-                      await supabaseService.rebuildCumulativeVolume();
-                      setNotification("Cumulative Volume Rebuilt Successfully");
-                    } catch (err) {
-                      console.error('Rebuild Failed:', err);
-                      setNotification("Rebuild Failed: " + (err as Error).message);
-                    }
-                    setIsProcessing(false);
-                  }}
-                  disabled={isProcessing}
-                  className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-amber-500/20 flex items-center justify-center gap-3"
-                >
-                  {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                  REBUILD CUMULATIVE VOLUME
-                </button>
-                <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
-                  ACCESS CORE DASHBOARD
-                </button>
-                <button onClick={() => navigate('/admin/users')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
-                  MANAGE NETWORK NODES
-                </button>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    placeholder="OPERATOR ID (e.g. ARW-123456)" 
+                    value={adminSearchId}
+                    onChange={(e) => setAdminSearchId(e.target.value)}
+                    className="flex-1 bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-bold text-slate-200 focus:outline-none focus:border-rose-500/50 uppercase"
+                  />
+                  <button 
+                    onClick={handleAdminSearch}
+                    disabled={isSearching || !adminSearchId}
+                    className="px-6 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl transition-all border border-white/5"
+                  >
+                    {isSearching ? <RefreshCw className="animate-spin" size={14} /> : <Search size={14} />}
+                  </button>
+                </div>
+
+                {adminFoundUser && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-rose-500/5 border border-rose-500/20 rounded-2xl space-y-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] font-black text-slate-200 uppercase">{adminFoundUser.name}</p>
+                        <p className="text-[8px] font-bold text-rose-500/60 uppercase tracking-widest">{adminFoundUser.operator_id}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[8px] font-bold text-slate-500 uppercase">Current Balance</p>
+                        <p className="text-[10px] font-black text-emerald-500">${adminFoundUser.wallets?.master?.balance?.toFixed(2) || '0.00'}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <input 
+                        type="number" 
+                        placeholder="AMOUNT (USDT)" 
+                        value={adminFundAmount}
+                        onChange={(e) => setAdminFundAmount(e.target.value)}
+                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-bold text-slate-200 focus:outline-none focus:border-rose-500/50"
+                      />
+                      <button 
+                        onClick={handleAdminAddFunds}
+                        disabled={isProcessing || !adminFundAmount}
+                        className="px-6 bg-rose-600 hover:bg-rose-500 text-white font-black rounded-xl transition-all uppercase tracking-widest text-[10px]"
+                      >
+                        {isProcessing ? <RefreshCw className="animate-spin" size={14} /> : 'INJECT'}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                <div className="pt-4 border-t border-white/5">
+                  <button 
+                    onClick={async () => {
+                      setIsProcessing(true);
+                      try {
+                        await supabaseService.addFunds(userData.id, 10000);
+                        setNotification("System: 10,000 USDT Credited to Master Vault");
+                        fetchAllData();
+                      } catch (err) {
+                        console.error('Fund Addition Failed:', err);
+                      }
+                      setIsProcessing(false);
+                    }}
+                    disabled={isProcessing}
+                    className="w-full bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-emerald-500/20 flex items-center justify-center gap-3"
+                  >
+                    {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
+                    ADD 10,000 USDT TO MY WALLET
+                  </button>
+                </div>
               </div>
+            </div>
+
+            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-4">
+              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">System Maintenance</h4>
+              <button 
+                onClick={async () => {
+                  setIsProcessing(true);
+                  try {
+                    await supabaseService.fixSystemWallets();
+                    setNotification("System Wallets & Income Logic Synchronized");
+                    fetchAllData();
+                  } catch (err) {
+                    console.error('Fix Failed:', err);
+                    setNotification("Fix Failed: " + (err as Error).message);
+                  }
+                  setIsProcessing(false);
+                }}
+                disabled={isProcessing}
+                className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-rose-500/20 flex items-center justify-center gap-3"
+              >
+                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
+                FIX SYSTEM WALLETS & INCOME
+              </button>
+              <button 
+                onClick={async () => {
+                  setIsProcessing(true);
+                  try {
+                    await supabaseService.fixSystemWallets();
+                    setNotification("System Wallets & Income Logic Synchronized");
+                    fetchAllData();
+                  } catch (err) {
+                    console.error('Fix Failed:', err);
+                    setNotification("Fix Failed: " + (err as Error).message);
+                  }
+                  setIsProcessing(false);
+                }}
+                disabled={isProcessing}
+                className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-rose-500/20 flex items-center justify-center gap-3"
+              >
+                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
+                FIX SYSTEM WALLETS & INCOME
+              </button>
+              <button 
+                onClick={async () => {
+                  setIsProcessing(true);
+                  try {
+                    await supabaseService.rebuildTreeCounts();
+                    setNotification("Binary Tree Counts Rebuilt Successfully");
+                  } catch (err) {
+                    console.error('Rebuild Failed:', err);
+                    setNotification("Rebuild Failed: " + (err as Error).message);
+                  }
+                  setIsProcessing(false);
+                }}
+                disabled={isProcessing}
+                className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
+              >
+                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                REBUILD TREE COUNTS
+              </button>
+              <button 
+                onClick={async () => {
+                  setIsProcessing(true);
+                  try {
+                    await supabaseService.rebuildCumulativeVolume();
+                    setNotification("Cumulative Volume Rebuilt Successfully");
+                  } catch (err) {
+                    console.error('Rebuild Failed:', err);
+                    setNotification("Rebuild Failed: " + (err as Error).message);
+                  }
+                  setIsProcessing(false);
+                }}
+                disabled={isProcessing}
+                className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-amber-500/20 flex items-center justify-center gap-3"
+              >
+                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                REBUILD CUMULATIVE VOLUME
+              </button>
+              <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
+                ACCESS CORE DASHBOARD
+              </button>
+              <button onClick={() => navigate('/admin/users')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
+                MANAGE NETWORK NODES
+              </button>
             </div>
           </div>
         </div>
@@ -760,9 +920,9 @@ const Dashboard: React.FC = () => {
         ].map(item => {
           if (item.key === 'capping') {
             const today = new Date().toISOString().split('T')[0];
-            const todayMatchingIncome = userData?.daily_income?.date === today ? userData.daily_income.amount : 0;
+            const todayMatchingIncome = userData?.daily_income?.date === today ? Number(userData.daily_income.amount || 0) : 0;
             const userRank = RANKS.find(r => r.level === (userData?.rank || 1));
-            const dailyLimit = userRank?.dailyCapping || 250;
+            const dailyLimit = Number(userRank?.dailyCapping || 250);
             
             return (
               <div key="capping" className="w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10">

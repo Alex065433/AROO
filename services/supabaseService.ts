@@ -194,16 +194,18 @@ export const supabaseService = {
     if (additionalData.parentId && sponsor) {
       // Verify parent exists
       // Check if it's a UUID or an operator ID
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
-      let query = supabase.from('profiles').select('id, operator_id');
-      
-      if (isUuid) {
-        query = query.or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`);
-      } else {
-        query = query.eq('operator_id', additionalData.parentId);
-      }
-      
-      const { data: explicitParent } = await query.single();
+        // Check if parentId is a valid UUID to avoid type mismatch error (uuid = text)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
+        
+        let query = supabase.from('profiles').select('id, operator_id');
+        
+        if (isUuid) {
+            query = query.or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`);
+        } else {
+            query = query.eq('operator_id', additionalData.parentId);
+        }
+        
+        const { data: explicitParent } = await query.single();
       
       if (explicitParent) {
         // Even with explicit parent, find the next available spot on that side
@@ -254,11 +256,13 @@ export const supabaseService = {
       side: finalSide,
       rank: 1,
       package_amount: 50, // Default joining package
+      total_income: 0,
       wallets: {
         master: { balance: 0, currency: 'USDT' },
         referral: { balance: 0, currency: 'USDT' },
         matching: { balance: 0, currency: 'USDT' },
         rankBonus: { balance: 0, currency: 'USDT' },
+        incentive: { balance: 0, currency: 'USDT' },
         rewards: { balance: 0, currency: 'USDT' },
       },
       team_size: { left: 0, right: 0 },
@@ -403,26 +407,12 @@ export const supabaseService = {
           created_at: new Date().toISOString()
         }]);
       } else {
-        // Deduct from user's own master wallet
+        // Just check for insufficient funds, but let the DB trigger handle the deduction
         const profile = await this.getUserProfile(uid);
         if (!profile) throw new Error('User not found');
         if ((profile.wallets?.master?.balance || 0) < amount) {
           throw new Error('Insufficient funds');
         }
-
-        // Deduct from wallet
-        const updatedWallets = {
-          ...profile.wallets,
-          master: {
-            ...profile.wallets?.master,
-            balance: (profile.wallets?.master?.balance || 0) - amount
-          }
-        };
-
-        await supabase
-          .from('profiles')
-          .update({ wallets: updatedWallets })
-          .eq('id', uid);
       }
     }
 
@@ -432,23 +422,14 @@ export const supabaseService = {
       amount,
       type: 'package_activation',
       status: 'finished',
-      method: 'INTERNAL',
-      order_description: 'INCENTIVE POOL ACCRUAL',
+      method: 'WALLET',
+      order_description: `Package Activation: $${amount}`,
       created_at: new Date().toISOString()
     }]);
 
     if (error) throw error;
 
-    // 3. Update user status and active package
-    await supabase
-      .from('profiles')
-      .update({
-        status: 'active',
-        active_package: amount
-      })
-      .eq('id', uid);
-
-    // 4. Add Notification
+    // 3. Add Notification
     const pkg = PACKAGES.find(p => p.price === amount);
     await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
     
@@ -456,36 +437,18 @@ export const supabaseService = {
   },
 
   async addFunds(uid: string, amount: number) {
-    const profile = await this.getUserProfile(uid);
-    if (!profile) throw new Error('User not found');
-
-    const currentBalance = profile.wallets?.master?.balance || 0;
-
-    const updatedWallets = {
-      ...profile.wallets,
-      master: {
-        ...profile.wallets?.master,
-        balance: currentBalance + amount
-      }
-    };
-
-    const { error } = await supabase
-      .from('profiles')
-      .update({ wallets: updatedWallets })
-      .eq('id', uid);
-
-    if (error) throw error;
-
-    // Log the deposit/fund addition
-    await supabase.from('payments').insert([{
+    // Just log the payment, the DB trigger will handle the wallet update
+    const { error } = await supabase.from('payments').insert([{
       uid,
       amount,
       type: 'deposit',
       status: 'finished',
       method: 'INTERNAL',
+      order_description: 'ADMIN ADD FUNDS',
       created_at: new Date().toISOString()
     }]);
 
+    if (error) throw error;
     return true;
   },
 
@@ -623,7 +586,7 @@ export const supabaseService = {
       for (let r = (profile.rank || 1) + 1; r <= newRank; r++) {
         const rankData = RANKS.find(rank => rank.level === r);
         if (rankData && rankData.reward > 0) {
-          await this.addIncome(uid, rankData.reward, 'reward_income');
+          await this.addIncome(uid, rankData.reward, 'rank_reward');
           console.log(`User ${uid} earned reward for Rank ${r}: ${rankData.reward}`);
         }
       }
@@ -731,7 +694,7 @@ export const supabaseService = {
     let payableAmount = amount;
 
     // Only apply daily capping to matching income
-    if (type === 'matching_income') {
+    if (type === 'matching_bonus') {
       const today = new Date().toISOString().split('T')[0];
       const dailyIncome = profile.daily_income || { date: '', amount: 0 };
       
@@ -755,31 +718,20 @@ export const supabaseService = {
         .eq('id', uid);
     }
     
-    // Update Wallets
-    const updatedWallets = { ...MOCK_USER.wallets, ...profile.wallets };
-    updatedWallets.master.balance += payableAmount;
-    if (type === 'referral_bonus') updatedWallets.referral.balance += payableAmount;
-    if (type === 'matching_income') updatedWallets.matching.balance += payableAmount;
-    if (type === 'rank_bonus') updatedWallets.rankBonus.balance += payableAmount;
-    if (type === 'reward_income') updatedWallets.rewards.balance += payableAmount;
-    
-    await supabase
-      .from('profiles')
-      .update({ 
-        wallets: updatedWallets,
-        total_income: (profile.total_income || 0) + payableAmount
-      })
-      .eq('id', uid);
-
-    // Log transaction
-    await supabase.from('payments').insert([{
+    // Log transaction via payments table - the database trigger will handle wallet and total_income updates
+    const { error: paymentError } = await supabase.from('payments').insert([{
       uid,
       amount: payableAmount,
-      type,
+      type, // Use aligned types: referral_bonus, matching_bonus, rank_reward, incentive_accrual, team_collection
       status: 'finished',
       method: 'INTERNAL',
+      order_description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
       created_at: new Date().toISOString()
     }]);
+
+    if (paymentError) throw paymentError;
+    
+    console.log(`Income of ${payableAmount} (${type}) credited to ${uid} via database trigger.`);
   },
 
   async getBinaryTree(rootUid: string) {
@@ -927,6 +879,12 @@ export const supabaseService = {
     return { count: count || 0 };
   },
 
+  async fixSystemWallets() {
+    const { error } = await supabase.rpc('fix_system_wallets');
+    if (error) throw error;
+    return true;
+  },
+
   async findUserByOperatorId(operatorId: string) {
     let cleanId = operatorId.trim();
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
@@ -947,15 +905,18 @@ export const supabaseService = {
       cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
     }
     
-    // Try exact match first
-    let { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('operator_id', cleanId)
-      .single();
+    // Try exact match first on operator_id or id (if it's a UUID)
+    let query = supabase.from('profiles').select('*');
+    if (isUuid) {
+      query = query.or(`id.eq.${cleanId},operator_id.eq.${cleanId}`);
+    } else {
+      query = query.eq('operator_id', cleanId);
+    }
+    
+    let { data, error } = await query.single();
 
-    // Fallback to ilike
-    if (error || !data) {
+    // Fallback to ilike on operator_id if not found
+    if ((error || !data) && !isUuid) {
       const { data: retryData, error: retryError } = await supabase
         .from('profiles')
         .select('*')
@@ -1010,26 +971,32 @@ export const supabaseService = {
   },
 
   async getTransactions(uid: string) {
-    const { data, error } = await supabase
+    // 1. Try fetching from transactions table
+    const { data: transactions, error: tError } = await supabase
       .from('transactions')
       .select('*')
       .eq('uid', uid)
       .order('created_at', { ascending: false });
     
-    if (error) {
-      // Fallback to payments if transactions table doesn't exist yet or has error
-      console.warn('Falling back to payments table for transactions');
-      const { data: payments, error: pError } = await supabase
-        .from('payments')
-        .select('*')
-        .eq('uid', uid)
-        .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual'])
-        .order('created_at', { ascending: false });
-      
-      if (pError) return [];
+    // 2. Fetch from payments as well to ensure we have everything
+    const { data: payments, error: pError } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('uid', uid)
+      .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual'])
+      .order('created_at', { ascending: false });
+
+    // 3. Combine and deduplicate if necessary, or just return the most complete set
+    // For now, if transactions has data, use it, otherwise use payments
+    if (!tError && transactions && transactions.length > 0) {
+      return transactions;
+    }
+
+    if (!pError && payments) {
       return payments;
     }
-    return data;
+
+    return [];
   },
 
   async getAbsoluteRoot() {
@@ -1093,6 +1060,28 @@ export const supabaseService = {
       .order('created_at', { ascending: false });
     if (error) throw error;
     return data;
+  },
+
+  async processSystemIncomes() {
+    // This is a manual trigger for testing all income protocols
+    try {
+      console.log('Starting Manual System Income Sync...');
+      
+      // 1. Process Weekly Incentives (ROI)
+      const { error: weeklyError } = await supabase.rpc('process_weekly_incentives');
+      if (weeklyError) throw weeklyError;
+
+      // 2. Process Daily Payouts (Capping Reset, Binary Matching, Rank Check)
+      await this.processDailyPayouts();
+      
+      // 3. Process Rank & Rewards (Weekly Bonus)
+      await this.processRankAndRewards();
+      
+      return { success: true, message: 'System Income Protocols Executed Successfully' };
+    } catch (error) {
+      console.error('Error in manual income sync:', error);
+      throw error;
+    }
   },
 
   async getAdminStats() {
@@ -1169,24 +1158,6 @@ export const supabaseService = {
     }, {});
 
     return days.map(day => ({ name: day, value: grouped[day] || 0 }));
-  },
-
-  async processSystemIncomes() {
-    // This is a manual trigger for testing all income protocols
-    try {
-      console.log('Starting Manual System Income Sync...');
-      
-      // 1. Process Daily Payouts (Capping Reset, Binary Matching, Rank Check)
-      await this.processDailyPayouts();
-      
-      // 2. Process Rank & Rewards (Weekly Bonus)
-      await this.processRankAndRewards();
-      
-      return { success: true, message: 'System Income Protocols Executed Successfully' };
-    } catch (error) {
-      console.error('Error in manual income sync:', error);
-      throw error;
-    }
   },
 
   async updateUser(uid: string, data: any) {

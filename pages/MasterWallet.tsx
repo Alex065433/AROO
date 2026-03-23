@@ -419,7 +419,7 @@ const MasterWallet: React.FC = () => {
                                type="number" 
                                value={depositAmount}
                                onChange={(e) => setDepositAmount(e.target.value)}
-                               placeholder="Minimum 10.00" 
+                               placeholder="Minimum 50.00" 
                                className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-6 text-white font-black text-3xl pr-32 focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
                              />
                              <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4">

@@ -59,7 +59,7 @@ const BinaryTree: React.FC = () => {
   }, [userProfile]);
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const [depositAmount, setDepositAmount] = useState('150');
+  const [depositAmount, setDepositAmount] = useState('50');
   const [paymentData, setPaymentData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedCoin, setSelectedCoin] = useState<'BTC' | 'ETH' | 'TRX'>('BTC');
@@ -161,8 +161,8 @@ const BinaryTree: React.FC = () => {
   }, [viewRootId]);
 
   const createPayment = async () => {
-    if (!depositAmount || Number(depositAmount) < 150) {
-      setError('Minimum deposit is 150 USDT');
+    if (!depositAmount || Number(depositAmount) < 50) {
+      setError('Minimum deposit is 50 USDT');
       return;
     }
     setIsProcessing(true);
@@ -378,12 +378,12 @@ const BinaryTree: React.FC = () => {
                               type="number" 
                               value={depositAmount}
                               onChange={(e) => setDepositAmount(e.target.value)}
-                              placeholder="150" 
+                              placeholder="50" 
                               className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-6 text-white font-black text-3xl pr-32 focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
                             />
                             <span className="absolute right-6 top-1/2 -translate-y-1/2 text-white font-black text-sm">USDT</span>
                           </div>
-                          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest px-1">Minimum Deposit: 150 USDT</p>
+                          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest px-1">Minimum Deposit: 50 USDT</p>
                         </div>
 
                         <button 

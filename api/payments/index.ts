@@ -61,7 +61,7 @@ app.get("/api/admin/users", (req, res) => {
       email: 'john@example.com', 
       wallets: { master: { balance: 1500 } }, 
       active_package: 350, 
-      createdAt: { toDate: () => new Date() } 
+      created_at: new Date().toISOString()
     },
     { 
       uid: 'user2', 
@@ -69,7 +69,7 @@ app.get("/api/admin/users", (req, res) => {
       email: 'jane@example.com', 
       wallets: { master: { balance: 2500 } }, 
       active_package: 750, 
-      createdAt: { toDate: () => new Date() } 
+      created_at: new Date().toISOString()
     }
   ]);
 });
