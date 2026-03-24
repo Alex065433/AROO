@@ -18,10 +18,10 @@ export const ArowinLogo: React.FC<LogoProps> = ({ className = "", size = 40 }) =
       {/* Background Circle */}
       <circle cx="256" cy="256" r="240" fill="#0f172a" />
       
-      {/* Orange Arrow Symbol */}
+      {/* Gold/Orange Arrow Symbol */}
       <path 
         d="M256 120L380 256L256 392L132 256L256 120Z" 
-        fill="#f97316" 
+        fill="url(#logoGradient)" 
       />
       
       {/* Inner Detail */}
@@ -33,6 +33,13 @@ export const ArowinLogo: React.FC<LogoProps> = ({ className = "", size = 40 }) =
       
       {/* Vertical Line */}
       <rect x="248" y="120" width="16" height="272" fill="white" fillOpacity="0.1" />
+
+      <defs>
+        <linearGradient id="logoGradient" x1="132" y1="120" x2="380" y2="392" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#fbbf24" /> {/* Amber 400 - Gold */}
+          <stop offset="1" stopColor="#f97316" /> {/* Orange 500 */}
+        </linearGradient>
+      </defs>
     </svg>
   );
 };

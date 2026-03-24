@@ -60,11 +60,12 @@ export const MOCK_USER: User = {
   rank: 4, // Gold in the new system
   totalEarnings: 12540.50,
   wallets: {
-    master: { balance: 15.20, currency: 'USDT' },
-    referral: { balance: 2540.20, currency: 'USDT' },
-    matching: { balance: 6820.50, currency: 'USDT' },
-    rankBonus: { balance: 1200.00, currency: 'USDT' },
-    rewards: { balance: 500.00, currency: 'USDT' },
+    master: { balance: 0, currency: 'USDT' },
+    referral: { balance: 0, currency: 'USDT' },
+    matching: { balance: 0, currency: 'USDT' },
+    rankBonus: { balance: 0, currency: 'USDT' },
+    incentive: { balance: 0, currency: 'USDT' },
+    rewards: { balance: 0, currency: 'USDT' },
   },
   teamSize: { left: 22, right: 18 },
   matchedPairs: 18,

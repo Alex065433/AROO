@@ -30,6 +30,7 @@ export interface User {
     referral: Wallet;
     matching: Wallet;
     rankBonus: Wallet;
+    incentive: Wallet;
     rewards: Wallet;
   };
   teamSize: {

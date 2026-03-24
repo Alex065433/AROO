@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import AdminLayout from './components/AdminLayout';
 import { SplashScreen } from './components/SplashScreen';
 import Dashboard from './pages/Dashboard';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
@@ -64,6 +65,7 @@ const App: React.FC = () => {
       )}
       <Routes>
         {/* Public Routes */}
+        <Route path="/" element={isUserAuth ? <Navigate to="/dashboard" /> : <Landing />} />
         <Route path="/login" element={<Login onLogin={() => setIsUserAuth(true)} />} />
         <Route path="/register" element={<Register onLogin={() => setIsUserAuth(true)} />} />
         
@@ -92,8 +94,7 @@ const App: React.FC = () => {
           <Route path="/admin/logs" element={<AdminLogs />} /> 
         </Route>
 
-        <Route path="/" element={<Navigate to="/dashboard" />} />
-        <Route path="*" element={<Navigate to="/dashboard" />} />
+        <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </HashRouter>
   );

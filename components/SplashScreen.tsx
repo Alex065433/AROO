@@ -45,7 +45,7 @@ export const SplashScreen: React.FC<{ onComplete: () => void }> = ({ onComplete 
                   rotate: { duration: 20, repeat: Infinity, ease: "linear" },
                   scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
                 }}
-                className="absolute inset-0 bg-blue-500/20 blur-2xl rounded-full scale-150"
+                className="absolute inset-0 bg-amber-500/20 blur-2xl rounded-full scale-150"
               />
               <ArowinLogo size={120} />
             </div>
@@ -56,8 +56,8 @@ export const SplashScreen: React.FC<{ onComplete: () => void }> = ({ onComplete 
               transition={{ delay: 0.3, duration: 0.5 }}
               className="text-center"
             >
-              <h1 className="text-4xl font-black tracking-tighter text-white mb-2 italic">
-                AROWIN <span className="text-blue-500">TRADING</span>
+              <h1 className="text-4xl font-black tracking-tighter text-white mb-2 italic font-display">
+                AROWIN <span className="text-amber-500">TRADING</span>
               </h1>
               <div className="flex items-center justify-center gap-3">
                 <div className="h-[1px] w-8 bg-slate-800" />
@@ -75,7 +75,7 @@ export const SplashScreen: React.FC<{ onComplete: () => void }> = ({ onComplete 
               initial={{ x: "-100%" }}
               animate={{ x: "0%" }}
               transition={{ duration: 2, ease: "easeInOut" }}
-              className="w-full h-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+              className="w-full h-full bg-gradient-to-r from-amber-500 to-orange-500 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
             />
           </div>
 

@@ -1090,6 +1090,79 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- 16. Rebuild Wallets from Payments
+CREATE OR REPLACE FUNCTION public.rebuild_wallets_from_payments(user_id UUID DEFAULT NULL)
+RETURNS VOID AS $$
+DECLARE
+    profile_record RECORD;
+    payment_record RECORD;
+    new_wallets JSONB;
+    new_total_income NUMERIC;
+    wallet_key TEXT;
+BEGIN
+    -- Loop through profiles (all or specific user)
+    FOR profile_record IN 
+        SELECT id FROM public.profiles 
+        WHERE (user_id IS NULL OR id = user_id)
+    LOOP
+        -- Initialize empty wallets
+        new_wallets := '{
+            "master": {"balance": 0, "currency": "USDT"},
+            "referral": {"balance": 0, "currency": "USDT"},
+            "matching": {"balance": 0, "currency": "USDT"},
+            "rankBonus": {"balance": 0, "currency": "USDT"},
+            "incentive": {"balance": 0, "currency": "USDT"},
+            "rewards": {"balance": 0, "currency": "USDT"}
+        }'::jsonb;
+        new_total_income := 0;
+
+        -- Process all finished payments for this user
+        FOR payment_record IN 
+            SELECT amount, type FROM public.payments 
+            WHERE uid = profile_record.id AND (status = 'finished' OR status = 'completed')
+            ORDER BY created_at ASC
+        LOOP
+            -- Determine wallet key
+            wallet_key := CASE 
+                WHEN payment_record.type IN ('referral_bonus', 'referral_income') THEN 'referral'
+                WHEN payment_record.type IN ('matching_bonus', 'matching_income') THEN 'matching'
+                WHEN payment_record.type IN ('rank_reward', 'rank_bonus') THEN 'rankBonus'
+                WHEN payment_record.type IN ('incentive_accrual', 'weekly_incentive', 'incentive_income') THEN 'incentive'
+                WHEN payment_record.type IN ('team_collection', 'reward_income', 'node_income') THEN 'rewards'
+                WHEN payment_record.type = 'deposit' THEN 'master'
+                WHEN payment_record.type = 'withdrawal' THEN 'master'
+                WHEN payment_record.type = 'package_activation' THEN 'master'
+                ELSE 'master'
+            END;
+
+            -- Update wallets
+            IF wallet_key = 'master' THEN
+                IF payment_record.type = 'withdrawal' OR (payment_record.type = 'package_activation') THEN
+                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric - payment_record.amount)::text::jsonb);
+                ELSE
+                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric + payment_record.amount)::text::jsonb);
+                END IF;
+            ELSE
+                -- Add to sub-wallet AND master wallet (as per current schema logic where income goes to both)
+                new_wallets := jsonb_set(new_wallets, ARRAY[wallet_key, 'balance'], ((new_wallets->wallet_key->>'balance')::numeric + payment_record.amount)::text::jsonb);
+                new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric + payment_record.amount)::text::jsonb);
+                
+                -- Add to total income
+                IF payment_record.amount > 0 THEN
+                    new_total_income := new_total_income + payment_record.amount;
+                END IF;
+            END IF;
+        END LOOP;
+
+        -- Update the profile
+        UPDATE public.profiles 
+        SET wallets = new_wallets,
+            total_income = new_total_income
+        WHERE id = profile_record.id;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 DROP TRIGGER IF EXISTS on_payment_update_process_package ON public.payments;
 CREATE TRIGGER on_payment_update_process_package
   AFTER INSERT OR UPDATE ON public.payments
