@@ -92,6 +92,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 3. Get Binary Downline (Fixes return type and UUID casting)
+DROP FUNCTION IF EXISTS public.get_binary_downline(UUID);
 CREATE OR REPLACE FUNCTION public.get_binary_downline(root_id UUID)
 RETURNS TABLE (
     id UUID,
@@ -249,12 +250,14 @@ BEGIN
                 daily_income = jsonb_build_object('amount', today_income + bonus_amount, 'date', TO_CHAR(NOW(), 'YYYY-MM-DD'))
             WHERE id = user_id::uuid;
 
-            -- Record the income payment
-            INSERT INTO public.payments (uid, amount, type, status, method, description)
-            VALUES (user_id::uuid, bonus_amount, 'binary_matching', 'finished', 'internal', 'Binary matching bonus for ' || match_amount || ' pairs');
-            
-            -- Update wallet
-            PERFORM public.update_user_wallet(user_id::uuid, bonus_amount, 'binary_income');
+            -- Update wallet and record payment
+            PERFORM public.update_user_wallet(
+                user_id::uuid, 
+                'matching', 
+                bonus_amount, 
+                'binary_matching', 
+                'Binary matching bonus for ' || match_amount || ' pairs'
+            );
         END IF;
     END IF;
 END;

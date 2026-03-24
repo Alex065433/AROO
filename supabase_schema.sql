@@ -1049,7 +1049,7 @@ BEGIN
         -- Determine which wallet to update based on payment type
         wallet_key := CASE 
             WHEN NEW.type IN ('referral_bonus', 'referral_income') THEN 'referral'
-            WHEN NEW.type IN ('matching_bonus', 'matching_income') THEN 'matching'
+            WHEN NEW.type IN ('matching_bonus', 'matching_income', 'binary_matching', 'binary_income') THEN 'matching'
             WHEN NEW.type IN ('rank_reward', 'rank_bonus') THEN 'rankBonus'
             WHEN NEW.type IN ('incentive_accrual', 'weekly_incentive', 'incentive_income') THEN 'incentive'
             WHEN NEW.type IN ('team_collection', 'reward_income', 'node_income') THEN 'rewards'
