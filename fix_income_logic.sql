@@ -43,8 +43,7 @@ BEGIN
             status = 'active'
         WHERE id = NEW.uid::uuid;
 
-        -- 1.1 Generate Team Collection Nodes
-        -- (3 nodes for $50, 7 for $100, 15 for $250, 31 for $500, 63 for $1000)
+        -- 1.1 Generate Team Collection Nodes (Page 13)
         INSERT INTO public.team_collection (uid, node_id, name, balance, eligible, created_at)
         SELECT 
             NEW.uid::uuid,
@@ -54,17 +53,16 @@ BEGIN
             true,
             NOW()
         FROM generate_series(1, CASE 
-            WHEN package_amount >= 1000 THEN 63
-            WHEN package_amount >= 500 THEN 31
-            WHEN package_amount >= 250 THEN 15
-            WHEN package_amount >= 100 THEN 7
-            ELSE 3
+            WHEN package_amount >= 12750 THEN 255
+            WHEN package_amount >= 6350 THEN 127
+            WHEN package_amount >= 3150 THEN 63
+            WHEN package_amount >= 1550 THEN 31
+            WHEN package_amount >= 750 THEN 15
+            WHEN package_amount >= 350 THEN 7
+            WHEN package_amount >= 150 THEN 3
+            ELSE 1
         END) AS i
         ON CONFLICT (node_id) DO NOTHING;
-
-        -- 1.2 Incentive Pool Accrual (1% to the user themselves)
-        INSERT INTO public.payments (uid, amount, type, status, order_description)
-        VALUES (NEW.uid::uuid, package_amount * 0.01, 'incentive_accrual', 'finished', 'INCENTIVE POOL ACCRUAL for Package ' || package_amount);
 
         -- Trigger rank check for the user themselves
         PERFORM public.check_and_update_rank(NEW.uid::uuid);
@@ -89,16 +87,17 @@ BEGIN
 
         WHILE current_parent_id IS NOT NULL LOOP
             -- Update the parent's matching volume AND cumulative volume
+            -- Use units of $50 for matching volume
             UPDATE public.profiles
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))::text::jsonb
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + package_amount)::text::jsonb
+                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))::text::jsonb
                 )
             WHERE id = current_parent_id::uuid;
 

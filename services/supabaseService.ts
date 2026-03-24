@@ -1241,7 +1241,7 @@ export const supabaseService = {
   },
 
   onNotificationsChange(uid: string, callback: (payload: any) => void) {
-    return supabase
+    const channel = supabase
       .channel(`notifications-${uid}`)
       .on('postgres_changes', { 
         event: '*', 
@@ -1250,5 +1250,9 @@ export const supabaseService = {
         filter: `uid=eq.${uid}`
       }, callback)
       .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }
 };

@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS public.payments (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 2.1 Notifications Table
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    uid UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'update', -- 'alert', 'update', 'reward'
+    is_new BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 3. Team Collection Table (Mining/Node Nodes)
 CREATE TABLE IF NOT EXISTS public.team_collection (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -113,6 +124,11 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.team_collection ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+
+-- Notifications: Users can view/update own notifications
+CREATE POLICY "Users can view own notifications" ON public.notifications FOR SELECT USING (auth.uid()::uuid = uid);
+CREATE POLICY "Users can update own notifications" ON public.notifications FOR UPDATE USING (auth.uid()::uuid = uid);
 
 -- Profiles: Users can read their own profile, admins can read all, 
 -- and all authenticated users can view basic profile info for tree rendering.
@@ -659,15 +675,6 @@ BEGIN
             END) AS i
             ON CONFLICT (node_id) DO NOTHING;
 
-            -- 1.2 INCENTIVE POOL ACCRUAL (1% to the user themselves)
-            PERFORM public.update_user_wallet(
-                NEW.uid::uuid, 
-                'incentive', 
-                v_package_amount * 0.01, 
-                'incentive_accrual', 
-                'INCENTIVE POOL ACCRUAL for Package ' || v_package_amount
-            );
-
             -- Trigger rank check for the user themselves
             PERFORM public.check_and_update_rank(NEW.uid::uuid);
 
@@ -1162,6 +1169,38 @@ BEGIN
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 17. Notification Trigger on Payments
+CREATE OR REPLACE FUNCTION public.on_payment_notification_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Only process if status is finished or completed
+    IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
+        IF NEW.type = 'deposit' THEN
+            INSERT INTO public.notifications (uid, title, message, type)
+            VALUES (NEW.uid, 'Deposit Successful', 'Your deposit of ' || NEW.amount || ' USDT has been processed.', 'update');
+        ELSIF NEW.type = 'withdrawal' THEN
+            INSERT INTO public.notifications (uid, title, message, type)
+            VALUES (NEW.uid, 'Withdrawal Successful', 'Your withdrawal of ' || NEW.amount || ' USDT has been completed.', 'alert');
+        ELSIF NEW.type = 'package_activation' THEN
+            INSERT INTO public.notifications (uid, title, message, type)
+            VALUES (NEW.uid, 'Package Activated', 'Your package of ' || NEW.amount || ' USDT is now active.', 'reward');
+        ELSIF NEW.type IN ('referral_bonus', 'referral_income') THEN
+            INSERT INTO public.notifications (uid, title, message, type)
+            VALUES (NEW.uid, 'Referral Bonus', 'You received a referral bonus of ' || NEW.amount || ' USDT.', 'reward');
+        ELSIF NEW.type IN ('matching_bonus', 'matching_income') THEN
+            INSERT INTO public.notifications (uid, title, message, type)
+            VALUES (NEW.uid, 'Matching Bonus', 'You received a matching bonus of ' || NEW.amount || ' USDT.', 'reward');
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_payment_notification ON public.payments;
+CREATE TRIGGER on_payment_notification
+AFTER INSERT OR UPDATE ON public.payments
+FOR EACH ROW EXECUTE FUNCTION public.on_payment_notification_trigger();
 
 DROP TRIGGER IF EXISTS on_payment_update_process_package ON public.payments;
 CREATE TRIGGER on_payment_update_process_package

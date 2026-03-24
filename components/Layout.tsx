@@ -15,37 +15,75 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
   const [isOpen, setIsOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
-  const [userData, setUserData] = useState<{name: string, rank: number, isActive: boolean} | null>(null);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [userData, setUserData] = useState<{id: string, name: string, rank: number, isActive: boolean} | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
       if (user) {
+        const uid = user.id || user.uid;
         try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          const profile = await supabaseService.getUserProfile(uid) as any;
           if (profile) {
             setUserData({
+              id: uid,
               name: profile.name,
               rank: profile.rank || 1,
               isActive: profile.active_package > 0
             });
           }
+
+          // Fetch initial notifications
+          const initialNotifs = await supabaseService.getNotifications(uid);
+          setNotifications(initialNotifs || []);
+
+          // Subscribe to notifications
+          const notifUnsubscribe = supabaseService.onNotificationsChange(uid, async () => {
+            const updatedNotifs = await supabaseService.getNotifications(uid);
+            setNotifications(updatedNotifs || []);
+          });
+
+          return () => {
+            if (typeof notifUnsubscribe === 'function') notifUnsubscribe();
+          };
         } catch (err) {
-          console.error('Error fetching layout profile:', err);
+          console.error('Error fetching layout data:', err);
         }
       }
     });
     return () => unsubscribe();
   }, []);
 
+  const handleAcknowledgeAll = async () => {
+    if (userData?.id) {
+      await supabaseService.markNotificationsAsRead(userData.id);
+      setNotifications(prev => prev.map(n => ({ ...n, is_new: false })));
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+      
+      if (diffInSeconds < 60) return 'Just now';
+      if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+      if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
+      return date.toLocaleDateString();
+    } catch (e) {
+      return 'Recently';
+    }
+  };
+
   const currentRankName = userData 
     ? (userData.isActive 
         ? (RANKS.find(r => r.level === userData.rank)?.name || `Rank ${userData.rank}`)
         : 'Inactive')
     : 'Partner';
-  const unreadCount = notifications.filter(n => n.isNew).length;
+  const unreadCount = notifications.filter(n => n.is_new).length;
 
   const menu = [
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
@@ -184,7 +222,7 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
                       <div className="px-8 py-6 bg-white/[0.02] border-b border-white/5 flex justify-between items-center">
                         <h4 className="text-sm font-black uppercase tracking-widest text-white">Network Pulse</h4>
                         <button 
-                          onClick={() => setNotifications(notifications.map(n => ({...n, isNew: false})))}
+                          onClick={handleAcknowledgeAll}
                           className="text-[10px] font-black text-amber-500 uppercase hover:text-amber-400 transition-colors"
                         >
                           Acknowledge All
@@ -193,7 +231,7 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
                       <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
                         {notifications.length > 0 ? (
                           notifications.map((n) => (
-                            <div key={n.id} className={`p-6 border-b border-white/5 hover:bg-white/[0.02] transition-all relative group ${n.isNew ? 'bg-amber-500/[0.03]' : ''}`}>
+                            <div key={n.id} className={`p-6 border-b border-white/5 hover:bg-white/[0.02] transition-all relative group ${n.is_new ? 'bg-amber-500/[0.03]' : ''}`}>
                                <div className="flex gap-4">
                                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                                     n.type === 'alert' ? 'bg-red-500/10 text-red-500' : 
@@ -205,14 +243,14 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
                                   <div className="flex-1 space-y-1">
                                      <div className="flex justify-between items-start">
                                         <h5 className="text-xs font-black text-white uppercase tracking-tight">{n.title}</h5>
-                                        <span className="text-[8px] font-black text-slate-600 uppercase">{n.time}</span>
+                                        <span className="text-[8px] font-black text-slate-600 uppercase">{formatTime(n.created_at)}</span>
                                      </div>
                                      <p className="text-[10px] text-slate-400 leading-relaxed font-medium line-clamp-2">
                                         {n.message}
                                      </p>
                                   </div>
                                </div>
-                               {n.isNew && (
+                               {n.is_new && (
                                  <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
                                )}
                             </div>
