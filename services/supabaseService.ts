@@ -106,9 +106,10 @@ export const supabaseService = {
       throw new Error("Your account has been blocked by the administrator. Please contact support.");
     }
     
-    if (data.status === 'pending' && data.role !== 'admin') {
-      throw new Error("Your account is pending activation by the administrator. Please wait for approval.");
-    }
+    // Removed admin approval check as per user request
+    // if (data.status === 'pending' && data.role !== 'admin') {
+    //   throw new Error("Your account is pending activation by the administrator. Please wait for approval.");
+    // }
 
     // Step 2: login using email (which is the internal email)
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -269,7 +270,7 @@ export const supabaseService = {
       matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
       role: email === 'kethankumar130@gmail.com' ? 'admin' : 'user',
-      status: email === 'kethankumar130@gmail.com' ? 'active' : 'pending',
+      status: 'active', // Default to active as per user request
       created_at: new Date().toISOString(),
     };
 
@@ -291,6 +292,7 @@ export const supabaseService = {
         side: profileData.side,
         name: profileData.name,
         role: profileData.role,
+        status: 'active',
         wallets: profileData.wallets, // Ensure wallets exist even in minimal profile
         created_at: profileData.created_at
       };

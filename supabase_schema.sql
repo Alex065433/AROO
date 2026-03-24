@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     active_package NUMERIC DEFAULT 0,
     package_amount NUMERIC DEFAULT 0,
     total_income NUMERIC DEFAULT 0,
-    status TEXT DEFAULT 'inactive',
+    status TEXT DEFAULT 'active',
     wallets JSONB DEFAULT '{
         "master": {"balance": 0, "currency": "USDT"},
         "referral": {"balance": 0, "currency": "USDT"},
@@ -167,13 +167,14 @@ CREATE POLICY "Users can create tickets" ON public.tickets FOR INSERT WITH CHECK
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, operator_id, name, role)
+  INSERT INTO public.profiles (id, email, operator_id, name, role, status)
   VALUES (
     NEW.id,
     NEW.email,
     'ARW-' || floor(random() * 900000 + 100000)::text,
     COALESCE(NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
-    CASE WHEN NEW.email = 'kethankumar130@gmail.com' THEN 'admin' ELSE 'user' END
+    CASE WHEN NEW.email = 'kethankumar130@gmail.com' THEN 'admin' ELSE 'user' END,
+    'active'
   );
   RETURN NEW;
 END;
@@ -1178,19 +1179,19 @@ BEGIN
     IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
         IF NEW.type = 'deposit' THEN
             INSERT INTO public.notifications (uid, title, message, type)
-            VALUES (NEW.uid, 'Deposit Successful', 'Your deposit of ' || NEW.amount || ' USDT has been processed.', 'update');
+            VALUES (NEW.uid::uuid, 'Deposit Successful', 'Your deposit of ' || NEW.amount || ' USDT has been processed.', 'update');
         ELSIF NEW.type = 'withdrawal' THEN
             INSERT INTO public.notifications (uid, title, message, type)
-            VALUES (NEW.uid, 'Withdrawal Successful', 'Your withdrawal of ' || NEW.amount || ' USDT has been completed.', 'alert');
+            VALUES (NEW.uid::uuid, 'Withdrawal Successful', 'Your withdrawal of ' || NEW.amount || ' USDT has been completed.', 'alert');
         ELSIF NEW.type = 'package_activation' THEN
             INSERT INTO public.notifications (uid, title, message, type)
-            VALUES (NEW.uid, 'Package Activated', 'Your package of ' || NEW.amount || ' USDT is now active.', 'reward');
+            VALUES (NEW.uid::uuid, 'Package Activated', 'Your package of ' || NEW.amount || ' USDT is now active.', 'reward');
         ELSIF NEW.type IN ('referral_bonus', 'referral_income') THEN
             INSERT INTO public.notifications (uid, title, message, type)
-            VALUES (NEW.uid, 'Referral Bonus', 'You received a referral bonus of ' || NEW.amount || ' USDT.', 'reward');
+            VALUES (NEW.uid::uuid, 'Referral Bonus', 'You received a referral bonus of ' || NEW.amount || ' USDT.', 'reward');
         ELSIF NEW.type IN ('matching_bonus', 'matching_income') THEN
             INSERT INTO public.notifications (uid, title, message, type)
-            VALUES (NEW.uid, 'Matching Bonus', 'You received a matching bonus of ' || NEW.amount || ' USDT.', 'reward');
+            VALUES (NEW.uid::uuid, 'Matching Bonus', 'You received a matching bonus of ' || NEW.amount || ' USDT.', 'reward');
         END IF;
     END IF;
     RETURN NEW;

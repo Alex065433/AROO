@@ -552,11 +552,7 @@ const AdminCustomers: React.FC = () => {
                             {isProcessing ? '...' : selectedUser.status === 'active' ? 'Block Account' : 'Activate Account'}
                           </button>
                        </div>
-                       {selectedUser.status === 'pending' && (
-                         <p className="text-[10px] text-amber-600 dark:text-amber-400 italic">
-                           * This account is waiting for administrator approval.
-                         </p>
-                       )}
+
                     </div>
 
                     <div className="p-4 bg-indigo-50 dark:bg-indigo-500/5 rounded-2xl border border-indigo-100 dark:border-indigo-500/10 space-y-4">
