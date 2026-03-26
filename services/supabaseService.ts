@@ -11,6 +11,11 @@ export interface Ticket {
 }
 
 export const supabaseService = {
+  // Helper to check if a string is a valid UUID
+  isUuid(str: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  },
+
   // Auth
   async adminLogin(adminId: string, secretKey: string) {
     // Unique Administration ID and Password logic
@@ -40,6 +45,19 @@ export const supabaseService = {
       };
       localStorage.setItem('arowin_supabase_user', JSON.stringify(fallbackAdmin));
       return fallbackAdmin;
+    }
+
+    // Try regular login but check for admin role
+    try {
+      const profile = await this.login(adminId, secretKey);
+      if (profile && (profile.role === 'admin' || profile.email === 'kethankumar130@gmail.com')) {
+        const adminProfile = { ...profile, role: 'admin' };
+        localStorage.setItem('arowin_supabase_user', JSON.stringify(adminProfile));
+        return adminProfile;
+      }
+      // If not an admin, we still throw the admin error below
+    } catch (e) {
+      // Ignore regular login errors and throw the admin one
     }
 
     throw new Error("Invalid Administrative Credentials. Access Denied.");
@@ -373,85 +391,46 @@ export const supabaseService = {
 
   // Package Activation
   async activatePackage(uid: string, amount: number, options: { adminId?: string, isFree?: boolean } = {}) {
-    const { adminId, isFree } = options;
+    const { isFree } = options;
 
-    // 1. Handle payment deduction unless it's free
-    if (!isFree) {
-      if (adminId) {
-        const adminProfile = await this.getUserProfile(adminId);
-        if (!adminProfile) throw new Error('Admin not found');
-        
-        if ((adminProfile.wallets?.master?.balance || 0) < amount) {
-          throw new Error('Insufficient admin funds');
-        }
+    try {
+      const response = await fetch('/api/admin/activate-package', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ uid, packageAmount: amount, isFree }),
+      });
 
-        // Deduct from admin wallet
-        const updatedWallets = {
-          ...adminProfile.wallets,
-          master: {
-            ...adminProfile.wallets?.master,
-            balance: (adminProfile.wallets?.master?.balance || 0) - amount
-          }
-        };
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to activate package');
 
-        await supabase
-          .from('profiles')
-          .update({ wallets: updatedWallets })
-          .eq('id', adminId);
-
-        // Log admin deduction
-        await supabase.from('payments').insert([{
-          uid: adminId,
-          amount: -amount,
-          type: 'admin_fund_usage',
-          status: 'finished',
-          method: 'INTERNAL',
-          created_at: new Date().toISOString()
-        }]);
-      } else {
-        // Just check for insufficient funds, but let the DB trigger handle the deduction
-        const profile = await this.getUserProfile(uid);
-        if (!profile) throw new Error('User not found');
-        if ((profile.wallets?.master?.balance || 0) < amount) {
-          throw new Error('Insufficient funds');
-        }
-      }
+      // Add Notification
+      const pkg = PACKAGES.find(p => p.price === amount);
+      await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
+      
+      return true;
+    } catch (error) {
+      console.error('Error in activatePackage:', error);
+      throw error;
     }
-
-    // 2. Log the activation for the user (this will trigger all MLM logic in DB)
-    const { error } = await supabase.from('payments').insert([{
-      uid,
-      amount,
-      type: 'package_activation',
-      status: 'finished',
-      method: 'WALLET',
-      order_description: `Package Activation: $${amount}`,
-      created_at: new Date().toISOString()
-    }]);
-
-    if (error) throw error;
-
-    // 3. Add Notification
-    const pkg = PACKAGES.find(p => p.price === amount);
-    await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
-    
-    return true;
   },
 
   async addFunds(uid: string, amount: number) {
-    // Just log the payment, the DB trigger will handle the wallet update
-    const { error } = await supabase.from('payments').insert([{
-      uid,
-      amount,
-      type: 'deposit',
-      status: 'finished',
-      method: 'INTERNAL',
-      order_description: 'ADMIN ADD FUNDS',
-      created_at: new Date().toISOString()
-    }]);
+    try {
+      const { data, error } = await supabase.rpc('admin_add_funds', {
+        p_user_id: uid,
+        p_amount: amount
+      });
 
-    if (error) throw error;
-    return true;
+      if (error) throw error;
+      if (data && !data.success) throw new Error(data.error);
+      
+      return true;
+    } catch (error) {
+      console.error('Error in addFunds:', error);
+      throw error;
+    }
   },
 
   // Daily and Weekly Payout System
@@ -494,14 +473,17 @@ export const supabaseService = {
     for (const user of users) {
       const rankData = RANKS.find(r => r.level === user.rank);
       if (rankData && rankData.weeklyEarning > 0) {
-        await supabase.from('payments').insert([{
-          uid: user.id,
-          amount: rankData.weeklyEarning,
-          type: 'rank_bonus',
-          status: 'finished',
-          method: 'INTERNAL',
-          created_at: new Date().toISOString()
-        }]);
+        await supabase.rpc('admin_add_payment_rpc', {
+          p_uid: user.id,
+          p_amount: rankData.weeklyEarning,
+          p_type: 'rank_bonus',
+          p_method: 'INTERNAL',
+          p_description: `Weekly Rank Bonus: ${rankData.name}`,
+          p_status: 'finished',
+          p_payment_id: null,
+          p_currency: 'usdtbsc',
+          p_order_id: null
+        });
       }
     }
     return true;
@@ -544,15 +526,18 @@ export const supabaseService = {
     if (totalCollected <= 0) return 0;
 
     // 2. Add to user's master wallet via payment record (trigger will handle wallet update)
-    await supabase.from('payments').insert([{
-      uid,
-      amount: totalCollected,
-      type: 'team_collection',
-      status: 'finished',
-      method: 'INTERNAL',
-      created_at: new Date().toISOString(),
-      order_description: `Consolidated collection from ${nodeIds.length} nodes`
-    }]);
+    // Use RPC to handle explicit UUID casting for the uid column
+    await supabase.rpc('admin_add_payment_rpc', {
+      p_uid: uid,
+      p_amount: totalCollected,
+      p_type: 'team_collection',
+      p_method: 'INTERNAL',
+      p_description: `Consolidated collection from ${nodeIds.length} nodes`,
+      p_status: 'finished',
+      p_payment_id: null,
+      p_currency: 'usdtbsc',
+      p_order_id: null
+    });
 
     return totalCollected;
   },
@@ -623,6 +608,23 @@ export const supabaseService = {
     } catch (err) {
       console.error('Error fetching payments:', err);
       return [];
+    }
+  },
+
+  async updatePaymentStatus(paymentId: string, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('payments')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', paymentId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating payment status:', error);
+      throw error;
     }
   },
 
@@ -721,15 +723,18 @@ export const supabaseService = {
     }
     
     // Log transaction via payments table - the database trigger will handle wallet and total_income updates
-    const { error: paymentError } = await supabase.from('payments').insert([{
-      uid,
-      amount: payableAmount,
-      type, // Use aligned types: referral_bonus, matching_bonus, rank_reward, incentive_accrual, team_collection
-      status: 'finished',
-      method: 'INTERNAL',
-      order_description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
-      created_at: new Date().toISOString()
-    }]);
+    // Use RPC to handle explicit UUID casting for the uid column
+    const { error: paymentError } = await supabase.rpc('admin_add_payment_rpc', {
+      p_uid: uid,
+      p_amount: payableAmount,
+      p_type: type, // Use aligned types: referral_bonus, matching_bonus, rank_reward, incentive_accrual, team_collection
+      p_method: 'INTERNAL',
+      p_description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
+      p_status: 'finished',
+      p_payment_id: null,
+      p_currency: 'usdtbsc',
+      p_order_id: null
+    });
 
     if (paymentError) throw paymentError;
     
@@ -1028,17 +1033,11 @@ export const supabaseService = {
 
   // Support Tickets
   async createTicket(uid: string, subject: string, message: string) {
-    const { data, error } = await supabase
-      .from('tickets')
-      .insert([{
-        uid,
-        subject,
-        message,
-        status: 'open',
-        created_at: new Date().toISOString()
-      }])
-      .select()
-      .single();
+    const { data, error } = await supabase.rpc('admin_create_ticket_rpc', {
+      p_uid: uid,
+      p_subject: subject,
+      p_message: message
+    });
     
     if (error) throw error;
     return data.id;
@@ -1163,6 +1162,7 @@ export const supabaseService = {
   },
 
   async updateUser(uid: string, data: any) {
+    if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
     const { error } = await supabase
       .from('profiles')
       .update(data)
@@ -1172,6 +1172,7 @@ export const supabaseService = {
   },
 
   async updateUserStatus(uid: string, status: 'active' | 'pending' | 'blocked') {
+    if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
     const { error } = await supabase
       .from('profiles')
       .update({ status })
@@ -1181,6 +1182,7 @@ export const supabaseService = {
   },
 
   async deleteUser(uid: string) {
+    if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
     // 1. Delete profile
     const { error: profileError } = await supabase
       .from('profiles')
@@ -1214,16 +1216,12 @@ export const supabaseService = {
   },
 
   async addNotification(uid: string, title: string, message: string, type: 'alert' | 'update' | 'reward' = 'update') {
-    const { error } = await supabase
-      .from('notifications')
-      .insert([{
-        uid,
-        title,
-        message,
-        type,
-        is_new: true,
-        created_at: new Date().toISOString()
-      }]);
+    const { error } = await supabase.rpc('admin_add_notification_rpc', {
+      p_uid: uid,
+      p_title: title,
+      p_message: message,
+      p_type: type
+    });
     
     if (error) {
       console.warn('Failed to add notification (table might not exist):', error);

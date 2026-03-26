@@ -1,0 +1,17 @@
+130:DROP POLICY IF EXISTS "Users can view own notifications" ON public.notifications;
+132:DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
+137:DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON public.profiles;
+139:DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+141:DROP POLICY IF EXISTS "Admins can update all profiles" ON public.profiles;
+145:DROP POLICY IF EXISTS "Admins can delete profiles" ON public.profiles;
+151:DROP POLICY IF EXISTS "Users can view own payments" ON public.payments;
+153:DROP POLICY IF EXISTS "Users can insert own payments" ON public.payments;
+155:DROP POLICY IF EXISTS "Users can update own payments" ON public.payments;
+157:DROP POLICY IF EXISTS "Admins can view all payments" ON public.payments;
+161:DROP POLICY IF EXISTS "Admins can insert all payments" ON public.payments;
+165:DROP POLICY IF EXISTS "Admins can update all payments" ON public.payments;
+171:DROP POLICY IF EXISTS "Users can view own nodes" ON public.team_collection;
+175:DROP POLICY IF EXISTS "Users can view own tickets" ON public.tickets;
+177:DROP POLICY IF EXISTS "Users can create tickets" ON public.tickets;
+1090:DROP POLICY IF EXISTS "Users can view their own transactions" ON public.transactions;
+1095:DROP POLICY IF EXISTS "Admins can view all transactions" ON public.transactions;

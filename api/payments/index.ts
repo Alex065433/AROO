@@ -30,6 +30,15 @@ const getSupabase = () => {
 
 app.use(express.json());
 
+// Global request logger
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  if (req.method === 'POST') {
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  }
+  next();
+});
+
 // API Routes
 app.get("/api/health", (req, res) => {
   res.json({ 
@@ -74,16 +83,102 @@ app.get("/api/admin/users", (req, res) => {
   ]);
 });
 
-app.post("/api/admin/add-funds", (req, res) => {
-  const { uid, amount } = req.body;
-  console.log(`Mock Admin: Adding ${amount} funds to ${uid}`);
-  res.json({ success: true });
+app.post("/api/admin/add-funds", async (req, res) => {
+  const { uid, amount, description } = req.body;
+  
+  if (!uid || amount === undefined || amount === null) {
+    console.error('Admin: Missing required fields for add-funds:', { uid, amount, body: req.body });
+    return res.status(400).json({ 
+      error: "UID and Amount are required",
+      details: { uid: !!uid, amount: amount !== undefined && amount !== null }
+    });
+  }
+
+  const supabase = getSupabase();
+  
+  if (!supabase) {
+    return res.status(500).json({ error: "Supabase client not initialized" });
+  }
+
+  try {
+    console.log(`Admin: Adding ${amount} funds to ${uid}`);
+    
+    // Ensure amount is a number
+    const numericAmount = parseFloat(amount.toString());
+    if (isNaN(numericAmount)) {
+      console.error('Admin: Invalid amount format for add-funds:', { amount });
+      return res.status(400).json({ error: "Invalid amount format", received: amount });
+    }
+    
+    // Use the new admin_add_funds RPC for strict type safety and correct logic
+    const { data, error } = await supabase.rpc('admin_add_funds', {
+      p_user_id: uid,
+      p_amount: numericAmount
+    });
+
+    if (error) {
+      console.error('Supabase RPC Error (admin_add_payment_rpc):', JSON.stringify(error, null, 2));
+      return res.status(500).json({ error: error.message || "Database error", details: error });
+    }
+
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error in add-funds API:', JSON.stringify(error, null, 2));
+    res.status(500).json({ error: error.message || "Failed to add funds", details: error });
+  }
 });
 
-app.post("/api/admin/activate-package", (req, res) => {
-  const { uid, packageAmount } = req.body;
-  console.log(`Mock Admin: Activating $${packageAmount} package for ${uid}`);
-  res.json({ success: true });
+app.post("/api/admin/activate-package", async (req, res) => {
+  const { uid, packageAmount, isFree } = req.body;
+  
+  if (!uid || packageAmount === undefined || packageAmount === null) {
+    console.error('Admin: Missing required fields for activate-package:', { uid, packageAmount, body: req.body });
+    return res.status(400).json({ 
+      error: "UID and Package Amount are required",
+      details: { uid: !!uid, packageAmount: packageAmount !== undefined && packageAmount !== null }
+    });
+  }
+
+  const supabase = getSupabase();
+  
+  if (!supabase) {
+    return res.status(500).json({ error: "Supabase client not initialized" });
+  }
+
+  try {
+    console.log(`Admin: Activating $${packageAmount} package for ${uid}`);
+    
+    // Ensure amount is a number
+    const numericAmount = parseFloat(packageAmount.toString());
+    if (isNaN(numericAmount)) {
+      console.error('Admin: Invalid package amount format for activate-package:', { packageAmount });
+      return res.status(400).json({ error: "Invalid package amount format", received: packageAmount });
+    }
+    
+    // 1. Use RPC to handle explicit UUID casting for the uid column
+    // This will trigger the process_package_activation and update_wallets_on_payment functions
+    const { data, error } = await supabase.rpc('admin_add_payment_rpc', {
+      p_uid: uid,
+      p_amount: numericAmount,
+      p_type: 'package_activation',
+      p_method: isFree ? 'FREE' : 'WALLET',
+      p_description: `Package Activation: $${numericAmount}${isFree ? ' (FREE)' : ''}`,
+      p_status: 'finished',
+      p_payment_id: null,
+      p_currency: 'usdtbsc',
+      p_order_id: null
+    });
+
+    if (error) {
+      console.error('Supabase RPC Error (admin_add_payment_rpc):', JSON.stringify(error, null, 2));
+      return res.status(500).json({ error: error.message || "Database error", details: error });
+    }
+
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error in activate-package API:', JSON.stringify(error, null, 2));
+    res.status(500).json({ error: error.message || "Failed to activate package", details: error });
+  }
 });
 
 // Welcome Email Route
@@ -220,18 +315,21 @@ app.post("/api/payments/create", async (req, res) => {
     const supabase = getSupabase();
     if (supabase) {
       try {
-        const { error: dbError } = await supabase
-          .from('payments')
-          .insert([{
-            uid: uid,
-            payment_id: response.data.payment_id,
-            amount: amount,
-            currency: currency || "usdtbsc",
-            status: "waiting",
-            order_id: orderId,
-            order_description: orderDescription,
-            created_at: new Date().toISOString()
-          }]);
+        // Ensure amount is a number
+        const numericAmount = parseFloat(amount.toString());
+        
+        // Use RPC to handle explicit UUID casting for the uid column
+        const { error: dbError } = await supabase.rpc('admin_add_payment_rpc', {
+          p_uid: uid,
+          p_amount: numericAmount,
+          p_type: 'deposit',
+          p_method: 'CRYPTO',
+          p_description: orderDescription || 'Crypto Deposit',
+          p_status: 'waiting',
+          p_payment_id: response.data.payment_id,
+          p_currency: currency || "usdtbsc",
+          p_order_id: orderId || ''
+        });
         
         if (dbError) {
           console.error("Supabase Payment Store Error:", dbError.message);
@@ -311,8 +409,7 @@ app.post("/api/payments/ipn", async (req, res) => {
 
   if (signature !== expectedSignature) {
     console.error("IPN Signature Mismatch! Verification failed.");
-    // In production, you might want to return 400 here, but for debugging we'll continue
-    // return res.status(400).send("Invalid signature");
+    return res.status(400).send("Invalid signature");
   }
 
   const { payment_status, payment_id, order_id, price_amount } = notificationsPayload;
@@ -351,34 +448,14 @@ app.post("/api/payments/ipn", async (req, res) => {
         console.error("Supabase IPN Update Error:", dbError.message);
       }
 
-      // 3. Update user wallet if finished
-      if (payment_status === 'finished') {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('wallets')
-          .eq('id', paymentData.uid)
-          .single();
-        
-        if (profile) {
-          const updatedWallets = {
-            ...profile.wallets,
-            master: {
-              ...profile.wallets?.master,
-              balance: (profile.wallets?.master?.balance || 0) + Number(price_amount)
-            }
-          };
-          await supabase
-            .from('profiles')
-            .update({ wallets: updatedWallets })
-            .eq('id', paymentData.uid);
-        }
-      }
+      // 3. Wallet update is handled by the database trigger 'on_payment_update_wallets'
+      // No manual update needed here to prevent race conditions and double-crediting.
       
-      console.log(`IPN processed for ${payment_id}. Wallet updated.`);
+      console.log(`IPN processed for ${payment_id}. Status: ${payment_status}. Database trigger will handle wallet updates.`);
       
       return res.status(200).send("OK");
     } catch (err: any) {
-      console.error("Failed to process IPN in Supabase:", err);
+      console.error("Failed to process IPN in Supabase:", JSON.stringify(err, null, 2));
       return res.status(500).send("Internal Error");
     }
   } else {

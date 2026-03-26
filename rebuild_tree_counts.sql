@@ -25,11 +25,11 @@ BEGIN
             WHILE curr_parent_id IS NOT NULL LOOP
                 IF curr_side = 'LEFT' THEN
                     UPDATE public.profiles
-                    SET team_size = jsonb_set(team_size, '{left}', ((team_size->>'left')::int + 1)::text::jsonb)
+                    SET team_size = jsonb_set(team_size, '{left}', to_jsonb((team_size->>'left')::int + 1))
                     WHERE id = curr_parent_id::uuid;
                 ELSIF curr_side = 'RIGHT' THEN
                     UPDATE public.profiles
-                    SET team_size = jsonb_set(team_size, '{right}', ((team_size->>'right')::int + 1)::text::jsonb)
+                    SET team_size = jsonb_set(team_size, '{right}', to_jsonb((team_size->>'right')::int + 1))
                     WHERE id = curr_parent_id::uuid;
                 END IF;
                 
@@ -60,11 +60,11 @@ BEGIN
                 WHILE curr_parent_id IS NOT NULL LOOP
                     IF curr_side = 'LEFT' THEN
                         UPDATE public.profiles
-                        SET matching_volume = jsonb_set(matching_volume, '{left}', ((matching_volume->>'left')::numeric + pkg.amount)::text::jsonb)
+                        SET matching_volume = jsonb_set(matching_volume, '{left}', to_jsonb((matching_volume->>'left')::numeric + pkg.amount))
                         WHERE id = curr_parent_id::uuid;
                     ELSIF curr_side = 'RIGHT' THEN
                         UPDATE public.profiles
-                        SET matching_volume = jsonb_set(matching_volume, '{right}', ((matching_volume->>'right')::numeric + pkg.amount)::text::jsonb)
+                        SET matching_volume = jsonb_set(matching_volume, '{right}', to_jsonb((matching_volume->>'right')::numeric + pkg.amount))
                         WHERE id = curr_parent_id::uuid;
                     END IF;
                     
@@ -94,11 +94,11 @@ BEGIN
     WHILE current_parent_id IS NOT NULL LOOP
         IF current_side = 'LEFT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{left}', (GREATEST(0, (team_size->>'left')::int - 1))::text::jsonb)
+            SET team_size = jsonb_set(team_size, '{left}', to_jsonb(GREATEST(0, (team_size->>'left')::int - 1)))
             WHERE id = current_parent_id::uuid;
         ELSIF current_side = 'RIGHT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(team_size, '{right}', (GREATEST(0, (team_size->>'right')::int - 1))::text::jsonb)
+            SET team_size = jsonb_set(team_size, '{right}', to_jsonb(GREATEST(0, (team_size->>'right')::int - 1)))
             WHERE id = current_parent_id::uuid;
         END IF;
 

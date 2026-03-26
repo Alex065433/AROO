@@ -184,7 +184,17 @@ const Dashboard: React.FC = () => {
       // 3. Handle profile data
       if (profileResponse) {
         setUserData(profileResponse);
-        setUserWallets(profileResponse.wallets || MOCK_USER.wallets);
+        // Use flat columns if available, fallback to JSONB
+        const masterBalance = profileResponse.wallet_balance !== undefined ? profileResponse.wallet_balance : (profileResponse.wallets?.master?.balance || 0);
+        const referralBalance = profileResponse.referral_income !== undefined ? profileResponse.referral_income : (profileResponse.wallets?.referral?.balance || 0);
+        const matchingBalance = profileResponse.matching_income !== undefined ? profileResponse.matching_income : (profileResponse.wallets?.matching?.balance || 0);
+        
+        setUserWallets({ 
+          ...MOCK_USER.wallets, 
+          master: { balance: masterBalance, currency: 'USDT' },
+          referral: { balance: referralBalance, currency: 'USDT' },
+          matching: { balance: matchingBalance, currency: 'USDT' }
+        });
       }
 
       // 4. Handle transactions

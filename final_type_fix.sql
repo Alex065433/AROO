@@ -27,17 +27,17 @@ BEGIN
         SET 
             team_size = CASE 
                 WHEN should_increment_team_size THEN
-                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(team_size->>lower(current_side), '0'))::int + 1)::text::jsonb)
+                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(team_size->>lower(current_side), '0'))::int + 1))
                 ELSE team_size
             END,
             matching_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add))
                 ELSE matching_volume 
             END,
             cumulative_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add))
                 ELSE cumulative_volume 
             END
         WHERE id = current_parent_id::uuid;
@@ -79,7 +79,7 @@ BEGIN
             SET team_size = jsonb_set(
                 COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
                 ARRAY[lower(curr_side)], 
-                ((COALESCE(team_size->>lower(curr_side), '0'))::int + 1)::text::jsonb
+                to_jsonb((COALESCE(team_size->>lower(curr_side), '0'))::int + 1)
             )
             WHERE id = curr_parent_id::uuid;
 
@@ -312,12 +312,12 @@ BEGIN
                 SET matching_volume = jsonb_set(
                         COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
+                        to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))
                     ),
                     cumulative_volume = jsonb_set(
                         COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
+                        to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))
                     )
                 WHERE id = current_parent_id::uuid;
             END IF;

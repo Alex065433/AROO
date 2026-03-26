@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { 
   Search, Filter, Download, Check, X, 
   Calendar, ArrowUpRight, ArrowDownRight,
@@ -12,22 +14,83 @@ const AdminTransactions: React.FC = () => {
   const [filterType, setFilterType] = useState('All');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'warning'
+  });
   const [searchQuery, setSearchQuery] = useState('');
 
+  const fetchTransactions = async () => {
+    setIsLoading(true);
+    try {
+      const data = await supabaseService.getPayments('all');
+      setTransactions(data);
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchTransactions = async () => {
-      setIsLoading(true);
-      try {
-        const data = await supabaseService.getPayments('all');
-        setTransactions(data);
-      } catch (error) {
-        console.error('Error fetching transactions:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     fetchTransactions();
   }, []);
+
+  const handleApprove = async (txId: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Approve Transaction',
+      message: 'Are you sure you want to approve this transaction? This will update the user\'s wallet and activate any associated packages.',
+      type: 'warning',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        setIsProcessing(true);
+        try {
+          await supabaseService.updatePaymentStatus(txId, 'completed');
+          toast.success('Transaction approved successfully');
+          fetchTransactions();
+        } catch (error: any) {
+          console.error('Error approving transaction:', error);
+          toast.error('Failed to approve transaction: ' + error.message);
+        } finally {
+          setIsProcessing(false);
+        }
+      }
+    });
+  };
+
+  const handleReject = async (txId: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Reject Transaction',
+      message: 'Are you sure you want to reject this transaction? This action cannot be undone.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        setIsProcessing(true);
+        try {
+          await supabaseService.updatePaymentStatus(txId, 'rejected');
+          toast.success('Transaction rejected successfully');
+          fetchTransactions();
+        } catch (error: any) {
+          console.error('Error rejecting transaction:', error);
+          toast.error('Failed to reject transaction: ' + error.message);
+        } finally {
+          setIsProcessing(false);
+        }
+      }
+    });
+  };
 
   const filteredTransactions = transactions.filter(tx => {
     const matchesType = filterType === 'All' || tx.type.toLowerCase().includes(filterType.toLowerCase());
@@ -44,6 +107,14 @@ const AdminTransactions: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      <ConfirmDialog 
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -186,12 +257,22 @@ const AdminTransactions: React.FC = () => {
                     {tx.created_at ? new Date(tx.created_at).toLocaleString() : 'Recent'}
                   </td>
                   <td className="px-8 py-5 text-right">
-                    {tx.status === 'pending' ? (
+                    {tx.status === 'pending' || tx.status === 'waiting' ? (
                       <div className="flex items-center justify-end gap-2">
-                        <button className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-all" title="Approve">
+                        <button 
+                          onClick={() => handleApprove(tx.id)}
+                          disabled={isProcessing}
+                          className="p-2 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-lg transition-all disabled:opacity-50" 
+                          title="Approve"
+                        >
                           <Check size={16} />
                         </button>
-                        <button className="p-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg transition-all" title="Reject">
+                        <button 
+                          onClick={() => handleReject(tx.id)}
+                          disabled={isProcessing}
+                          className="p-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg transition-all disabled:opacity-50" 
+                          title="Reject"
+                        >
                           <X size={16} />
                         </button>
                       </div>

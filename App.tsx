@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import AdminLayout from './components/AdminLayout';
 import { SplashScreen } from './components/SplashScreen';
@@ -58,6 +59,7 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
+      <Toaster position="top-right" richColors />
       {!isSupabaseConfigured && (
         <div className="fixed top-0 left-0 right-0 z-[9999] bg-amber-500 text-white text-[10px] font-black uppercase tracking-widest py-2 px-4 text-center shadow-lg">
           Supabase Configuration Missing. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in AI Studio settings.

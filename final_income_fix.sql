@@ -169,17 +169,17 @@ BEGIN
         SET 
             team_size = CASE 
                 WHEN should_increment_team_size THEN
-                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(team_size->>lower(current_side), '0'))::int + 1)::text::jsonb)
+                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(team_size->>lower(current_side), '0'))::int + 1))
                 ELSE team_size
             END,
             matching_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add))
                 ELSE matching_volume 
             END,
             cumulative_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add))
         ELSE cumulative_volume 
     END
 WHERE id = current_parent_id::uuid;
@@ -228,10 +228,10 @@ BEGIN
                     jsonb_set(
                         COALESCE(wallets, '{"master": {"balance": 0, "currency": "USDT"}, "referral": {"balance": 0, "currency": "USDT"}, "matching": {"balance": 0, "currency": "USDT"}, "rankBonus": {"balance": 0, "currency": "USDT"}, "incentive": {"balance": 0, "currency": "USDT"}, "rewards": {"balance": 0, "currency": "USDT"}}'::jsonb),
                         ARRAY[wallet_key, 'balance'], 
-                        ((COALESCE(wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
+                        to_jsonb((COALESCE(wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)
                     ),
                     ARRAY['master', 'balance'], 
-                    ((COALESCE(wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
+                    to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
                 ),
                 total_income = COALESCE(total_income, 0) + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
             WHERE id = NEW.uid::uuid;
@@ -241,14 +241,14 @@ BEGIN
             SET wallets = jsonb_set(
                     COALESCE(wallets, '{"master": {"balance": 0, "currency": "USDT"}, "referral": {"balance": 0, "currency": "USDT"}, "matching": {"balance": 0, "currency": "USDT"}, "rankBonus": {"balance": 0, "currency": "USDT"}, "incentive": {"balance": 0, "currency": "USDT"}, "rewards": {"balance": 0, "currency": "USDT"}}'::jsonb),
                     ARRAY['master', 'balance'], 
-                    (CASE 
+                    to_jsonb(CASE 
                         WHEN NEW.type = 'withdrawal' OR (NEW.type = 'package_activation' AND NEW.method = 'WALLET') THEN 
                             ((COALESCE(wallets->'master'->>'balance', '0'))::numeric - NEW.amount)
                         WHEN NEW.type = 'deposit' THEN
                             ((COALESCE(wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
                         ELSE 
                             (COALESCE(wallets->'master'->>'balance', '0'))::numeric
-                    END)::text::jsonb
+                    END)
                 )
             WHERE id = NEW.uid::uuid;
         END IF;

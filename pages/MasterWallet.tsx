@@ -37,7 +37,17 @@ const MasterWallet: React.FC = () => {
           const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           if (profile) {
             setUserProfile(profile);
-            setUserWallets({ ...MOCK_USER.wallets, ...(profile.wallets || {}) });
+            // Use flat columns if available, fallback to JSONB
+            const masterBalance = profile.wallet_balance !== undefined ? profile.wallet_balance : (profile.wallets?.master?.balance || 0);
+            const referralBalance = profile.referral_income !== undefined ? profile.referral_income : (profile.wallets?.referral?.balance || 0);
+            const matchingBalance = profile.matching_income !== undefined ? profile.matching_income : (profile.wallets?.matching?.balance || 0);
+            
+            setUserWallets({ 
+              ...MOCK_USER.wallets, 
+              master: { balance: masterBalance, currency: 'USDT' },
+              referral: { balance: referralBalance, currency: 'USDT' },
+              matching: { balance: matchingBalance, currency: 'USDT' }
+            });
           }
 
           // Fetch real transactions

@@ -1,5 +1,6 @@
 
 import React, { useState } from 'react';
+import { toast } from 'sonner';
 import { 
   Save, Globe, Shield, Wallet, 
   Percent, AlertTriangle, Upload,
@@ -36,7 +37,7 @@ const AdminSettings: React.FC = () => {
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) {
       console.error('Rebuild failed:', err);
-      alert('Failed to rebuild network counts. Please ensure the SQL schema is updated.');
+      toast.error('Failed to rebuild network counts. Please ensure the SQL schema is updated.');
     } finally {
       setIsRebuilding(false);
     }
@@ -51,7 +52,7 @@ const AdminSettings: React.FC = () => {
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) {
       console.error('Payout processing failed:', err);
-      alert('Failed to process daily payouts. Check system logs.');
+      toast.error('Failed to process daily payouts. Check system logs.');
     } finally {
       setIsProcessingPayouts(false);
     }

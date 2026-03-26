@@ -36,44 +36,24 @@ export default async function handler(req, res) {
     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY || process.env.VITE_SUPABASE_ANON_KEY
   )
 
-  // 💾 Save payment
-  const { error } = await supabase
-    .from('payments')
-    .insert({
-      uid: body.order_id,
-      amount: body.price_amount,
-      status: body.payment_status,
-      payment_id: body.payment_id,
-      created_at: new Date().toISOString()
-    });
-
-  if (body.payment_status === 'finished') {
-    // Update user wallet
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('wallets')
-      .eq('id', body.order_id)
-      .single();
-    
-    if (profile) {
-      const updatedWallets = {
-        ...profile.wallets,
-        master: {
-          ...profile.wallets?.master,
-          balance: (profile.wallets?.master?.balance || 0) + Number(body.price_amount)
-        }
-      };
-      await supabase
-        .from('profiles')
-        .update({ wallets: updatedWallets })
-        .eq('id', body.order_id);
-    }
-  }
+  // 💾 Save payment using RPC to handle UUID casting
+  const { error } = await supabase.rpc('admin_add_payment_rpc', {
+    p_uid: body.order_id.toString(),
+    p_amount: body.price_amount.toString(),
+    p_type: 'deposit',
+    p_method: 'CRYPTO',
+    p_description: 'Crypto Deposit (NOWPayments)',
+    p_status: body.payment_status,
+    p_payment_id: body.payment_id.toString(),
+    p_currency: body.pay_currency || 'usdtbsc',
+    p_order_id: body.order_id.toString()
+  });
 
   if (error) {
-    console.log(error)
+    console.error('IPN DB Error:', JSON.stringify(error, null, 2));
     return res.status(500).send('DB error')
   }
 
+  console.log(`IPN processed for ${body.payment_id}. Status: ${body.payment_status}. Database trigger will handle wallet updates.`);
   return res.status(200).send('Saved')
 }

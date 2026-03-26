@@ -92,12 +92,12 @@ BEGIN
             SET matching_volume = jsonb_set(
                     COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))::text::jsonb
+                    to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))
                 ),
                 cumulative_volume = jsonb_set(
                     COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                     ARRAY[lower(current_side)], 
-                    ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))::text::jsonb
+                    to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (package_amount / 50.0))
                 )
             WHERE id = current_parent_id::uuid;
 
@@ -256,8 +256,8 @@ BEGIN
         IF wallet_key != 'master' THEN
             UPDATE public.profiles
             SET wallets = jsonb_set(
-                    jsonb_set(current_wallets, ARRAY[wallet_key, 'balance'], ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
-                    ARRAY['master', 'balance'], ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
+                    jsonb_set(current_wallets, ARRAY[wallet_key, 'balance'], to_jsonb((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)),
+                    ARRAY['master', 'balance'], to_jsonb((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
                 ),
                 total_income = total_income + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
             WHERE id = NEW.uid::uuid;
@@ -271,7 +271,7 @@ BEGIN
             END;
 
             UPDATE public.profiles
-            SET wallets = jsonb_set(current_wallets, ARRAY['master', 'balance'], new_balance::text::jsonb)
+            SET wallets = jsonb_set(current_wallets, ARRAY['master', 'balance'], to_jsonb(new_balance))
             WHERE id = NEW.uid::uuid;
         END IF;
     END IF;

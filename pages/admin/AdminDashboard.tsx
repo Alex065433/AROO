@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { 
   Users, UserCheck, UserX, ArrowUpRight, ArrowDownRight, 
   DollarSign, CreditCard, TrendingUp, Activity,
@@ -61,13 +62,13 @@ const AdminDashboard: React.FC = () => {
     try {
       setIsLoading(true);
       const result = await supabaseService.processSystemIncomes();
-      alert(result.message);
+      toast.success(result.message);
       // Refresh data
       const stats = await supabaseService.getAdminStats();
       setStatsData(stats);
     } catch (error) {
       console.error('Error syncing system:', error);
-      alert('Failed to sync system protocols');
+      toast.error('Failed to sync system protocols');
     } finally {
       setIsLoading(false);
     }

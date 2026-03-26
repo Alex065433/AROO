@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { 
   Search, Filter, MoreVertical, Eye, Edit2, 
   ShieldAlert, Trash2, ChevronLeft, ChevronRight,
@@ -19,6 +21,19 @@ const AdminCustomers: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [fundAmount, setFundAmount] = useState('');
   const [selectedPackage, setSelectedPackage] = useState('50');
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'warning'
+  });
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
@@ -58,7 +73,7 @@ const AdminCustomers: React.FC = () => {
         newCustomer.side,
         { name: newCustomer.name }
       );
-      alert('Customer added successfully');
+      toast.success('Customer added successfully');
       setIsAddModalOpen(false);
       setNewCustomer({
         name: '',
@@ -70,7 +85,7 @@ const AdminCustomers: React.FC = () => {
       fetchUsers();
     } catch (error) {
       console.error('Error adding customer:', error);
-      alert('Error adding customer: ' + (error as any).message);
+      toast.error('Error adding customer: ' + (error as any).message);
     } finally {
       setIsProcessing(false);
     }
@@ -86,16 +101,26 @@ const AdminCustomers: React.FC = () => {
   const paginatedUsers = filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const handleAddFunds = async () => {
-    if (!selectedUser || !fundAmount) return;
+    if (!selectedUser || !fundAmount) {
+      toast.error('Please enter an amount');
+      return;
+    }
+    
+    const numericAmount = parseFloat(fundAmount);
+    if (isNaN(numericAmount) || numericAmount <= 0) {
+      toast.error('Please enter a valid positive amount');
+      return;
+    }
+
     setIsProcessing(true);
     try {
       await supabaseService.addFunds(selectedUser.id, parseFloat(fundAmount));
-      alert('Funds added successfully');
+      toast.success('Funds added successfully');
       setFundAmount('');
       fetchUsers();
     } catch (error) {
       console.error('Error adding funds:', error);
-      alert('Error adding funds: ' + (error as any).message);
+      toast.error('Error adding funds: ' + (error as any).message);
     } finally {
       setIsProcessing(false);
     }
@@ -108,24 +133,31 @@ const AdminCustomers: React.FC = () => {
     const balance = Number(selectedUser.wallets?.master?.balance || 0);
     
     if (balance < amount) {
-      alert(`Insufficient balance! User has $${balance.toFixed(2)}, but package costs $${amount}.`);
+      toast.error(`Insufficient balance! User has $${balance.toFixed(2)}, but package costs $${amount}.`);
       return;
     }
     
-    if (!confirm(`Are you sure you want to activate the $${amount} package for ${selectedUser.name}?`)) return;
-    
-    setIsProcessing(true);
-    try {
-      await supabaseService.activatePackage(selectedUser.id, amount);
-      alert('Package activated successfully');
-      fetchUsers();
-      setIsEditPanelOpen(false);
-    } catch (error) {
-      console.error('Error activating package:', error);
-      alert('Error activating package: ' + (error as any).message);
-    } finally {
-      setIsProcessing(false);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Activate Package',
+      message: `Are you sure you want to activate the $${amount} package for ${selectedUser.name}?`,
+      type: 'warning',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        setIsProcessing(true);
+        try {
+          await supabaseService.activatePackage(selectedUser.id, amount);
+          toast.success('Package activated successfully');
+          fetchUsers();
+          setIsEditPanelOpen(false);
+        } catch (error) {
+          console.error('Error activating package:', error);
+          toast.error('Error activating package: ' + (error as any).message);
+        } finally {
+          setIsProcessing(false);
+        }
+      }
+    });
   };
 
   const handleRunSync = async () => {
@@ -133,11 +165,11 @@ const AdminCustomers: React.FC = () => {
     setIsProcessing(true);
     try {
       await supabaseService.checkAndUpdateRank(selectedUser.id);
-      alert('System synchronization complete. Rank and nodes updated.');
+      toast.success('System synchronization complete. Rank and nodes updated.');
       fetchUsers();
     } catch (error) {
       console.error('Error running sync:', error);
-      alert('Error running sync: ' + (error as any).message);
+      toast.error('Error running sync: ' + (error as any).message);
     } finally {
       setIsProcessing(false);
     }
@@ -149,12 +181,12 @@ const AdminCustomers: React.FC = () => {
     setIsProcessing(true);
     try {
       await supabaseService.updateUserStatus(selectedUser.id, newStatus);
-      alert(`User account ${newStatus === 'active' ? 'activated' : 'blocked'} successfully`);
+      toast.success(`User account ${newStatus === 'active' ? 'activated' : 'blocked'} successfully`);
       setSelectedUser({ ...selectedUser, status: newStatus });
       fetchUsers();
     } catch (error) {
       console.error('Error updating status:', error);
-      alert('Error updating status: ' + (error as any).message);
+      toast.error('Error updating status: ' + (error as any).message);
     } finally {
       setIsProcessing(false);
     }
@@ -168,11 +200,11 @@ const AdminCustomers: React.FC = () => {
         name: selectedUser.name,
         email: selectedUser.email
       });
-      alert('User updated successfully');
+      toast.success('User updated successfully');
       fetchUsers();
     } catch (error) {
       console.error('Error updating user:', error);
-      alert('Error updating user: ' + (error as any).message);
+      toast.error('Error updating user: ' + (error as any).message);
     } finally {
       setIsProcessing(false);
     }
@@ -180,20 +212,29 @@ const AdminCustomers: React.FC = () => {
 
   const handleDeleteAccount = async () => {
     if (!selectedUser) return;
-    if (!window.confirm('Are you sure you want to delete this account? This action is irreversible.')) return;
     
-    setIsProcessing(true);
-    try {
-      await supabaseService.deleteUser(selectedUser.id);
-      alert('Account deleted successfully');
-      setIsEditPanelOpen(false);
-      fetchUsers();
-    } catch (error) {
-      console.error('Error deleting account:', error);
-      alert('Error deleting account: ' + (error as any).message);
-    } finally {
-      setIsProcessing(false);
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Account',
+      message: `Are you sure you want to PERMANENTLY DELETE the account for ${selectedUser.name}? This action cannot be undone and will remove all associated data.`,
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        setIsProcessing(true);
+        try {
+          await supabaseService.deleteUser(selectedUser.id);
+          toast.success('Account deleted successfully');
+          setSelectedUser(null);
+          setIsEditPanelOpen(false);
+          fetchUsers();
+        } catch (error) {
+          console.error('Error deleting account:', error);
+          toast.error('Error deleting account: ' + (error as any).message);
+        } finally {
+          setIsProcessing(false);
+        }
+      }
+    });
   };
 
   const handleEdit = (user: any) => {
@@ -203,6 +244,14 @@ const AdminCustomers: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
+      <ConfirmDialog 
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        type={confirmDialog.type}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -288,7 +337,7 @@ const AdminCustomers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
-                    {user.wallets?.master?.balance?.toFixed(2) || '0.00'} USDT
+                    {(user.wallet_balance !== undefined ? user.wallet_balance : (user.wallets?.master?.balance || 0)).toFixed(2)} USDT
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${

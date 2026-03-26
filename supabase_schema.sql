@@ -18,9 +18,15 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     active_package NUMERIC DEFAULT 0,
     package_amount NUMERIC DEFAULT 0,
     total_income NUMERIC DEFAULT 0,
+    total_deposit NUMERIC DEFAULT 0,
+    wallet_balance NUMERIC DEFAULT 0,
+    referral_income NUMERIC DEFAULT 0,
+    matching_income NUMERIC DEFAULT 0,
     status TEXT DEFAULT 'active',
     wallets JSONB DEFAULT '{
         "master": {"balance": 0, "currency": "USDT"},
+        "income": {"balance": 0, "currency": "USDT"},
+        "withdrawal": {"balance": 0, "currency": "USDT"},
         "referral": {"balance": 0, "currency": "USDT"},
         "matching": {"balance": 0, "currency": "USDT"},
         "rankBonus": {"balance": 0, "currency": "USDT"},
@@ -127,39 +133,54 @@ ALTER TABLE public.tickets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
 -- Notifications: Users can view/update own notifications
+DROP POLICY IF EXISTS "Users can view own notifications" ON public.notifications;
 CREATE POLICY "Users can view own notifications" ON public.notifications FOR SELECT USING (auth.uid()::uuid = uid);
+DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
 CREATE POLICY "Users can update own notifications" ON public.notifications FOR UPDATE USING (auth.uid()::uuid = uid);
 
 -- Profiles: Users can read their own profile, admins can read all, 
 -- and all authenticated users can view basic profile info for tree rendering.
+DROP POLICY IF EXISTS "Profiles are viewable by authenticated users" ON public.profiles;
 CREATE POLICY "Profiles are viewable by authenticated users" ON public.profiles FOR SELECT USING (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid()::uuid = id);
+DROP POLICY IF EXISTS "Admins can update all profiles" ON public.profiles;
 CREATE POLICY "Admins can update all profiles" ON public.profiles FOR UPDATE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
+DROP POLICY IF EXISTS "Admins can delete profiles" ON public.profiles;
 CREATE POLICY "Admins can delete profiles" ON public.profiles FOR DELETE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 
 -- Payments: Users can view/insert own payments
+DROP POLICY IF EXISTS "Users can view own payments" ON public.payments;
 CREATE POLICY "Users can view own payments" ON public.payments FOR SELECT USING (auth.uid()::uuid = uid);
+DROP POLICY IF EXISTS "Users can insert own payments" ON public.payments;
 CREATE POLICY "Users can insert own payments" ON public.payments FOR INSERT WITH CHECK (auth.uid()::uuid = uid);
+DROP POLICY IF EXISTS "Users can update own payments" ON public.payments;
 CREATE POLICY "Users can update own payments" ON public.payments FOR UPDATE USING (auth.uid()::uuid = uid);
+DROP POLICY IF EXISTS "Admins can view all payments" ON public.payments;
 CREATE POLICY "Admins can view all payments" ON public.payments FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
+DROP POLICY IF EXISTS "Admins can insert all payments" ON public.payments;
 CREATE POLICY "Admins can insert all payments" ON public.payments FOR INSERT WITH CHECK (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
+DROP POLICY IF EXISTS "Admins can update all payments" ON public.payments;
 CREATE POLICY "Admins can update all payments" ON public.payments FOR UPDATE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid()::uuid AND role = 'admin')
 );
 
 -- Team Collection: Users can view own nodes
+DROP POLICY IF EXISTS "Users can view own nodes" ON public.team_collection;
 CREATE POLICY "Users can view own nodes" ON public.team_collection FOR SELECT USING (auth.uid()::uuid = uid);
 
 -- Tickets: Users can view/create own tickets
+DROP POLICY IF EXISTS "Users can view own tickets" ON public.tickets;
 CREATE POLICY "Users can view own tickets" ON public.tickets FOR SELECT USING (auth.uid()::uuid = uid);
+DROP POLICY IF EXISTS "Users can create tickets" ON public.tickets;
 CREATE POLICY "Users can create tickets" ON public.tickets FOR INSERT WITH CHECK (auth.uid()::uuid = uid);
 
 -- 7. Trigger for New User
@@ -255,25 +276,25 @@ BEGIN
         SET 
             team_size = CASE 
                 WHEN should_increment_team_size THEN
-                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(team_size->>lower(current_side), '0'))::int + 1)::text::jsonb)
+                    jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(team_size->>lower(current_side), '0'))::int + 1))
                 ELSE team_size
             END,
             matching_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
+                    jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + volume_to_add))
                 ELSE matching_volume 
             END,
             cumulative_volume = CASE 
                 WHEN volume_to_add > 0 THEN 
-                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add)::text::jsonb)
-        ELSE cumulative_volume 
-    END
-WHERE id = current_parent_id::uuid;
+                    jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(current_side)], to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + volume_to_add))
+                ELSE cumulative_volume 
+            END
+        WHERE id = current_parent_id::uuid;
 
 -- Trigger matching and rank check for this parent if volume was added
 IF volume_to_add > 0 THEN
-    PERFORM public.calculate_binary_matching(current_parent_id::uuid);
-    PERFORM public.check_and_update_rank(current_parent_id::uuid);
+    PERFORM public.calculate_binary_matching(current_parent_id);
+    PERFORM public.check_and_update_rank(current_parent_id);
 END IF;
 
 -- Move up to the next parent
@@ -299,11 +320,11 @@ BEGIN
         -- Update the parent's team size (decrement)
         IF UPPER(current_side) = 'LEFT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], (GREATEST(0, (COALESCE(team_size->>'left', '0'))::int - 1))::text::jsonb)
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['left'], to_jsonb(GREATEST(0, (COALESCE(team_size->>'left', '0'))::int - 1)))
             WHERE id = current_parent_id::uuid;
         ELSIF UPPER(current_side) = 'RIGHT' THEN
             UPDATE public.profiles
-            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], (GREATEST(0, (COALESCE(team_size->>'right', '0'))::int - 1))::text::jsonb)
+            SET team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY['right'], to_jsonb(GREATEST(0, (COALESCE(team_size->>'right', '0'))::int - 1)))
             WHERE id = current_parent_id::uuid;
         END IF;
 
@@ -332,43 +353,38 @@ CREATE TRIGGER on_user_deleted_update_team_size
   AFTER DELETE ON public.profiles
   FOR EACH ROW EXECUTE FUNCTION public.update_ancestors_team_size_on_delete();
 
--- Function to rebuild all team sizes from scratch
-CREATE OR REPLACE FUNCTION public.rebuild_team_sizes()
+-- Function to rebuild all network stats from scratch
+CREATE OR REPLACE FUNCTION public.rebuild_network_stats()
 RETURNS VOID AS $$
 DECLARE
     p RECORD;
     curr_parent_id UUID;
     curr_side TEXT;
-    next_parent_id UUID;
-    next_side TEXT;
+    volume_to_add NUMERIC;
 BEGIN
-    -- Reset all counts to 0
-    UPDATE public.profiles SET team_size = '{"left": 0, "right": 0}'::jsonb;
+    -- Reset all counts and volumes to 0
+    UPDATE public.profiles SET 
+        team_size = '{"left": 0, "right": 0}'::jsonb,
+        matching_volume = '{"left": 0, "right": 0}'::jsonb,
+        cumulative_volume = '{"left": 0, "right": 0}'::jsonb;
     
-    -- For each profile, walk up its ancestors and increment the appropriate side
-    -- We only count nodes that are fully placed (have parent and side)
-    FOR p IN SELECT id, parent_id, side FROM public.profiles WHERE parent_id IS NOT NULL AND side IS NOT NULL LOOP
+    -- For each profile, walk up its ancestors and increment
+    FOR p IN SELECT id, parent_id, side, active_package FROM public.profiles WHERE parent_id IS NOT NULL AND side IS NOT NULL LOOP
         curr_parent_id := p.parent_id;
         curr_side := p.side;
+        volume_to_add := CASE WHEN p.active_package >= 50 THEN p.active_package / 50 ELSE 0 END;
         
         WHILE curr_parent_id IS NOT NULL LOOP
-            IF UPPER(curr_side) = 'LEFT' THEN
-                UPDATE public.profiles
-                SET team_size = jsonb_set(team_size, ARRAY['left'], ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb)
-                WHERE id = curr_parent_id::uuid;
-            ELSIF UPPER(curr_side) = 'RIGHT' THEN
-                UPDATE public.profiles
-                SET team_size = jsonb_set(team_size, ARRAY['right'], ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb)
-                WHERE id = curr_parent_id::uuid;
-            END IF;
-            
-            -- Move up
-            SELECT parent_id, side INTO next_parent_id, next_side
-            FROM public.profiles
+            UPDATE public.profiles
+            SET 
+                team_size = jsonb_set(COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(curr_side)], to_jsonb((COALESCE(team_size->>lower(curr_side), '0'))::int + 1)),
+                matching_volume = jsonb_set(COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(curr_side)], to_jsonb((COALESCE(matching_volume->>lower(curr_side), '0'))::numeric + volume_to_add)),
+                cumulative_volume = jsonb_set(COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), ARRAY[lower(curr_side)], to_jsonb((COALESCE(cumulative_volume->>lower(curr_side), '0'))::numeric + volume_to_add))
             WHERE id = curr_parent_id::uuid;
             
-            curr_parent_id := next_parent_id;
-            curr_side := next_side;
+            SELECT parent_id, side INTO curr_parent_id, curr_side
+            FROM public.profiles
+            WHERE id = curr_parent_id::uuid;
         END LOOP;
     END LOOP;
 END;
@@ -383,31 +399,39 @@ CREATE OR REPLACE FUNCTION public.update_user_wallet(
     p_description TEXT
 )
 RETURNS VOID AS $$
-DECLARE
-    current_wallets JSONB;
 BEGIN
-    -- Get current wallets
-    SELECT wallets INTO current_wallets FROM public.profiles WHERE id = user_id::uuid;
-    
-    -- Ensure wallet_key exists in JSONB
-    IF current_wallets IS NULL THEN
-        current_wallets := '{
-            "master": {"balance": 0, "currency": "USDT"},
-            "referral": {"balance": 0, "currency": "USDT"},
-            "matching": {"balance": 0, "currency": "USDT"},
-            "rankBonus": {"balance": 0, "currency": "USDT"},
-            "incentive": {"balance": 0, "currency": "USDT"},
-            "rewards": {"balance": 0, "currency": "USDT"}
-        }'::jsonb;
-    END IF;
+    -- Log the payment - the database trigger 'update_wallets_on_payment' will handle wallet and total_income updates
+    INSERT INTO public.payments (uid, amount, type, status, order_description, method)
+    VALUES (user_id, amount, p_type, 'finished', p_description, 'SYSTEM');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-    IF NOT (current_wallets ? wallet_key) THEN
-        current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
-    END IF;
+-- 10b. Admin Add Funds Function
+CREATE OR REPLACE FUNCTION public.admin_add_funds(
+    p_user_id UUID,
+    p_amount NUMERIC
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_new_balance NUMERIC;
+BEGIN
+    -- Log the transaction in the payments table
+    -- The trigger 'update_wallets_on_payment' will handle profiles update.
+    INSERT INTO public.payments (uid, amount, type, status, method, order_description, created_at)
+    VALUES (p_user_id, p_amount, 'admin_deposit', 'finished', 'ADMIN', 'Admin added funds', NOW());
 
-    -- Log the payment - the database trigger will handle wallet and total_income updates
-    INSERT INTO public.payments (uid, amount, type, status, order_description)
-    VALUES (user_id, amount, p_type, 'finished', p_description);
+    -- Get the updated balance for the response
+    SELECT wallet_balance INTO v_new_balance FROM public.profiles WHERE id = p_user_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'new_balance', v_new_balance
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', SQLERRM
+    );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -686,7 +710,7 @@ BEGIN
                 v_referral_bonus := (v_package_amount / 50) * 2.5; -- 5% of package
                 
                 PERFORM public.update_user_wallet(
-                    v_sponsor_id, 
+                    v_sponsor_id::uuid, 
                     'referral', 
                     v_referral_bonus, 
                     'referral_bonus', 
@@ -694,7 +718,7 @@ BEGIN
                 );
                 
                 -- Trigger rank check for sponsor
-                PERFORM public.check_and_update_rank(v_sponsor_id);
+                PERFORM public.check_and_update_rank(v_sponsor_id::uuid);
             END IF;
 
             -- 3. Volume propagation is now handled by the update_ancestors_team_size trigger 
@@ -749,7 +773,7 @@ BEGIN
             -- Update last payout date
             UPDATE public.profiles 
             SET last_incentive_payout = NOW() 
-            WHERE id = r.id;
+            WHERE id = r.id::uuid;
         END IF;
     END LOOP;
 END;
@@ -827,6 +851,38 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 15. Update Node Balances (Mining Simulation)
+CREATE OR REPLACE FUNCTION public.rebuild_team_sizes()
+RETURNS VOID AS $$
+DECLARE
+    p RECORD;
+    curr_parent_id UUID;
+    curr_side TEXT;
+BEGIN
+    -- Reset all team sizes
+    UPDATE public.profiles SET team_size = '{"left": 0, "right": 0}'::jsonb;
+
+    -- Re-calculate for every user
+    FOR p IN SELECT id, parent_id, side FROM public.profiles WHERE parent_id IS NOT NULL LOOP
+        curr_parent_id := p.parent_id;
+        curr_side := p.side;
+
+        WHILE curr_parent_id IS NOT NULL LOOP
+            UPDATE public.profiles
+            SET team_size = jsonb_set(
+                COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
+                ARRAY[lower(curr_side)], 
+                to_jsonb((COALESCE(team_size->>lower(curr_side), '0'))::int + 1)
+            )
+            WHERE id = curr_parent_id::uuid;
+
+            SELECT parent_id, side INTO curr_parent_id, curr_side
+            FROM public.profiles
+            WHERE id = curr_parent_id::uuid;
+        END LOOP;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION public.update_node_balances()
 RETURNS VOID AS $$
 BEGIN
@@ -897,12 +953,12 @@ BEGIN
                 SET matching_volume = jsonb_set(
                         COALESCE(matching_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
+                        to_jsonb((COALESCE(matching_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))
                     ),
                     cumulative_volume = jsonb_set(
                         COALESCE(cumulative_volume, '{"left": 0, "right": 0}'::jsonb), 
                         ARRAY[lower(current_side)], 
-                        ((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))::text::jsonb
+                        to_jsonb((COALESCE(cumulative_volume->>lower(current_side), '0'))::numeric + (v_package_amount / 50))
                     )
                 WHERE id = current_parent_id::uuid;
             END IF;
@@ -937,7 +993,7 @@ BEGIN
     -- Get current balance of the specific wallet
     SELECT (wallets->p_wallet_key->>'balance')::numeric INTO v_balance
     FROM public.profiles
-    WHERE id = p_user_id;
+    WHERE id = p_user_id::uuid;
 
     IF v_balance > 0 THEN
         -- Deduct from specific wallet
@@ -947,21 +1003,123 @@ BEGIN
             ARRAY[p_wallet_key, 'balance'],
             '0'::jsonb
         )
-        WHERE id = p_user_id;
+        WHERE id = p_user_id::uuid;
 
         -- Add to master wallet
         UPDATE public.profiles
         SET wallets = jsonb_set(
             wallets,
             ARRAY['master', 'balance'],
-            ((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_balance)::text::jsonb
+            to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_balance)
         )
-        WHERE id = p_user_id;
+        WHERE id = p_user_id::uuid;
 
         -- Log transaction
         INSERT INTO public.payments (uid, amount, type, status, order_description, created_at)
-        VALUES (p_user_id, v_balance, 'claim', 'finished', 'Claimed ' || p_wallet_key || ' to Master Vault', NOW());
+        VALUES (p_user_id::uuid, v_balance, 'claim', 'finished', 'Claimed ' || p_wallet_key || ' to Master Vault', NOW());
     END IF;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- RPC function to handle admin payment insertions with explicit UUID casting
+-- Drop the old version with NUMERIC amount to avoid ambiguity
+DROP FUNCTION IF EXISTS public.admin_add_payment_rpc(TEXT, NUMERIC, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT);
+
+CREATE OR REPLACE FUNCTION public.admin_add_payment_rpc(
+    p_uid TEXT, 
+    p_amount TEXT, -- Changed to TEXT for better JS compatibility
+    p_type TEXT, 
+    p_method TEXT, 
+    p_description TEXT,
+    p_status TEXT DEFAULT 'finished',
+    p_payment_id TEXT DEFAULT NULL,
+    p_currency TEXT DEFAULT 'usdtbsc',
+    p_order_id TEXT DEFAULT NULL
+)
+RETURNS JSON AS $$
+DECLARE
+    v_payment_id UUID;
+    v_numeric_amount NUMERIC;
+BEGIN
+    -- Convert amount to numeric
+    v_numeric_amount := p_amount::NUMERIC;
+
+    -- Insert the payment record
+    INSERT INTO public.payments (
+        uid, 
+        amount, 
+        type, 
+        status, 
+        method, 
+        order_description, 
+        payment_id, 
+        currency, 
+        order_id, 
+        created_at
+    )
+    VALUES (
+        p_uid::UUID, 
+        v_numeric_amount, 
+        p_type, 
+        p_status, 
+        p_method, 
+        p_description, 
+        p_payment_id, 
+        p_currency, 
+        p_order_id, 
+        NOW()
+    )
+    RETURNING id INTO v_payment_id;
+
+    -- Return success info
+    RETURN json_build_object(
+        'success', true,
+        'payment_id', v_payment_id,
+        'message', 'Payment recorded successfully'
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN json_build_object(
+        'success', false,
+        'error', SQLERRM,
+        'detail', SQLSTATE
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- RPC function to handle notification insertions with explicit UUID casting
+CREATE OR REPLACE FUNCTION public.admin_add_notification_rpc(
+    p_uid TEXT, 
+    p_title TEXT, 
+    p_message TEXT, 
+    p_type TEXT DEFAULT 'update'
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_id UUID;
+BEGIN
+    INSERT INTO public.notifications (uid, title, message, type, is_new, created_at)
+    VALUES (p_uid::uuid, p_title, p_message, p_type, true, NOW())
+    RETURNING id INTO v_id;
+    
+    RETURN jsonb_build_object('id', v_id, 'success', true);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- RPC function to handle ticket creation with explicit UUID casting
+CREATE OR REPLACE FUNCTION public.admin_create_ticket_rpc(
+    p_uid TEXT, 
+    p_subject TEXT, 
+    p_message TEXT
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_id UUID;
+BEGIN
+    INSERT INTO public.tickets (uid, subject, message, status, created_at)
+    VALUES (p_uid::uuid, p_subject, p_message, 'open', NOW())
+    RETURNING id INTO v_id;
+    
+    RETURN jsonb_build_object('id', v_id, 'success', true);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -1029,70 +1187,59 @@ CREATE POLICY "Admins can view all transactions"
 CREATE OR REPLACE FUNCTION public.update_wallets_on_payment()
 RETURNS TRIGGER AS $$
 DECLARE
-    current_wallets JSONB;
-    wallet_key TEXT;
-    new_balance NUMERIC;
+    v_amount NUMERIC;
 BEGIN
-    -- Only process if status is finished
+    -- Only process if status is finished or completed
     IF (NEW.status = 'finished' OR NEW.status = 'completed') AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND (OLD.status IS NULL OR OLD.status NOT IN ('finished', 'completed')))) THEN
-        SELECT wallets INTO current_wallets FROM public.profiles WHERE id = NEW.uid::uuid;
         
-        -- Ensure wallets is not null
-        current_wallets := COALESCE(current_wallets, '{
-            "master": {"balance": 0, "currency": "USDT"},
-            "referral": {"balance": 0, "currency": "USDT"},
-            "matching": {"balance": 0, "currency": "USDT"},
-            "rankBonus": {"balance": 0, "currency": "USDT"},
-            "incentive": {"balance": 0, "currency": "USDT"},
-            "rewards": {"balance": 0, "currency": "USDT"}
-        }'::jsonb);
+        v_amount := NEW.amount;
 
-        -- Determine which wallet to update based on payment type
-        wallet_key := CASE 
-            WHEN NEW.type IN ('referral_bonus', 'referral_income') THEN 'referral'
-            WHEN NEW.type IN ('matching_bonus', 'matching_income', 'binary_matching', 'binary_income') THEN 'matching'
-            WHEN NEW.type IN ('rank_reward', 'rank_bonus') THEN 'rankBonus'
-            WHEN NEW.type IN ('incentive_accrual', 'weekly_incentive', 'incentive_income') THEN 'incentive'
-            WHEN NEW.type IN ('team_collection', 'reward_income', 'node_income') THEN 'rewards'
-            WHEN NEW.type = 'deposit' THEN 'master'
-            WHEN NEW.type = 'withdrawal' THEN 'master'
-            WHEN NEW.type = 'package_activation' THEN 'master'
-            ELSE 'master'
-        END;
-
-        -- Ensure the specific wallet exists in the JSONB
-        IF NOT (current_wallets ? wallet_key) THEN
-            current_wallets := jsonb_set(current_wallets, ARRAY[wallet_key], '{"balance": 0, "currency": "USDT"}'::jsonb);
-        END IF;
-
-        -- Update the specific wallet and the master wallet (except for deposits/withdrawals which are already master)
-        IF wallet_key != 'master' THEN
-            UPDATE public.profiles
-            SET wallets = jsonb_set(
-                    jsonb_set(current_wallets, ARRAY[wallet_key, 'balance'], ((COALESCE(current_wallets->wallet_key->>'balance', '0'))::numeric + NEW.amount)::text::jsonb),
-                    ARRAY['master', 'balance'], ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)::text::jsonb
-                ),
-                total_income = COALESCE(total_income, 0) + CASE WHEN NEW.amount > 0 THEN NEW.amount ELSE 0 END
+        -- Update flat columns and JSONB wallets
+        IF NEW.type IN ('referral_bonus', 'referral_income') THEN
+            UPDATE public.profiles 
+            SET referral_income = COALESCE(referral_income, 0) + v_amount,
+                total_income = COALESCE(total_income, 0) + v_amount,
+                wallet_balance = COALESCE(wallet_balance, 0) + v_amount,
+                wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{referral, balance}', to_jsonb((COALESCE(wallets->'referral'->>'balance', '0'))::numeric + v_amount))
             WHERE id = NEW.uid::uuid;
-
-            -- Log to transactions table
-            INSERT INTO public.transactions (uid, amount, type, description)
-            VALUES (NEW.uid::uuid, NEW.amount, wallet_key, NEW.order_description || ' (' || NEW.type || ')');
+        ELSIF NEW.type IN ('matching_bonus', 'matching_income', 'binary_matching', 'binary_income') THEN
+            UPDATE public.profiles 
+            SET matching_income = COALESCE(matching_income, 0) + v_amount,
+                total_income = COALESCE(total_income, 0) + v_amount,
+                wallet_balance = COALESCE(wallet_balance, 0) + v_amount,
+                wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{matching, balance}', to_jsonb((COALESCE(wallets->'matching'->>'balance', '0'))::numeric + v_amount))
+            WHERE id = NEW.uid::uuid;
+        ELSIF NEW.type = 'deposit' OR NEW.type = 'admin_deposit' THEN
+            UPDATE public.profiles 
+            SET wallet_balance = COALESCE(wallet_balance, 0) + v_amount,
+                total_deposit = CASE WHEN NEW.type = 'deposit' THEN COALESCE(total_deposit, 0) + v_amount ELSE total_deposit END,
+                total_income = CASE WHEN NEW.type = 'admin_deposit' THEN COALESCE(total_income, 0) + v_amount ELSE total_income END,
+                wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{master, balance}', to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_amount))
+            WHERE id = NEW.uid::uuid;
+        ELSIF NEW.type = 'withdrawal' THEN
+            UPDATE public.profiles 
+            SET wallet_balance = COALESCE(wallet_balance, 0) - v_amount,
+                wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{master, balance}', to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric - v_amount))
+            WHERE id = NEW.uid::uuid;
+        ELSIF NEW.type = 'package_activation' THEN
+            IF NEW.method = 'WALLET' THEN
+                UPDATE public.profiles 
+                SET wallet_balance = COALESCE(wallet_balance, 0) - v_amount,
+                    wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{master, balance}', to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric - v_amount))
+                WHERE id = NEW.uid::uuid;
+            END IF;
         ELSE
-            -- Handle master wallet updates (deposits, withdrawals, package activations)
-            new_balance := CASE 
-                WHEN NEW.type = 'withdrawal' OR (NEW.type = 'package_activation' AND NEW.method = 'WALLET') THEN 
-                    ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric - NEW.amount)
-                WHEN NEW.type = 'deposit' THEN
-                    ((COALESCE(current_wallets->'master'->>'balance', '0'))::numeric + NEW.amount)
-                ELSE 
-                    (COALESCE(current_wallets->'master'->>'balance', '0'))::numeric
-            END;
-
-            UPDATE public.profiles
-            SET wallets = jsonb_set(current_wallets, ARRAY['master', 'balance'], new_balance::text::jsonb)
+            -- Default for other income types (rank_bonus, incentive_accrual, etc.)
+            UPDATE public.profiles 
+            SET total_income = COALESCE(total_income, 0) + v_amount,
+                wallet_balance = COALESCE(wallet_balance, 0) + v_amount,
+                wallets = jsonb_set(COALESCE(wallets, '{}'::jsonb), '{master, balance}', to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_amount))
             WHERE id = NEW.uid::uuid;
         END IF;
+
+        -- Log to transactions table for ALL successful payments
+        INSERT INTO public.transactions (uid, amount, type, description)
+        VALUES (NEW.uid::uuid, NEW.amount, NEW.type, COALESCE(NEW.order_description, NEW.type));
     END IF;
     RETURN NEW;
 END;
@@ -1111,7 +1258,7 @@ BEGIN
     -- Loop through profiles (all or specific user)
     FOR profile_record IN 
         SELECT id FROM public.profiles 
-        WHERE (user_id IS NULL OR id = user_id)
+        WHERE (user_id IS NULL OR id = user_id::uuid)
     LOOP
         -- Initialize empty wallets
         new_wallets := '{
@@ -1127,7 +1274,7 @@ BEGIN
         -- Process all finished payments for this user
         FOR payment_record IN 
             SELECT amount, type FROM public.payments 
-            WHERE uid = profile_record.id AND (status = 'finished' OR status = 'completed')
+            WHERE uid = profile_record.id::uuid AND (status = 'finished' OR status = 'completed')
             ORDER BY created_at ASC
         LOOP
             -- Determine wallet key
@@ -1146,14 +1293,14 @@ BEGIN
             -- Update wallets
             IF wallet_key = 'master' THEN
                 IF payment_record.type = 'withdrawal' OR (payment_record.type = 'package_activation') THEN
-                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric - payment_record.amount)::text::jsonb);
+                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], to_jsonb((new_wallets->'master'->>'balance')::numeric - payment_record.amount));
                 ELSE
-                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric + payment_record.amount)::text::jsonb);
+                    new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], to_jsonb((new_wallets->'master'->>'balance')::numeric + payment_record.amount));
                 END IF;
             ELSE
                 -- Add to sub-wallet AND master wallet (as per current schema logic where income goes to both)
-                new_wallets := jsonb_set(new_wallets, ARRAY[wallet_key, 'balance'], ((new_wallets->wallet_key->>'balance')::numeric + payment_record.amount)::text::jsonb);
-                new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], ((new_wallets->'master'->>'balance')::numeric + payment_record.amount)::text::jsonb);
+                new_wallets := jsonb_set(new_wallets, ARRAY[wallet_key, 'balance'], to_jsonb((new_wallets->wallet_key->>'balance')::numeric + payment_record.amount));
+                new_wallets := jsonb_set(new_wallets, ARRAY['master', 'balance'], to_jsonb((new_wallets->'master'->>'balance')::numeric + payment_record.amount));
                 
                 -- Add to total income
                 IF payment_record.amount > 0 THEN
@@ -1166,7 +1313,7 @@ BEGIN
         UPDATE public.profiles 
         SET wallets = new_wallets,
             total_income = new_total_income
-        WHERE id = profile_record.id;
+        WHERE id = profile_record.id::uuid;
     END LOOP;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

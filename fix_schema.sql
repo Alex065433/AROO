@@ -23,7 +23,7 @@ BEGIN
             SET team_size = jsonb_set(
                     COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
                     '{left}', 
-                    ((COALESCE(team_size->>'left', '0'))::int + 1)::text::jsonb
+                    to_jsonb((COALESCE(team_size->>'left', '0'))::int + 1)
                 )
             WHERE id = current_parent_id::uuid;
         ELSIF current_side = 'RIGHT' THEN
@@ -31,7 +31,7 @@ BEGIN
             SET team_size = jsonb_set(
                     COALESCE(team_size, '{"left": 0, "right": 0}'::jsonb), 
                     '{right}', 
-                    ((COALESCE(team_size->>'right', '0'))::int + 1)::text::jsonb
+                    to_jsonb((COALESCE(team_size->>'right', '0'))::int + 1)
                 )
             WHERE id = current_parent_id::uuid;
         END IF;
