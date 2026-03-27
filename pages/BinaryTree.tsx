@@ -10,6 +10,7 @@ import {
   ArrowLeft, AlertCircle,
   CheckCircle2, Users, Search, ArrowUpCircle
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
 import { User as UserProfile } from '../types';
@@ -412,7 +413,7 @@ const BinaryTree: React.FC = () => {
                               <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Destination Address (BEP20)</p>
                               <div className="flex items-center gap-4">
                                  <p className="flex-1 font-mono text-xs text-white break-all">{paymentData.pay_address}</p>
-                                 <button onClick={() => { navigator.clipboard.writeText(paymentData.pay_address); alert('Address copied'); }} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all">
+                                 <button onClick={() => { navigator.clipboard.writeText(paymentData.pay_address); toast.success('Address copied to clipboard'); }} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all">
                                     <Copy size={16} />
                                  </button>
                               </div>

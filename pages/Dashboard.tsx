@@ -183,20 +183,25 @@ const Dashboard: React.FC = () => {
 
       // 3. Handle profile data
       if (profileResponse) {
-        setUserData(profileResponse);
-        // Use flat columns if available, fallback to JSONB
-        const masterBalance = profileResponse.wallet_balance !== undefined ? profileResponse.wallet_balance : (profileResponse.wallets?.master?.balance || 0);
-        const referralBalance = profileResponse.referral_income !== undefined ? profileResponse.referral_income : (profileResponse.wallets?.referral?.balance || 0);
-        const matchingBalance = profileResponse.matching_income !== undefined ? profileResponse.matching_income : (profileResponse.wallets?.matching?.balance || 0);
-        
-        setUserWallets({ 
-          ...MOCK_USER.wallets, 
-          master: { balance: masterBalance, currency: 'USDT' },
-          referral: { balance: referralBalance, currency: 'USDT' },
-          matching: { balance: matchingBalance, currency: 'USDT' }
-        });
-      }
+  setUserData(profileResponse);
 
+  const masterBalance =
+    profileResponse.wallet_balance ??
+    profileResponse.deposit_wallet ??
+    (profileResponse.wallets?.master?.balance || 0);
+
+  const referralBalance =
+    profileResponse.wallets?.referral?.balance || 0;
+
+  const matchingBalance =
+    profileResponse.wallets?.matching?.balance || 0;
+
+  setUserWallets({
+    master: { balance: Number(masterBalance), currency: 'USDT' },
+    referral: { balance: Number(referralBalance), currency: 'USDT' },
+    matching: { balance: Number(matchingBalance), currency: 'USDT' },
+  });
+}
       // 4. Handle transactions
       console.log("USER ID:", userId);
       console.log("INCOME TRANSACTIONS:", transactionsData);
@@ -235,10 +240,39 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchAllData();
 
+    // Subscribe to real-time profile updates
+    let profileUnsubscribe: (() => void) | undefined;
+    let isMounted = true;
+    
+    const setupSubscription = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && isMounted) {
+        profileUnsubscribe = supabaseService.subscribeToProfile(user.id, (updatedProfile) => {
+          console.log('Real-time profile update received in Dashboard:', updatedProfile);
+          if (updatedProfile && isMounted) {
+            setUserData(updatedProfile);
+            // Use nullish coalescing for better robustness
+            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
+            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
+            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
+            
+            setUserWallets({ 
+              ...MOCK_USER.wallets, 
+              master: { balance: Number(masterBalance), currency: 'USDT' },
+              referral: { balance: Number(referralBalance), currency: 'USDT' },
+              matching: { balance: Number(matchingBalance), currency: 'USDT' }
+            });
+          }
+        });
+      }
+    };
+
+    setupSubscription();
+
     const checkAdminStatus = async () => {
       try {
         const response = await fetch('/api/health');
-        if (response.ok) {
+        if (response.ok && isMounted) {
           const data = await response.json();
           setAdminStatus(data);
         }
@@ -249,10 +283,10 @@ const Dashboard: React.FC = () => {
     checkAdminStatus();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
+      if (session?.user && isMounted) {
         try {
           const profile = await supabaseService.getUserProfile(session.user.id);
-          if (profile) {
+          if (profile && isMounted) {
             setUserData(profile);
             setUserWallets(profile.wallets || MOCK_USER.wallets);
           }
@@ -268,7 +302,7 @@ const Dashboard: React.FC = () => {
         const response = await fetch('/api/rates/binance');
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          if (Array.isArray(errorData)) {
+          if (Array.isArray(errorData) && isMounted) {
             const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
             setBinanceRates(filtered);
             return;
@@ -276,7 +310,7 @@ const Dashboard: React.FC = () => {
           throw new Error(`Server responded with ${response.status}`);
         }
         const data = await response.json();
-        if (Array.isArray(data)) {
+        if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
           setBinanceRates(filtered);
         }
@@ -289,8 +323,10 @@ const Dashboard: React.FC = () => {
     const interval = setInterval(fetchRates, 10000);
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
       clearInterval(interval);
+      if (profileUnsubscribe) profileUnsubscribe();
     };
   }, [navigate]);
 

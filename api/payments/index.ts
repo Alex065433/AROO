@@ -111,20 +111,39 @@ app.post("/api/admin/add-funds", async (req, res) => {
     }
     
     // Use the new admin_add_funds RPC for strict type safety and correct logic
+    console.log(`Calling admin_add_funds for ${uid} with amount ${numericAmount}`);
+    
     const { data, error } = await supabase.rpc('admin_add_funds', {
-      p_user_id: uid,
-      p_amount: numericAmount
+      p_uid: uid,
+      p_amount: amount.toString()
     });
 
     if (error) {
-      console.error('Supabase RPC Error (admin_add_payment_rpc):', JSON.stringify(error, null, 2));
-      return res.status(500).json({ error: error.message || "Database error", details: error });
+      console.error('Supabase RPC Error (admin_add_funds):', error);
+      return res.status(500).json({ 
+        error: error.message || "Database error", 
+        details: error,
+        success: false 
+      });
+    }
+
+    console.log('RPC Response:', data);
+    
+    if (data && data.success === false) {
+      console.error('RPC Business Logic Error:', data.error);
+      return res.status(400).json({ 
+        error: data.error || "Fund addition failed", 
+        success: false 
+      });
     }
 
     res.json({ success: true, data });
   } catch (error: any) {
-    console.error('Error in add-funds API:', JSON.stringify(error, null, 2));
-    res.status(500).json({ error: error.message || "Failed to add funds", details: error });
+    console.error('Error in add-funds API:', error);
+    res.status(500).json({ 
+      error: error.message || "Failed to add funds", 
+      details: error?.message || String(error) 
+    });
   }
 });
 
@@ -157,9 +176,11 @@ app.post("/api/admin/activate-package", async (req, res) => {
     
     // 1. Use RPC to handle explicit UUID casting for the uid column
     // This will trigger the process_package_activation and update_wallets_on_payment functions
+    console.log(`Calling admin_add_payment_rpc for ${uid} with amount ${numericAmount}`);
+    
     const { data, error } = await supabase.rpc('admin_add_payment_rpc', {
       p_uid: uid,
-      p_amount: numericAmount,
+      p_amount: numericAmount.toString(),
       p_type: 'package_activation',
       p_method: isFree ? 'FREE' : 'WALLET',
       p_description: `Package Activation: $${numericAmount}${isFree ? ' (FREE)' : ''}`,
@@ -170,14 +191,31 @@ app.post("/api/admin/activate-package", async (req, res) => {
     });
 
     if (error) {
-      console.error('Supabase RPC Error (admin_add_payment_rpc):', JSON.stringify(error, null, 2));
-      return res.status(500).json({ error: error.message || "Database error", details: error });
+      console.error('Supabase RPC Error (admin_add_payment_rpc):', error);
+      return res.status(500).json({ 
+        error: error.message || "Database error", 
+        details: error,
+        success: false 
+      });
+    }
+
+    console.log('RPC Response:', data);
+    
+    if (data && data.success === false) {
+      console.error('RPC Business Logic Error:', data.error);
+      return res.status(400).json({ 
+        error: data.error || "Activation failed", 
+        success: false 
+      });
     }
 
     res.json({ success: true, data });
   } catch (error: any) {
-    console.error('Error in activate-package API:', JSON.stringify(error, null, 2));
-    res.status(500).json({ error: error.message || "Failed to activate package", details: error });
+    console.error('Error in activate-package API:', error);
+    res.status(500).json({ 
+      error: error.message || "Failed to activate package", 
+      details: error?.message || String(error) 
+    });
   }
 });
 
@@ -318,23 +356,34 @@ app.post("/api/payments/create", async (req, res) => {
         // Ensure amount is a number
         const numericAmount = parseFloat(amount.toString());
         
-        // Use RPC to handle explicit UUID casting for the uid column
-        const { error: dbError } = await supabase.rpc('admin_add_payment_rpc', {
-          p_uid: uid,
-          p_amount: numericAmount,
-          p_type: 'deposit',
-          p_method: 'CRYPTO',
-          p_description: orderDescription || 'Crypto Deposit',
-          p_status: 'waiting',
-          p_payment_id: response.data.payment_id,
-          p_currency: currency || "usdtbsc",
-          p_order_id: orderId || ''
-        });
-        
-        if (dbError) {
-          console.error("Supabase Payment Store Error:", dbError.message);
+        // Check if payment_id already exists to avoid unique constraint violation
+        const { data: existingPayment } = await supabase
+          .from('payments')
+          .select('id')
+          .eq('payment_id', response.data.payment_id)
+          .single();
+
+        if (existingPayment) {
+          console.warn(`Payment ${response.data.payment_id} already exists. Skipping storage.`);
         } else {
-          console.log("Payment stored in Supabase successfully");
+          // Use RPC to handle explicit UUID casting for the uid column
+          const { error: dbError } = await supabase.rpc('admin_add_payment_rpc', {
+            p_uid: uid,
+            p_amount: numericAmount,
+            p_type: 'deposit',
+            p_method: 'CRYPTO',
+            p_description: orderDescription || 'Crypto Deposit',
+            p_status: 'waiting',
+            p_payment_id: response.data.payment_id,
+            p_currency: currency || "usdtbsc",
+            p_order_id: orderId || ''
+          });
+          
+          if (dbError) {
+            console.error("Supabase Payment Store Error:", dbError.message);
+          } else {
+            console.log("Payment stored in Supabase successfully");
+          }
         }
       } catch (err) {
         console.error("Failed to store payment in Supabase:", err);

@@ -31,36 +31,69 @@ const MasterWallet: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let profileUnsubscribe: (() => void) | undefined;
+    let isMounted = true;
+
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user) {
+      if (user && isMounted) {
         try {
           const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (profile) {
+          if (profile && isMounted) {
             setUserProfile(profile);
-            // Use flat columns if available, fallback to JSONB
-            const masterBalance = profile.wallet_balance !== undefined ? profile.wallet_balance : (profile.wallets?.master?.balance || 0);
-            const referralBalance = profile.referral_income !== undefined ? profile.referral_income : (profile.wallets?.referral?.balance || 0);
-            const matchingBalance = profile.matching_income !== undefined ? profile.matching_income : (profile.wallets?.matching?.balance || 0);
+            // Use flat columns as the source of truth
+            const masterBalance = profile.wallet_balance ?? profile.deposit_wallet ?? (profile.wallets?.master?.balance || 0);
+            const referralBalance = profile.wallets?.referral?.balance || 0;
+            const matchingBalance = profile.wallets?.matching?.balance || 0;
             
             setUserWallets({ 
               ...MOCK_USER.wallets, 
-              master: { balance: masterBalance, currency: 'USDT' },
-              referral: { balance: referralBalance, currency: 'USDT' },
-              matching: { balance: matchingBalance, currency: 'USDT' }
+              master: { balance: Number(masterBalance), currency: 'USDT' },
+              referral: { balance: Number(referralBalance), currency: 'USDT' },
+              matching: { balance: Number(matchingBalance), currency: 'USDT' }
             });
           }
 
           // Fetch real transactions
           const payments = await supabaseService.getTransactions(user.id || user.uid);
-          setTransactions(payments);
-          setIsLoadingTransactions(false);
+          if (isMounted) {
+            setTransactions(payments);
+            setIsLoadingTransactions(false);
+          }
+
+          // Subscribe to real-time profile updates
+          if (profileUnsubscribe) profileUnsubscribe();
+          profileUnsubscribe = supabaseService.subscribeToProfile(user.id || user.uid, (updatedProfile) => {
+            console.log('Real-time profile update received in MasterWallet:', updatedProfile);
+            if (updatedProfile && isMounted) {
+              setUserProfile(updatedProfile);
+              const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
+              const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
+              const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
+              
+              setUserWallets({ 
+                ...MOCK_USER.wallets, 
+                master: { balance: Number(masterBalance), currency: 'USDT' },
+                referral: { balance: Number(referralBalance), currency: 'USDT' },
+                matching: { balance: Number(matchingBalance), currency: 'USDT' }
+              });
+
+              // Re-fetch transactions when profile updates (to show the new fund addition)
+              supabaseService.getTransactions(user.id || user.uid).then(newTx => {
+                if (isMounted) setTransactions(newTx);
+              });
+            }
+          });
         } catch (err) {
           console.error('Error fetching profile or transactions:', err);
-          setIsLoadingTransactions(false);
+          if (isMounted) setIsLoadingTransactions(false);
         }
       }
     });
-    return () => unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      if (profileUnsubscribe) profileUnsubscribe();
+    };
   }, []);
 
   const coins = {
@@ -172,35 +205,46 @@ const MasterWallet: React.FC = () => {
     }
 
     if (activeTab === 'package') {
-      // The database trigger 'update_wallets_on_payment' handles the deduction 
-      // from the master wallet automatically when a 'package_activation' payment 
-      // with method 'WALLET' is created.
+      // The database RPC 'activate_package' handles the balance check and deduction 
+      // from the master wallet automatically.
       try {
         const user = supabaseService.getCurrentUser();
         if (user) {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
           const cost = Number(amountToUse);
-          if (profile.wallets.master.balance < cost) {
-            setError('Insufficient balance');
-            return;
-          }
           
           // Call activatePackage which handles logging, team nodes, active_package field, and MLM income
           // It will also trigger the wallet deduction in the DB
+          setIsProcessing(true);
           await supabaseService.activatePackage(user.id || user.uid, cost);
           
-          // Refresh local state after a short delay to allow triggers to finish
-          setTimeout(async () => {
-            const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-            if (updatedProfile) {
-              setUserProfile(updatedProfile);
-              setUserWallets({ ...MOCK_USER.wallets, ...(updatedProfile.wallets || {}) });
-            }
-          }, 1000);
+          // Refresh local state immediately after success
+          const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          if (updatedProfile) {
+            setUserProfile(updatedProfile);
+            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
+            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
+            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
+            
+            setUserWallets({ 
+              ...MOCK_USER.wallets, 
+              master: { balance: Number(masterBalance), currency: 'USDT' },
+              referral: { balance: Number(referralBalance), currency: 'USDT' },
+              matching: { balance: Number(matchingBalance), currency: 'USDT' }
+            });
+          }
+          
+          setSuccess(true);
+          setTimeout(() => {
+            setSuccess(false);
+            setActiveTab(null);
+            setExchangeAmount('');
+          }, 2500);
+          return;
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error activating package:', err);
-        setError('Activation failed. Please try again.');
+        setError(err.message || 'Activation failed. Please try again.');
+        setIsProcessing(false);
         return;
       }
     }
@@ -281,13 +325,9 @@ const MasterWallet: React.FC = () => {
                               </div>
                               <button 
                                 onClick={() => {
-                                  if (userWallets.master.balance < pkg.price) {
-                                    setError(`Insufficient balance. Need ${pkg.price} USDT`);
-                                  } else {
-                                    const amountStr = pkg.price.toString();
-                                    setExchangeAmount(amountStr);
-                                    handleAction(amountStr);
-                                  }
+                                  const amountStr = pkg.price.toString();
+                                  setExchangeAmount(amountStr);
+                                  handleAction(amountStr);
                                 }}
                                 className="px-6 py-3 bg-white/5 group-hover:bg-orange-600 text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white rounded-xl transition-all"
                               >

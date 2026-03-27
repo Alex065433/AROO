@@ -8,6 +8,7 @@ import {
   ShieldCheck, AlertCircle, Fingerprint, Globe,
   ShieldAlert, X, ArrowRight, RefreshCw, CheckCircle2
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const Profile: React.FC = () => {
   const [userData, setUserData] = useState({
@@ -159,7 +160,7 @@ const Profile: React.FC = () => {
       setIsVerifying(false);
       setShowVerification(false);
       setOtp(['', '', '', '', '', '']);
-      alert('Identity synchronized and verified via secure email protocol.');
+      toast.success('Identity synchronized and verified via secure email protocol.');
     }, 1500);
   };
 

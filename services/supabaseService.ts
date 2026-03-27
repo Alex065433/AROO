@@ -360,6 +360,29 @@ export const supabaseService = {
     return () => subscription.unsubscribe();
   },
 
+  subscribeToProfile(uid: string, callback: (profile: any) => void) {
+    const channel = supabase
+      .channel(`profile:${uid}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${uid}`,
+        },
+        (payload) => {
+          console.log('Profile updated in real-time:', payload.new);
+          callback(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  },
+
   getCurrentUser() {
     const localUser = localStorage.getItem('arowin_supabase_user');
     return localUser ? JSON.parse(localUser) : null;
@@ -390,41 +413,52 @@ export const supabaseService = {
   },
 
   // Package Activation
-  async activatePackage(uid: string, amount: number, options: { adminId?: string, isFree?: boolean } = {}) {
+  /**
+   * Activates a package for a user by calling the Supabase RPC directly.
+   * This bypasses frontend balance checks and relies on the backend as the source of truth.
+   */
+  async activatePackage(uid: string, amount: number, options: { isFree?: boolean } = {}) {
     const { isFree } = options;
+    const finalAmount = isFree ? 0 : amount;
 
     try {
-      const response = await fetch('/api/admin/activate-package', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ uid, packageAmount: amount, isFree }),
+      const { data, error } = await supabase.rpc('activate_package', {
+        p_user_id: uid,
+        p_amount: finalAmount
       });
 
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to activate package');
-
-      // Add Notification
-      const pkg = PACKAGES.find(p => p.price === amount);
-      await this.addNotification(uid, 'Package Activated', `Your ${pkg?.name || 'Package'} has been activated successfully.`, 'reward');
+      if (error) throw error;
       
-      return true;
-    } catch (error) {
-      console.error('Error in activatePackage:', error);
+      if (data && data.success === false) {
+        throw new Error(data.error || 'Failed to activate package');
+      }
+
+      return data;
+    } catch (error: any) {
+      console.error('Error in activatePackage RPC:', error);
       throw error;
     }
   },
 
   async addFunds(uid: string, amount: number) {
     try {
-      const { data, error } = await supabase.rpc('admin_add_funds', {
-        p_user_id: uid,
-        p_amount: amount
+      const response = await fetch('/api/admin/add-funds', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ uid, amount }),
       });
 
-      if (error) throw error;
-      if (data && !data.success) throw new Error(data.error);
+      let result;
+      const responseText = await response.text();
+      try {
+        result = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error(`Server returned an invalid response: ${responseText.substring(0, 100)}...`);
+      }
+
+      if (!response.ok) throw new Error(result.error || 'Failed to add funds');
       
       return true;
     } catch (error) {
@@ -457,7 +491,7 @@ export const supabaseService = {
     if (!user) throw new Error('Not authenticated');
 
     const { error } = await supabase.rpc('claim_wallet', {
-      p_user_id: user.id,
+      p_uid: user.id,
       p_wallet_key: walletKey
     });
 
@@ -475,7 +509,7 @@ export const supabaseService = {
       if (rankData && rankData.weeklyEarning > 0) {
         await supabase.rpc('admin_add_payment_rpc', {
           p_uid: user.id,
-          p_amount: rankData.weeklyEarning,
+          p_amount: rankData.weeklyEarning.toString(),
           p_type: 'rank_bonus',
           p_method: 'INTERNAL',
           p_description: `Weekly Rank Bonus: ${rankData.name}`,
@@ -529,7 +563,7 @@ export const supabaseService = {
     // Use RPC to handle explicit UUID casting for the uid column
     await supabase.rpc('admin_add_payment_rpc', {
       p_uid: uid,
-      p_amount: totalCollected,
+      p_amount: totalCollected.toString(),
       p_type: 'team_collection',
       p_method: 'INTERNAL',
       p_description: `Consolidated collection from ${nodeIds.length} nodes`,
@@ -723,10 +757,9 @@ export const supabaseService = {
     }
     
     // Log transaction via payments table - the database trigger will handle wallet and total_income updates
-    // Use RPC to handle explicit UUID casting for the uid column
     const { error: paymentError } = await supabase.rpc('admin_add_payment_rpc', {
       p_uid: uid,
-      p_amount: payableAmount,
+      p_amount: payableAmount.toString(),
       p_type: type, // Use aligned types: referral_bonus, matching_bonus, rank_reward, incentive_accrual, team_collection
       p_method: 'INTERNAL',
       p_description: `Income: ${type.replace('_', ' ').toUpperCase()}`,

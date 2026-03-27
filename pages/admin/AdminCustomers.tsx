@@ -51,8 +51,10 @@ const AdminCustomers: React.FC = () => {
     try {
       const data = await supabaseService.getAllUsers();
       setUsers(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching users:', error);
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -117,7 +119,11 @@ const AdminCustomers: React.FC = () => {
       await supabaseService.addFunds(selectedUser.id, parseFloat(fundAmount));
       toast.success('Funds added successfully');
       setFundAmount('');
-      fetchUsers();
+      const updatedUsers = await fetchUsers();
+      if (updatedUsers && selectedUser) {
+        const updated = updatedUsers.find((u: any) => u.id === selectedUser.id);
+        if (updated) setSelectedUser(updated);
+      }
     } catch (error) {
       console.error('Error adding funds:', error);
       toast.error('Error adding funds: ' + (error as any).message);
@@ -130,12 +136,7 @@ const AdminCustomers: React.FC = () => {
     if (!selectedUser) return;
     
     const amount = parseFloat(selectedPackage);
-    const balance = Number(selectedUser.wallets?.master?.balance || 0);
-    
-    if (balance < amount) {
-      toast.error(`Insufficient balance! User has $${balance.toFixed(2)}, but package costs $${amount}.`);
-      return;
-    }
+    const balance = Number(selectedUser.wallet_balance ?? selectedUser.deposit_wallet ?? selectedUser.wallets?.master?.balance ?? 0);
     
     setConfirmDialog({
       isOpen: true,
@@ -148,7 +149,11 @@ const AdminCustomers: React.FC = () => {
         try {
           await supabaseService.activatePackage(selectedUser.id, amount);
           toast.success('Package activated successfully');
-          fetchUsers();
+          const updatedUsers = await fetchUsers();
+          if (updatedUsers && selectedUser) {
+            const updated = updatedUsers.find((u: any) => u.id === selectedUser.id);
+            if (updated) setSelectedUser(updated);
+          }
           setIsEditPanelOpen(false);
         } catch (error) {
           console.error('Error activating package:', error);
@@ -337,7 +342,7 @@ const AdminCustomers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
-                    {(user.wallet_balance !== undefined ? user.wallet_balance : (user.wallets?.master?.balance || 0)).toFixed(2)} USDT
+                    {(user.wallet_balance ?? user.deposit_wallet ?? user.wallets?.master?.balance ?? 0).toFixed(2)} USDT
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -654,19 +659,26 @@ const AdminCustomers: React.FC = () => {
                           <button 
                             onClick={async () => {
                               if (!selectedUser) return;
-                              if (confirm(`Are you sure you want to activate user ${selectedUser.name} for FREE?`)) {
-                                setIsProcessing(true);
-                                try {
-                                  await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), { isFree: true });
-                                  alert('User activated successfully!');
-                                  fetchUsers();
-                                  setIsEditPanelOpen(false);
-                                } catch (err) {
-                                  alert('Activation failed');
-                                } finally {
-                                  setIsProcessing(false);
+                              setConfirmDialog({
+                                isOpen: true,
+                                title: 'Free Activation',
+                                message: `Are you sure you want to activate user ${selectedUser.name} for FREE?`,
+                                type: 'warning',
+                                onConfirm: async () => {
+                                  setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+                                  setIsProcessing(true);
+                                  try {
+                                    await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), { isFree: true });
+                                    toast.success('User activated successfully!');
+                                    fetchUsers();
+                                    setIsEditPanelOpen(false);
+                                  } catch (err) {
+                                    toast.error('Activation failed');
+                                  } finally {
+                                    setIsProcessing(false);
+                                  }
                                 }
-                              }
+                              });
                             }}
                             disabled={isProcessing}
                             className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all disabled:opacity-50"

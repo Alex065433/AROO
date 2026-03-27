@@ -83,13 +83,23 @@ CREATE TABLE IF NOT EXISTS public.team_collection (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. Support Tickets
+-- 5. Support Tickets
 CREATE TABLE IF NOT EXISTS public.tickets (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     uid UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
     subject TEXT NOT NULL,
     message TEXT NOT NULL,
     status TEXT DEFAULT 'open',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5.5 Transactions Table (Financial Log)
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    uid UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    amount NUMERIC NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -408,32 +418,27 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- 10b. Admin Add Funds Function
 CREATE OR REPLACE FUNCTION public.admin_add_funds(
-    p_user_id UUID,
-    p_amount NUMERIC
+    p_uid TEXT,
+    p_amount TEXT
 )
 RETURNS JSONB AS $$
-DECLARE
-    v_new_balance NUMERIC;
 BEGIN
-    -- Log the transaction in the payments table
-    -- The trigger 'update_wallets_on_payment' will handle profiles update.
-    INSERT INTO public.payments (uid, amount, type, status, method, order_description, created_at)
-    VALUES (p_user_id, p_amount, 'admin_deposit', 'finished', 'ADMIN', 'Admin added funds', NOW());
-
-    -- Get the updated balance for the response
-    SELECT wallet_balance INTO v_new_balance FROM public.profiles WHERE id = p_user_id;
-
-    RETURN jsonb_build_object(
-        'success', true,
-        'new_balance', v_new_balance
-    );
-EXCEPTION WHEN OTHERS THEN
-    RETURN jsonb_build_object(
-        'success', false,
-        'error', SQLERRM
+    RETURN public.admin_add_payment_rpc(
+        p_uid,
+        p_amount,
+        'deposit',
+        'ADMIN',
+        'Funds added by administrator',
+        'finished',
+        'ADMIN_CREDIT',
+        'usdtbsc',
+        'Admin Credit'
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.admin_add_funds(TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_add_funds(TEXT, TEXT) TO service_role;
 
 -- 11. Binary Income Logic: Volume and Matching
 CREATE OR REPLACE FUNCTION public.calculate_binary_matching(user_id UUID)
