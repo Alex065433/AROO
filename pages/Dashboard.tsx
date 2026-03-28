@@ -190,11 +190,16 @@ const Dashboard: React.FC = () => {
         const masterBalance = Number(profile.wallet_balance ?? 0);
         const referralBalance = Number(profile.referral_income ?? 0);
         const matchingBalance = Number(profile.matching_income ?? 0);
+        const rankBalance = Number(profile.rank_income ?? 0);
+        const incentiveBalance = Number(profile.incentive_income ?? 0);
         const binaryBalance = Number(profile.wallet ?? 0); // Map wallet to binary
+        
         setUserWallets({
           master: { balance: Number(masterBalance), currency: 'USDT' },
           referral: { balance: Number(referralBalance), currency: 'USDT' },
           matching: { balance: Number(matchingBalance), currency: 'USDT' },
+          rewards: { balance: Number(rankBalance), currency: 'USDT' },
+          incentive: { balance: Number(incentiveBalance), currency: 'USDT' },
           binary: { balance: Number(binaryBalance), currency: 'USDT' },
         });
       }
@@ -951,9 +956,8 @@ const Dashboard: React.FC = () => {
       <div className="max-w-4xl mx-auto px-4 space-y-6">
         {[
           { key: 'referral', label: 'DIRECT REFERRAL YIELD' },
-          { key: 'matching', label: 'BINARY MATCHING DIVIDEND' },
           { key: 'capping', label: 'CAPPING INCOME' },
-          { key: 'rankBonus', label: 'RANK PROTOCOL BONUS' },
+          { key: 'rewards', label: 'RANK PROTOCOL BONUS' },
           { key: 'incentive', label: 'INCENTIVE POOL ACCRUAL' }
         ].map(item => {
           if (item.key === 'capping') {
@@ -975,6 +979,12 @@ const Dashboard: React.FC = () => {
                       {todayMatchingIncome.toFixed(2)} / {dailyLimit.toFixed(2)}
                     </p>
                     <p className="text-[#c0841a] text-[10px] font-black tracking-[0.2em] uppercase">Daily Matching Limit (USDT)</p>
+                    <div className="mt-4 flex flex-col items-center">
+                      <p className="text-2xl font-black text-amber-500 tracking-tight">
+                        ${(userWallets.matching?.balance || 0).toFixed(2)}
+                      </p>
+                      <p className="text-slate-500 text-[8px] font-black tracking-[0.2em] uppercase">Unclaimed Matching Income</p>
+                    </div>
                   </div>
                   <div className="flex flex-wrap justify-center gap-4">
                     <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
@@ -983,6 +993,17 @@ const Dashboard: React.FC = () => {
                     <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
                       PAIR INCOME: ${userRank?.pairIncome || 5}
                     </div>
+                    <button 
+                      onClick={() => handleClaim('matching')}
+                      disabled={(userWallets.matching?.balance || 0) <= 0}
+                      className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg border border-white/5 ${
+                        (userWallets.matching?.balance || 0) <= 0 
+                          ? 'opacity-30 cursor-not-allowed bg-[#1e293b] text-slate-400' 
+                          : 'bg-[#a3680e] text-white hover:bg-[#b4791f]'
+                      }`}
+                    >
+                      CLAIM TO VAULT
+                    </button>
                   </div>
                 </div>
               </div>

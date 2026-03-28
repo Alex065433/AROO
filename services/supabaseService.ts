@@ -532,17 +532,16 @@ export const supabaseService = {
         const numIds = packageData.nodes;
         if (numIds > 0) {
           const nodesToCreate = [];
-          const numRankNodes = (numIds - 1) / 2;
+          const numRankNodes = (numIds + 1) / 2;
           
           for (let i = 0; i < numIds; i++) {
-            // Only the first numRankNodes (or 1 if nodes=1) are "Rank Nodes"
-            // Actually, let's just make all of them eligible for now as the user requested "ids"
+            // Only the first numRankNodes are "Rank Nodes"
             nodesToCreate.push({
               uid: uid,
               node_id: `${userProfile.operator_id}-ID${i + 1}`,
               name: `${userProfile.name} Node ${i + 1}`,
               balance: 0,
-              eligible: i < Math.max(1, numRankNodes), // First N nodes are rank nodes
+              eligible: i < numRankNodes, // First N nodes are rank nodes
               created_at: new Date().toISOString(),
               type: 'mining'
             });
