@@ -85,15 +85,19 @@ app.get("/api/admin/users", (req, res) => {
 
 app.post("/api/admin/add-funds", async (req, res) => {
   const { uid, amount, description } = req.body;
+  const authHeader = req.headers.authorization;
   
-  if (!uid || amount === undefined || amount === null) {
-    console.error('Admin: Missing required fields for add-funds:', { uid, amount, body: req.body });
-    return res.status(400).json({ 
-      error: "UID and Amount are required",
-      details: { uid: !!uid, amount: amount !== undefined && amount !== null }
-    });
+  if (!uid || amount == null) {
+    console.error('Admin: Missing parameters for add-funds:', { uid, amount });
+    return res.status(400).json({ error: "Missing required parameters: uid and amount" });
   }
 
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.error('Admin: Unauthorized attempt to add-funds (missing token)');
+    return res.status(401).json({ error: "Unauthorized: Missing authentication token" });
+  }
+
+  const token = authHeader.split(' ')[1];
   const supabase = getSupabase();
   
   if (!supabase) {
@@ -101,10 +105,37 @@ app.post("/api/admin/add-funds", async (req, res) => {
   }
 
   try {
-    console.log(`Admin: Adding ${amount} funds to ${uid}`);
+    // Verify user is admin
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (authError || !user) {
+      console.error('Admin: Failed to verify token:', authError);
+      return res.status(401).json({ error: "Unauthorized: Invalid token" });
+    }
+
+    // Check if user is admin in profiles table
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || profile?.role !== 'admin') {
+      console.error('Admin: Unauthorized attempt by non-admin user:', user.email);
+      return res.status(403).json({ error: "Forbidden: Admin access required" });
+    }
+
+    console.log(`Admin (${user.email}): Adding ${amount} funds to ${uid}`);
     
     // Ensure amount is a number
-    const numericAmount = parseFloat(amount.toString());
+    let numericAmount: number;
+    try {
+      numericAmount = parseFloat(amount.toString());
+    } catch (e) {
+      console.error('Admin: Failed to parse amount:', amount);
+      return res.status(400).json({ error: "Invalid amount format", received: amount });
+    }
+
     if (isNaN(numericAmount)) {
       console.error('Admin: Invalid amount format for add-funds:', { amount });
       return res.status(400).json({ error: "Invalid amount format", received: amount });
@@ -115,7 +146,7 @@ app.post("/api/admin/add-funds", async (req, res) => {
     
     const { data, error } = await supabase.rpc('admin_add_funds', {
       p_uid: uid,
-      p_amount: amount.toString()
+      p_amount: numericAmount
     });
 
     if (error) {
@@ -180,7 +211,7 @@ app.post("/api/admin/activate-package", async (req, res) => {
     
     const { data, error } = await supabase.rpc('admin_add_payment_rpc', {
       p_uid: uid,
-      p_amount: numericAmount.toString(),
+      p_amount: numericAmount,
       p_type: 'package_activation',
       p_method: isFree ? 'FREE' : 'WALLET',
       p_description: `Package Activation: $${numericAmount}${isFree ? ' (FREE)' : ''}`,
@@ -512,6 +543,16 @@ app.post("/api/payments/ipn", async (req, res) => {
   }
 
   res.status(200).send("OK");
+});
+
+// Catch-all for unknown /api routes to prevent falling back to Vite's SPA handler
+app.all("/api/*", (req, res) => {
+  console.warn(`Admin: Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({ 
+    error: "API route not found", 
+    method: req.method, 
+    path: req.path 
+  });
 });
 
 // Global Error Handler

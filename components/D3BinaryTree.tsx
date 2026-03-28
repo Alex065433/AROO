@@ -20,6 +20,8 @@ interface NodeData {
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
   team_size?: { left: number; right: number };
+  generationIds?: { id: string; gen: number }[];
+  nodeCount?: number;
 }
 
 interface D3Node extends d3.HierarchyNode<NodeData> {
@@ -401,6 +403,25 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             .attr("font-size", "9px")
             .attr("font-weight", "black")
             .text(d.data.totalTeam);
+
+          // Node Count Badge (Internal IDs)
+          if (d.data.nodeCount && d.data.nodeCount > 1) {
+            const nodeCountBadge = el.append("g").attr("transform", `translate(${nodeWidth/2 - 15}, ${-nodeHeight/2 + 15})`);
+            
+            nodeCountBadge.append("circle")
+              .attr("r", 10)
+              .attr("fill", "#3b82f6")
+              .attr("stroke", "#111112")
+              .attr("stroke-width", 2);
+
+            nodeCountBadge.append("text")
+              .attr("text-anchor", "middle")
+              .attr("y", 3)
+              .attr("fill", "white")
+              .attr("font-size", "8px")
+              .attr("font-weight", "black")
+              .text(d.data.nodeCount);
+          }
         }
       });
     };

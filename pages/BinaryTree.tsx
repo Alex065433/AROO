@@ -34,6 +34,8 @@ interface NodeData {
   team_size?: { left: number; right: number };
   sponsorId?: string;
   email?: string;
+  generationIds?: { id: string; gen: number }[];
+  nodeCount?: number;
 }
 
 const TREE_DATA: Record<string, NodeData> = {
@@ -705,7 +707,7 @@ const BinaryTree: React.FC = () => {
                   {[
                     { label: 'Network Registry ID', val: selectedNode.id, icon: Globe },
                     { label: 'Synchronization Date', val: selectedNode.joinDate, icon: Zap },
-                    { label: 'Team Node Count', val: `${selectedNode.totalTeam} Partners`, icon: Award },
+                    { label: 'Team Node Count', val: `${selectedNode.nodeCount || 1} IDs`, icon: Award },
                     { label: 'Placement Protocol', val: `${selectedNode.side} BRANCH`, icon: Share2 },
                     { label: 'Sponsor ID', val: selectedNode.sponsorId || 'N/A', icon: UserPlus },
                     { label: 'Contact Email', val: selectedNode.email || 'N/A', icon: Globe }
@@ -721,6 +723,29 @@ const BinaryTree: React.FC = () => {
                     </div>
                   ))}
                 </div>
+
+                {/* Generation IDs Section */}
+                {selectedNode.generationIds && selectedNode.generationIds.length > 0 && (
+                  <div className="mt-8 pt-8 border-t border-white/5">
+                    <div className="flex items-center justify-between mb-6">
+                      <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-[0.2em]">Generation IDs</h4>
+                      <span className="px-3 py-1 bg-white/5 rounded-full text-[10px] font-bold text-white/40">{selectedNode.generationIds.length} Total</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                      {selectedNode.generationIds.map((genId, idx) => (
+                        <div key={idx} className="p-3 bg-white/5 rounded-xl border border-white/5 flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <div className="w-6 h-6 rounded-lg bg-orange-600/20 flex items-center justify-center text-orange-500 text-[10px] font-black">
+                              {genId.gen}
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-300">{genId.id}</span>
+                          </div>
+                          <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">GEN {genId.gen}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Downline Members List */}
                 <div className="mt-8 pt-8 border-t border-white/5">

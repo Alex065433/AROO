@@ -582,6 +582,9 @@ export const supabaseService = {
           
           for (let i = 0; i < numIds; i++) {
             // Only the first numRankNodes are "Rank Nodes"
+            // Generation calculation: floor(log2(i + 1))
+            const generation = Math.floor(Math.log2(i + 1));
+            
             nodesToCreate.push({
               uid: uid,
               node_id: `${userProfile.operator_id}-ID${timestamp}-${i + 1}`,
@@ -589,7 +592,8 @@ export const supabaseService = {
               balance: 0,
               eligible: i < numRankNodes, // First N nodes are rank nodes
               created_at: new Date().toISOString(),
-              type: 'mining'
+              type: 'mining',
+              generation: generation
             });
           }
           
@@ -686,24 +690,40 @@ export const supabaseService = {
 
   async addFunds(uid: string, amount: number) {
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        console.error('addFunds: No active session found');
+        throw new Error('No active session found. Please log in again.');
+      }
+
+      console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}`);
+      
       const response = await fetch('/api/admin/add-funds', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ uid, amount }),
       });
 
-      let result;
       const responseText = await response.text();
+      let result;
+      
       try {
         result = JSON.parse(responseText);
       } catch (e) {
-        throw new Error(`Server returned an invalid response: ${responseText.substring(0, 100)}...`);
+        console.error('addFunds: Server returned non-JSON response:', responseText);
+        throw new Error(`Server returned an invalid response (Status: ${response.status}). This usually means the API route was not found or the server crashed. Check console for details.`);
       }
 
-      if (!response.ok) throw new Error(result.error || 'Failed to add funds');
+      if (!response.ok) {
+        console.error('addFunds: API returned error:', result);
+        throw new Error(result.error || `Failed to add funds (Status: ${response.status})`);
+      }
       
+      console.log('addFunds: Successfully added funds');
       return true;
     } catch (error) {
       console.error('Error in addFunds:', error);
@@ -1289,6 +1309,21 @@ export const supabaseService = {
 
     const tree: Record<string, any> = {};
     
+    // Fetch all team collection nodes for the downline to integrate them into the tree
+    const uids = finalDownline.map((p: any) => p.id);
+    const { data: teamNodes } = await supabase
+      .from('team_collection')
+      .select('*')
+      .in('uid', uids);
+    
+    const teamNodesByUser = new Map<string, any[]>();
+    teamNodes?.forEach(node => {
+      if (!teamNodesByUser.has(node.uid)) {
+        teamNodesByUser.set(node.uid, []);
+      }
+      teamNodesByUser.get(node.uid)!.push(node);
+    });
+
     // Map nodes by parent ID and side for efficient binary tree construction
     const nodesByParent = new Map<string, Record<string, any>>();
     finalDownline.forEach((p: any) => {
@@ -1307,6 +1342,14 @@ export const supabaseService = {
     if (!rootProfile) return {};
 
     const buildNode = (node: any, path: string) => {
+      const userTeamNodes = teamNodesByUser.get(node.id) || [];
+      // Sort nodes by ID suffix to ensure consistent internal tree structure
+      userTeamNodes.sort((a, b) => {
+        const aIdx = parseInt(a.node_id.split('-').pop() || '0');
+        const bIdx = parseInt(b.node_id.split('-').pop() || '0');
+        return aIdx - bIdx;
+      });
+
       const leftCount = parseInt(node.left_count || node.team_size?.left || '0');
       const rightCount = parseInt(node.right_count || node.team_size?.right || '0');
       
@@ -1324,7 +1367,9 @@ export const supabaseService = {
         sponsorId: node.sponsor_id,
         email: node.email,
         side: node.side || 'ROOT',
-        uid: node.id
+        uid: node.id,
+        generationIds: userTeamNodes.map(n => ({ id: n.node_id, gen: n.generation })),
+        nodeCount: userTeamNodes.length
       };
 
       // Recursively process children

@@ -21,6 +21,7 @@ interface TeamNode {
   last_collection: string;
   status: 'active' | 'inactive';
   created_at: string;
+  generation?: number;
 }
 
 const TeamCollection: React.FC = () => {
@@ -229,7 +230,7 @@ const TeamCollection: React.FC = () => {
                         <Cpu size={28} />
                       </div>
                       <div className="text-right">
-                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">NODE ID</p>
+                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">NODE ID {node.generation !== undefined && `(GEN ${node.generation})`}</p>
                         <p className="text-xs font-mono text-white tracking-tighter">{node.node_id}</p>
                       </div>
                     </div>

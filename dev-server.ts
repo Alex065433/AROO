@@ -1,4 +1,4 @@
-import app from "./api/payments/index.js";
+import app from "./api/payments/index";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";

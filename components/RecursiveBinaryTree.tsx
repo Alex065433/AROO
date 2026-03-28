@@ -18,6 +18,8 @@ interface NodeData {
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
   team_size?: { left: number; right: number };
+  generationIds?: { id: string; gen: number }[];
+  nodeCount?: number;
 }
 
 interface TreeNodeProps {
@@ -107,6 +109,13 @@ const TreeNode: React.FC<TreeNodeProps> = ({ path, data, onSelect, onInvite, lev
             <div className="absolute -top-2 -right-2 px-2 py-1 bg-orange-600 rounded-lg shadow-lg border border-orange-400/20">
               <span className="text-[9px] font-black text-white">{node.totalTeam}</span>
             </div>
+
+            {/* Node Count Badge (Internal IDs) */}
+            {node.nodeCount && node.nodeCount > 1 && (
+              <div className="absolute -top-2 -left-2 px-2 py-1 bg-blue-600 rounded-lg shadow-lg border border-blue-400/20">
+                <span className="text-[9px] font-black text-white">{node.nodeCount}</span>
+              </div>
+            )}
           </div>
         )}
       </motion.div>
