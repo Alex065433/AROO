@@ -4,7 +4,8 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, GitBranch, Trophy, 
   LogOut, Menu, Gift, Bell, Search, Wallet, Share2, User, X,
-  HelpCircle, ChevronRight, AlertCircle, Info, Zap
+  HelpCircle, ChevronRight, AlertCircle, Info, Zap, Cpu,
+  Wallet2
 } from 'lucide-react';
 import { RANKS, MOCK_NOTIFICATIONS } from '../constants';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -89,7 +90,7 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
     { name: 'Referral Program', path: '/referral', icon: Share2 },
     { name: 'Identity Profile', path: '/profile', icon: User },
-    { name: 'Team Collection', path: '/team-collection', icon: Wallet },
+    { name: 'Team Collection', path: '/team-collection', icon: Wallet2 },
     { name: 'Binary Tree', path: '/binary-tree', icon: GitBranch },
     { name: 'Rank Ladder', path: '/ranks', icon: Trophy },
     { name: 'Rewards', path: '/rewards', icon: Gift },

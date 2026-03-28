@@ -164,6 +164,18 @@ const Profile: React.FC = () => {
     }, 1500);
   };
 
+  const handleTestEmail = async () => {
+    try {
+      toast.promise(supabaseService.sendWelcomeEmail(userData.email, userData.name), {
+        loading: 'Transmitting secure email protocol...',
+        success: 'Welcome message transmitted successfully.',
+        error: (err) => `Email transmission failed: ${err.message}`
+      });
+    } catch (err) {
+      console.error('Email Test Error:', err);
+    }
+  };
+
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 relative">
       {/* Verification Modal Overlay */}
@@ -228,11 +240,23 @@ const Profile: React.FC = () => {
           <h2 className="text-5xl font-black uppercase tracking-tight text-white">Identity Core</h2>
           <p className="text-slate-500 mt-3 text-lg font-medium max-w-2xl">Manage your digital presence and security protocols for the Arowin Trading network.</p>
         </div>
-        <div className="px-6 py-4 bg-orange-500/10 rounded-2xl border border-orange-500/10 flex items-center gap-3">
-          <Fingerprint className="text-orange-500" size={20} />
-          <div className="flex flex-col">
-            <span className="text-[10px] font-black uppercase tracking-widest text-orange-500/60">Node Security</span>
-            <span className="text-lg font-black text-white">Verified Level 2</span>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={handleTestEmail}
+            className="px-6 py-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 flex items-center gap-3 transition-all active:scale-95"
+          >
+            <Mail className="text-slate-400" size={20} />
+            <div className="flex flex-col items-start">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Test Protocol</span>
+              <span className="text-sm font-black text-white">Send Welcome Email</span>
+            </div>
+          </button>
+          <div className="px-6 py-4 bg-orange-500/10 rounded-2xl border border-orange-500/10 flex items-center gap-3">
+            <Fingerprint className="text-orange-500" size={20} />
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-widest text-orange-500/60">Node Security</span>
+              <span className="text-lg font-black text-white">Verified Level 2</span>
+            </div>
           </div>
         </div>
       </div>

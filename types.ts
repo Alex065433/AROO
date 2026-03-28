@@ -29,9 +29,11 @@ export interface User {
     master: Wallet;
     referral: Wallet;
     matching: Wallet;
+    yield: Wallet;
     rankBonus: Wallet;
     incentive: Wallet;
     rewards: Wallet;
+    capping_box?: Wallet;
   };
   teamSize: {
     left: number;

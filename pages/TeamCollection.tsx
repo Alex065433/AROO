@@ -1,210 +1,281 @@
-
-import React, { useState, useEffect } from 'react';
-import GlassCard from '../components/GlassCard';
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Cpu, Zap, RefreshCw, CheckCircle2, 
+  AlertCircle, ArrowUpRight, ShieldCheck,
+  Globe, Award, UserPlus, Share2, Search,
+  ArrowLeft, History, User, Users, Send,
+  Wallet2
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
-import { ShieldCheck, Send, CheckSquare, Square, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+import GlassCard from '../components/GlassCard';
+
+interface TeamNode {
+  id: string;
+  node_id: string;
+  package_name: string;
+  package_amount: number;
+  daily_yield: number;
+  balance: number;
+  last_collection: string;
+  status: 'active' | 'inactive';
+  created_at: string;
+}
 
 const TeamCollection: React.FC = () => {
-  const [teamList, setTeamList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [transactionPass, setTransactionPass] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [status, setStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [nodes, setNodes] = useState<TeamNode[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCollecting, setIsCollecting] = useState(false);
+  const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
+  const [transactionPassword, setTransactionPassword] = useState('');
 
   useEffect(() => {
-    fetchTeamNodes();
+    const unsubscribe = supabaseService.onAuthChange(async (user) => {
+      if (user) {
+        const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+        if (profile) {
+          setUserProfile(profile);
+          fetchNodes(profile.id);
+        }
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
-  const fetchTeamNodes = async () => {
-    setLoading(true);
+  const fetchNodes = async (userId: string) => {
+    setIsLoading(true);
     try {
-      const user = supabaseService.getCurrentUser();
-      if (user) {
-        const nodes = await supabaseService.getTeamCollection(user.id || user.uid);
-        setTeamList(nodes.map((n: any, idx: number) => ({
-          ...n,
-          sNo: idx + 1,
-          selected: false,
-          username: n.node_id,
-          masterWallet: `${(parseFloat(n.balance) || 0).toFixed(2)} USDT`
-        })));
-      }
-    } catch (err) {
-      console.error('Error fetching team nodes:', err);
+      const data = await supabaseService.getTeamCollection(userId);
+      setNodes(data);
+    } catch (error) {
+      console.error('Error fetching team nodes:', error);
+      toast.error('Failed to load team nodes');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  const toggleSelect = (sNo: number) => {
-    setTeamList(list => list.map(m => m.sNo === sNo ? { ...m, selected: !m.selected } : m));
+  const toggleNodeSelection = (nodeId: string) => {
+    setSelectedNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
   };
 
-  const toggleAll = () => {
-    const allSelected = teamList.length > 0 && teamList.every(m => m.selected);
-    setTeamList(list => list.map(m => ({ ...m, selected: !allSelected })));
+  const selectAll = () => {
+    if (selectedNodes.size === nodes.length && nodes.length > 0) {
+      setSelectedNodes(new Set());
+    } else {
+      setSelectedNodes(new Set(nodes.map(n => n.id)));
+    }
   };
 
-  const handleSubmit = async () => {
-    const selectedNodes = teamList.filter(m => m.selected);
+  const handleCollect = async () => {
+    if (selectedNodes.size === 0 || !userProfile) return;
+    if (!transactionPassword) {
+      toast.error('Please enter your transaction password');
+      return;
+    }
     
-    if (selectedNodes.length === 0) {
-      setStatus({ type: 'error', msg: 'Please select at least one node to collect from.' });
-      return;
-    }
-    if (!transactionPass) {
-      setStatus({ type: 'error', msg: 'Transaction password is required.' });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setStatus(null);
-
+    setIsCollecting(true);
     try {
-      const user = supabaseService.getCurrentUser();
-      if (!user) throw new Error('User not found');
+      const isPasswordValid = await supabaseService.verifyWithdrawalPassword(userProfile.id, transactionPassword);
+      if (!isPasswordValid) {
+        toast.error('Incorrect withdrawal password');
+        setIsCollecting(false);
+        return;
+      }
 
-      const nodeIds = selectedNodes.map(n => n.node_id);
-      const totalCollected = await supabaseService.collectFromNodes(user.id || user.uid, nodeIds);
-
-      setStatus({ type: 'success', msg: `Successfully collected ${(totalCollected || 0).toFixed(2)} USDT from ${selectedNodes.length} nodes.` });
-      setTransactionPass('');
-      await fetchTeamNodes(); // Refresh list
-      setTimeout(() => setStatus(null), 4000);
-    } catch (err: any) {
-      console.error('Collection Error:', err);
-      setStatus({ type: 'error', msg: err.message || 'Failed to collect from nodes.' });
+      const nodeIds = Array.from(selectedNodes) as string[];
+      const totalCollected = await supabaseService.collectFromNodes(userProfile.id, nodeIds);
+      
+      if (totalCollected > 0) {
+        toast.success(`Successfully collected ${totalCollected.toFixed(2)} USDT`);
+        setSelectedNodes(new Set());
+        setTransactionPassword('');
+        fetchNodes(userProfile.id);
+      } else {
+        toast.info('No yield available to collect from selected nodes');
+      }
+    } catch (error) {
+      console.error('Error collecting yield:', error);
+      toast.error('Failed to collect yield');
     } finally {
-      setIsSubmitting(false);
+      setIsCollecting(false);
     }
   };
+
+  const selectedAccrued = nodes
+    .filter(n => selectedNodes.has(n.id))
+    .reduce((sum, node) => sum + (node.balance || 0), 0);
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700 pb-20">
-      <div className="border-b border-orange-500/20 pb-8 flex justify-between items-end">
-        <div>
-          <h2 className="text-4xl font-black uppercase tracking-tight text-white flex items-center gap-4">
-             Team Collection USDT
-          </h2>
-          <p className="text-slate-500 mt-2 font-medium">Gather and consolidate USDT from your organizational hierarchy nodes.</p>
+    <div className="min-h-screen bg-[#0a0a0b] text-white p-8 space-y-12 animate-in fade-in duration-500">
+      
+      {/* Header Section */}
+      <div className="flex justify-between items-start max-w-7xl mx-auto">
+        <div className="space-y-2">
+          <h1 className="text-5xl font-serif font-black uppercase tracking-tight text-white">
+            TEAM COLLECTION <span className="text-4xl">USDT</span>
+          </h1>
+          <p className="text-slate-500 font-medium text-lg">
+            Gather and consolidate USDT from your organizational hierarchy nodes.
+          </p>
         </div>
         <button 
-          onClick={fetchTeamNodes}
-          className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all"
+          onClick={() => userProfile && fetchNodes(userProfile.id)}
+          className="p-4 bg-white/5 hover:bg-white/10 rounded-2xl transition-all border border-white/5 group"
         >
-          <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw size={24} className={`text-slate-400 group-hover:text-white transition-colors ${isLoading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
-      {status && (
-        <div className={`p-6 rounded-2xl flex items-center gap-4 animate-in zoom-in duration-300 ${
-          status.type === 'success' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
-        }`}>
-          {status.type === 'success' ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
-          <p className="font-bold">{status.msg}</p>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-1 gap-8">
-        <div className="bg-[#1a1a1c] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl">
-          <div className="p-8 lg:p-12 space-y-10">
-             <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-                <div className="space-y-1">
-                   <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">Total Available in Selected Nodes</p>
-                   <p className="text-3xl font-black text-orange-500">
-                     {teamList.filter(m => m.selected).reduce((acc, m) => acc + (parseFloat(m.balance) || 0), 0).toFixed(2)} USDT
-                   </p>
-                </div>
-                <div className="w-full md:w-auto">
-                   <div className="relative">
-                      <div className="w-full md:w-64 bg-slate-900 border border-white/10 rounded-2xl px-6 py-4 text-white font-black text-center">
-                        {teamList.filter(m => m.selected).reduce((acc, m) => acc + (parseFloat(m.balance) || 0), 0).toFixed(2)}
-                      </div>
-                      <label className="absolute -top-3 left-6 bg-slate-900 px-2 text-[10px] font-black text-slate-600 uppercase">Target Amount</label>
-                   </div>
-                </div>
-             </div>
-
-             <div className="flex flex-col md:flex-row gap-6 items-center pt-6 border-t border-white/5">
-                <div className="relative w-full">
-                   <input 
-                      type="password" 
-                      placeholder="Enter your transaction password" 
-                      value={transactionPass}
-                      onChange={e => setTransactionPass(e.target.value)}
-                      className="w-full bg-slate-900 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-orange-500/50 transition-all placeholder:text-slate-700 font-bold"
-                   />
-                </div>
-                <button 
-                  onClick={handleSubmit}
-                  disabled={isSubmitting || teamList.filter(m => m.selected).length === 0}
-                  className="w-full md:w-48 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-black py-4 rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl shadow-orange-950/20 active:scale-95"
-                >
-                   {isSubmitting ? 'PROCESSING...' : <>SUBMIT <Send size={18} /></>}
-                </button>
-             </div>
-          </div>
-        </div>
-
-        <div className="bg-[#1a1a1c] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl">
-          <div className="bg-gradient-to-r from-orange-600 to-orange-500 px-8 py-5 flex justify-between items-center">
-             <h3 className="font-black text-white uppercase tracking-widest text-sm">Select Team List</h3>
-             <button onClick={toggleAll} className="flex items-center gap-2 text-[10px] font-black uppercase text-white/90 bg-black/20 px-3 py-1 rounded-lg hover:bg-black/30 transition-all">
-                {teamList.length > 0 && teamList.every(m => m.selected) ? <CheckSquare size={14} /> : <Square size={14} />}
-                Select All
-             </button>
-          </div>
+      <div className="max-w-7xl mx-auto space-y-8">
+        
+        {/* Main Collection Card */}
+        <div className="bg-[#111112] border border-white/5 rounded-[40px] p-12 shadow-2xl relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-orange-600/5 blur-[120px] -mr-48 -mt-48 rounded-full" />
           
-          <div className="overflow-x-auto custom-scrollbar min-h-[300px]">
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <RefreshCw className="animate-spin text-orange-500" size={40} />
-                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Accessing Team Nodes...</p>
+          <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-end gap-8">
+            <div className="space-y-4">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">TOTAL AVAILABLE IN SELECTED NODES</p>
+              <h2 className="text-6xl font-black text-orange-500 italic tracking-tighter">
+                {selectedAccrued.toFixed(2)} <span className="text-4xl ml-2">USDT</span>
+              </h2>
+            </div>
+
+            <div className="w-full md:w-64 space-y-3">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] text-right">TARGET AMOUNT</p>
+              <div className="bg-[#0b0e11] border border-white/5 rounded-2xl p-6 text-center">
+                <span className="text-2xl font-black text-white">{selectedAccrued.toFixed(2)}</span>
               </div>
-            ) : teamList.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <AlertCircle className="text-slate-700" size={40} />
-                <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">No active nodes found. Activate a package to generate nodes.</p>
+            </div>
+          </div>
+
+          <div className="mt-12 flex flex-col md:flex-row gap-4 items-center relative z-10">
+            <div className="flex-1 w-full relative">
+              <input 
+                type="password"
+                value={transactionPassword}
+                onChange={(e) => setTransactionPassword(e.target.value)}
+                placeholder="Enter your transaction password"
+                className="w-full bg-[#0b0e11] border border-white/5 rounded-2xl px-8 py-6 text-white font-medium focus:ring-2 focus:ring-orange-500/20 transition-all placeholder:text-slate-700"
+              />
+            </div>
+            <button 
+              onClick={handleCollect}
+              disabled={selectedNodes.size === 0 || isCollecting}
+              className="w-full md:w-auto px-12 py-6 bg-orange-600 hover:bg-orange-500 text-white font-black text-sm uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed group"
+            >
+              {isCollecting ? <RefreshCw className="animate-spin" size={20} /> : <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />}
+              SUBMIT
+            </button>
+          </div>
+        </div>
+
+        {/* Team List Section */}
+        <div className="bg-[#111112] border border-white/5 rounded-[40px] overflow-hidden shadow-2xl">
+          <div className="bg-orange-600 px-10 py-6 flex justify-between items-center">
+            <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">SELECT TEAM LIST</h3>
+            <button 
+              onClick={selectAll}
+              className="flex items-center gap-3 text-white group"
+            >
+              <span className="text-[10px] font-black uppercase tracking-widest">SELECT ALL</span>
+              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${selectedNodes.size === nodes.length && nodes.length > 0 ? 'bg-white border-white' : 'border-white/50 group-hover:border-white'}`}>
+                {selectedNodes.size === nodes.length && nodes.length > 0 && <CheckCircle2 size={14} className="text-orange-600" />}
+              </div>
+            </button>
+          </div>
+
+          <div className="p-12 min-h-[400px] flex flex-col items-center justify-center text-center">
+            {isLoading ? (
+              <div className="flex flex-col items-center gap-4">
+                <RefreshCw className="text-orange-500 animate-spin" size={48} />
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SYNCHRONIZING NODES...</p>
+              </div>
+            ) : nodes.length === 0 ? (
+              <div className="space-y-6">
+                <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center text-slate-700 mx-auto border border-white/5">
+                  <AlertCircle size={48} />
+                </div>
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">NO ACTIVE NODES FOUND. ACTIVATE A PACKAGE TO GENERATE NODES.</p>
+                </div>
               </div>
             ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-black/20 text-slate-500 text-[10px] font-black uppercase tracking-widest border-b border-white/5">
-                    <th className="px-8 py-5 text-center">Select</th>
-                    <th className="px-8 py-5">S.No</th>
-                    <th className="px-8 py-5">Node ID</th>
-                    <th className="px-8 py-5">Node Name</th>
-                    <th className="px-8 py-5">Available</th>
-                    <th className="px-8 py-5">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.03]">
-                  {teamList.map((member) => (
-                    <tr key={member.sNo} className={`group hover:bg-orange-500/[0.02] transition-colors cursor-pointer ${member.selected ? 'bg-orange-500/5' : ''}`} onClick={() => toggleSelect(member.sNo)}>
-                      <td className="px-8 py-6 text-center">
-                         <div className="text-orange-500 flex justify-center">
-                            {member.selected ? <CheckSquare size={20} /> : <Square size={20} className="text-slate-800" />}
-                         </div>
-                      </td>
-                      <td className="px-8 py-6 text-slate-500 font-bold text-sm">{member.sNo}</td>
-                      <td className="px-8 py-6 font-mono text-sm text-orange-400 font-bold">{member.node_id}</td>
-                      <td className="px-8 py-6 font-bold text-white text-sm uppercase">{member.name}</td>
-                      <td className="px-8 py-6 font-black text-slate-400 text-sm">{member.masterWallet}</td>
-                      <td className="px-8 py-6">
-                         <span className={`text-[10px] font-black px-3 py-1 rounded-lg uppercase border ${
-                           member.eligible ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' : 'text-slate-600 bg-white/5 border-white/5'
-                         }`}>
-                           {member.eligible ? 'ACTIVE' : 'INACTIVE'}
-                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {nodes.map((node) => (
+                  <motion.div
+                    key={node.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    whileHover={{ y: -5 }}
+                    onClick={() => toggleNodeSelection(node.id)}
+                    className={`group relative p-8 rounded-[32px] border transition-all cursor-pointer text-left ${
+                      selectedNodes.has(node.id) 
+                        ? 'bg-orange-600/10 border-orange-500/50' 
+                        : 'bg-[#0b0e11] border-white/5 hover:border-white/10'
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-8">
+                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
+                        selectedNodes.has(node.id) ? 'bg-orange-600 text-white' : 'bg-white/5 text-slate-500 group-hover:text-orange-500'
+                      }`}>
+                        <Cpu size={28} />
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">NODE ID</p>
+                        <p className="text-xs font-mono text-white tracking-tighter">{node.node_id}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div>
+                        <h4 className="text-xl font-black text-white italic uppercase tracking-tight">{node.package_name}</h4>
+                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mt-1">
+                          VALUE: {node.package_amount} USDT
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-6 pt-6 border-t border-white/5">
+                        <div>
+                          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">DAILY YIELD</p>
+                          <p className="text-base font-black text-white">{node.daily_yield.toFixed(2)} <span className="text-[10px] opacity-50">USDT</span></p>
+                        </div>
+                        <div>
+                          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">ACCRUED</p>
+                          <p className={`text-base font-black ${node.balance > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                            {node.balance.toFixed(2)} <span className="text-[10px] opacity-50">USDT</span>
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Selection Indicator */}
+                    <div className={`absolute top-8 right-8 w-6 h-6 rounded-lg border-2 transition-all flex items-center justify-center ${
+                      selectedNodes.has(node.id) ? 'bg-orange-600 border-orange-600' : 'border-white/10'
+                    }`}>
+                      {selectedNodes.has(node.id) && <CheckCircle2 size={14} className="text-white" />}
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,900;1,900&display=swap');
+        .font-serif {
+          font-family: 'Playfair Display', serif;
+        }
+      `}</style>
     </div>
   );
 };

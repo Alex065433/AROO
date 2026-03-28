@@ -281,6 +281,7 @@ export const supabaseService = {
         master: { balance: 0, currency: 'USDT' },
         referral: { balance: 0, currency: 'USDT' },
         matching: { balance: 0, currency: 'USDT' },
+        yield: { balance: 0, currency: 'USDT' },
         rankBonus: { balance: 0, currency: 'USDT' },
         incentive: { balance: 0, currency: 'USDT' },
         rewards: { balance: 0, currency: 'USDT' },
@@ -339,7 +340,45 @@ export const supabaseService = {
       console.warn('Failed to update binary counts:', err);
     }
 
+    // Send Welcome Email
+    try {
+      await this.sendWelcomeEmail(email, profileData.name);
+    } catch (err) {
+      console.warn('Failed to send welcome email:', err);
+    }
+
     return { ...profileData, uid: user.id };
+  },
+
+  async sendWelcomeEmail(email: string, name: string) {
+    const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    try {
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`
+        },
+        body: JSON.stringify({
+          email: email,
+          subject: "Welcome Message",
+          html: `Welcome ${name}`
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Email function error:', errorData);
+        throw new Error(errorData.message || 'Failed to send email');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error calling send-email function:', error);
+      throw error;
+    }
   },
 
   async logout() {
@@ -796,19 +835,15 @@ export const supabaseService = {
       if (error || !nodes || nodes.length === 0) return [];
 
       // Calculate earning per node per second
-      // weeklyEarning is total for all nodes in team_collection
       const totalWeeklyEarning = packageData.weeklyEarning;
+      if (totalWeeklyEarning <= 0) return nodes;
+
       const earningPerNodePerWeek = totalWeeklyEarning / nodes.length;
       const earningPerNodePerSecond = earningPerNodePerWeek / (7 * 24 * 60 * 60);
 
       const now = new Date();
-      const updatedNodes = [];
-
-      for (const node of nodes) {
-        if (!node.eligible) {
-          updatedNodes.push(node);
-          continue;
-        }
+      const updatedNodes = nodes.map(node => {
+        if (!node.eligible) return node;
 
         const lastUpdate = new Date(node.created_at);
         const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
@@ -816,27 +851,11 @@ export const supabaseService = {
         const accruedBalance = secondsElapsed * earningPerNodePerSecond;
         const newBalance = (Number(node.balance) || 0) + accruedBalance;
 
-        // Update node in database - we update balance but we don't have updated_at
-        // so we'll just update the balance.
-        // Wait, if we don't have updated_at, we can't track the last update time easily
-        // unless we use a different column or add one.
-        // But for now, let's just use created_at and see.
-        // Actually, if we update balance, we should probably update created_at to now
-        // to track the next interval?
-        await supabase
-          .from('team_collection')
-          .update({ 
-            balance: newBalance,
-            created_at: now.toISOString() 
-          })
-          .eq('node_id', node.node_id);
-
-        updatedNodes.push({
+        return {
           ...node,
-          balance: newBalance,
-          created_at: now.toISOString()
-        });
-      }
+          balance: newBalance
+        };
+      });
 
       return updatedNodes;
     } catch (err) {
@@ -846,32 +865,60 @@ export const supabaseService = {
   },
 
   async collectFromNodes(uid: string, nodeIds: string[]) {
-    // 1. Fetch nodes
-    const { data: nodes } = await supabase
-      .from('team_collection')
-      .select('*')
-      .in('node_id', nodeIds)
-      .eq('uid', uid);
-    
-    if (!nodes || nodes.length === 0) return 0;
+    try {
+      // 1. Fetch nodes and user profile
+      const [profile, { data: nodes }] = await Promise.all([
+        this.getUserProfile(uid),
+        supabase.from('team_collection').select('*').in('node_id', nodeIds).eq('uid', uid)
+      ]);
 
-    let totalCollected = 0;
-    for (const node of nodes) {
-      totalCollected += parseFloat(node.balance || 0);
-      
-      // Reset node balance
-      await supabase
+      if (!profile || !nodes || nodes.length === 0) return 0;
+
+      const packageData = PACKAGES.find(p => p.price === profile.active_package);
+      if (!packageData) return 0;
+
+      const totalWeeklyEarning = packageData.weeklyEarning;
+      const earningPerNodePerWeek = totalWeeklyEarning / nodes.length; // This should be based on total nodes user has, not just selected ones
+      // Wait, nodes.length here is only the selected ones. We need the total count of nodes for the user.
+      const { count: totalNodesCount } = await supabase
         .from('team_collection')
-        .update({ balance: 0, created_at: new Date().toISOString() })
-        .eq('node_id', node.node_id);
+        .select('*', { count: 'exact', head: true })
+        .eq('uid', uid);
+      
+      const actualTotalNodes = totalNodesCount || nodes.length;
+      const earningPerNodePerSecond = (totalWeeklyEarning / actualTotalNodes) / (7 * 24 * 60 * 60);
+
+      let totalCollected = 0;
+      const now = new Date();
+
+      for (const node of nodes) {
+        let nodeBalance = Number(node.balance) || 0;
+        
+        if (node.eligible) {
+          const lastUpdate = new Date(node.created_at);
+          const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
+          nodeBalance += secondsElapsed * earningPerNodePerSecond;
+        }
+
+        totalCollected += nodeBalance;
+        
+        // Reset node balance and update timestamp
+        await supabase
+          .from('team_collection')
+          .update({ balance: 0, created_at: now.toISOString() })
+          .eq('node_id', node.node_id);
+      }
+
+      if (totalCollected <= 0) return 0;
+
+      // 2. Add to user's master wallet via addIncome
+      await this.addIncome(uid, totalCollected, 'team_collection');
+
+      return totalCollected;
+    } catch (err) {
+      console.error('Error in collectFromNodes:', err);
+      throw err;
     }
-
-    if (totalCollected <= 0) return 0;
-
-    // 2. Add to user's master wallet via addIncome
-    await this.addIncome(uid, totalCollected, 'team_collection');
-
-    return totalCollected;
   },
 
   // Rank Ladder Logic
@@ -945,6 +992,15 @@ export const supabaseService = {
 
   async updatePaymentStatus(paymentId: string, status: string) {
     try {
+      // Fetch the payment first to check if it's a withdrawal and if we need to refund
+      const { data: payment, error: fetchError } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('id', paymentId)
+        .single();
+      
+      if (fetchError) throw fetchError;
+
       const { data, error } = await supabase
         .from('payments')
         .update({ status, updated_at: new Date().toISOString() })
@@ -953,9 +1009,97 @@ export const supabaseService = {
         .single();
 
       if (error) throw error;
+
+      // If a withdrawal is rejected, refund the user
+      if (payment.type === 'withdrawal' && status === 'rejected') {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('wallet_balance, wallets')
+          .eq('id', payment.uid)
+          .single();
+        
+        if (!profileError && profile) {
+          const newWallets = { ...profile.wallets };
+          newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+          newWallets.master.balance += payment.amount;
+
+          await supabase
+            .from('profiles')
+            .update({ 
+              wallet_balance: (Number(profile.wallet_balance) || 0) + payment.amount,
+              wallets: newWallets
+            })
+            .eq('id', payment.uid);
+        }
+      }
+
       return data;
     } catch (error) {
       console.error('Error updating payment status:', error);
+      throw error;
+    }
+  },
+
+  async createWithdrawal(uid: string, amount: number, address: string) {
+    try {
+      const profile = await this.getUserProfile(uid);
+      if (!profile) throw new Error('User not found');
+
+      const balance = Number(profile.wallet_balance || 0);
+      if (balance < amount) {
+        throw new Error('Insufficient balance');
+      }
+
+      // 1. Deduct balance immediately (to prevent double spending)
+      const newWallets = { ...profile.wallets };
+      newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+      newWallets.master.balance -= amount;
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          wallet_balance: balance - amount,
+          wallets: newWallets
+        })
+        .eq('id', uid);
+
+      if (updateError) throw updateError;
+
+      // 2. Create a pending withdrawal record
+      const numericAmount = Number(amount);
+      if (isNaN(numericAmount) || numericAmount <= 0) {
+        throw new Error('Invalid withdrawal amount');
+      }
+
+      const { data, error } = await supabase
+        .from('payments')
+        .insert({
+          uid,
+          amount: numericAmount,
+          type: 'withdrawal',
+          status: 'pending',
+          method: 'USDT (BEP20)',
+          order_description: `Withdrawal to ${address.substring(0, 6)}...${address.substring(address.length - 4)}`,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // Refund if insertion fails
+        await supabase
+          .from('profiles')
+          .update({ 
+            wallet_balance: balance,
+            wallets: profile.wallets
+          })
+          .eq('id', uid);
+        throw error;
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error creating withdrawal:', error);
       throw error;
     }
   },
@@ -1031,27 +1175,30 @@ export const supabaseService = {
 
     // Only apply daily capping to matching income
     if (type === 'matching_bonus') {
-      const today = new Date().toISOString().split('T')[0];
-      const dailyIncome = profile.daily_income || { date: '', amount: 0 };
+      // Only users with $150 package or higher get matching bonus (Capping starts at $150)
+      if ((profile.active_package || 0) < 150) {
+        return;
+      }
+
+      // Per-transaction capping: Max $5 per matching bonus
+      const transactionCapping = 5;
+      payableAmount = Math.min(amount, transactionCapping);
       
-      let currentDailyAmount = dailyIncome.date === today ? dailyIncome.amount : 0;
-      
-      // Capping based on rank
-      const rankData = RANKS.find(r => r.level === (profile.rank || 1));
-      const capping = rankData?.dailyCapping || 250;
+      // The capped amount goes to the 'capping_box' wallet
+      const newWallets = { ...profile.wallets };
+      newWallets['capping_box'] = newWallets['capping_box'] || { balance: 0, currency: 'USDT' };
+      newWallets['capping_box'].balance += payableAmount;
 
-      const remainingCapping = capping - currentDailyAmount;
-      if (remainingCapping <= 0) return; // Capped for today
-
-      payableAmount = Math.min(amount, remainingCapping);
-
-      // Update daily income tracking for capping
       await supabase
         .from('profiles')
         .update({ 
-          daily_income: { date: today, amount: currentDailyAmount + payableAmount }
+          wallets: newWallets,
+          total_income: (Number(profile.total_income) || 0) + payableAmount,
+          matching_income: (Number(profile.matching_income) || 0) + payableAmount
         })
         .eq('id', uid);
+      
+      return; // Handled separately for matching bonus
     }
     
     // Update wallet directly
@@ -1059,9 +1206,10 @@ export const supabaseService = {
     let walletKey = 'master'; // default
     if (type === 'referral_bonus') walletKey = 'referral';
     else if (type === 'matching_bonus') walletKey = 'matching';
-    else if (type === 'rank_reward' || type === 'rank_bonus') walletKey = 'rewards';
+    else if (type === 'rank_bonus') walletKey = 'rankBonus';
+    else if (type === 'rank_reward') walletKey = 'rewards';
+    else if (type === 'team_collection') walletKey = 'yield'; 
     else if (type === 'incentive_accrual') walletKey = 'incentive';
-    else if (type === 'team_collection') walletKey = 'matching'; // Assuming team collection goes to matching or similar
 
     newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
     newWallets[walletKey].balance += payableAmount;
@@ -1078,10 +1226,15 @@ export const supabaseService = {
       updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
     } else if (walletKey === 'matching') {
       updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
-    } else if (walletKey === 'rewards') {
+    } else if (walletKey === 'yield') {
+      updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
+    } else if (walletKey === 'rankBonus') {
       updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
-    } else if (walletKey === 'incentive') {
+    } else if (walletKey === 'rewards') {
       updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
+    } else if (walletKey === 'incentive') {
+      // If we have an incentive_income column, we could use it, but here rewards maps to incentive_income
+      // Let's just update total_income and wallets for now if no specific column
     }
 
     await supabase
@@ -1354,7 +1507,7 @@ export const supabaseService = {
       .from('payments')
       .select('*')
       .eq('uid', uid)
-      .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual', 'claim'])
+      .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual', 'claim', 'withdrawal', 'deposit', 'package_activation'])
       .order('created_at', { ascending: false });
 
     // 3. Combine and deduplicate if necessary, or just return the most complete set
@@ -1554,10 +1707,10 @@ export const supabaseService = {
       .eq('id', uid);
     if (profileError) throw profileError;
 
-    // 2. Delete payments
+    // 3. Delete payments
     await supabase.from('payments').delete().eq('uid', uid);
     
-    // 3. Delete team nodes
+    // 4. Delete team nodes
     await supabase.from('team_collection').delete().eq('uid', uid);
 
     return true;
@@ -1602,6 +1755,23 @@ export const supabaseService = {
     if (error) {
       console.warn('Failed to mark notifications as read:', error);
     }
+  },
+
+  async verifyWithdrawalPassword(uid: string, password: string) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('withdrawal_password')
+      .eq('id', uid)
+      .single();
+    
+    if (error || !data) return false;
+    
+    const storedPassword = data.withdrawal_password;
+    // If password is not set, allow any password for now (or handle as error)
+    if (!storedPassword) return true; 
+    
+    // Use robust comparison (trim and string conversion)
+    return String(storedPassword).trim() === String(password).trim();
   },
 
   onNotificationsChange(uid: string, callback: (payload: any) => void) {

@@ -162,8 +162,8 @@ const Dashboard: React.FC = () => {
 
   const [adminStatus, setAdminStatus] = useState<{status: string} | null>(null);
 
-  const fetchAllData = async () => {
-    setLoading(true);
+  const fetchAllData = async (isInitial = false) => {
+    if (isInitial) setLoading(true);
     try {
       // 1. Get current authenticated user
       const { data: { user } } = await supabase.auth.getUser();
@@ -192,15 +192,17 @@ const Dashboard: React.FC = () => {
         const matchingBalance = Number(profile.matching_income ?? 0);
         const rankBalance = Number(profile.rank_income ?? 0);
         const incentiveBalance = Number(profile.incentive_income ?? 0);
-        const binaryBalance = Number(profile.wallet ?? 0); // Map wallet to binary
+        const yieldBalance = Number(profile.yield_income ?? 0);
+        const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
         
         setUserWallets({
           master: { balance: Number(masterBalance), currency: 'USDT' },
           referral: { balance: Number(referralBalance), currency: 'USDT' },
           matching: { balance: Number(matchingBalance), currency: 'USDT' },
-          rewards: { balance: Number(rankBalance), currency: 'USDT' },
-          incentive: { balance: Number(incentiveBalance), currency: 'USDT' },
-          binary: { balance: Number(binaryBalance), currency: 'USDT' },
+          yield: { balance: Number(yieldBalance), currency: 'USDT' },
+          rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+          rewards: { balance: Number(incentiveBalance), currency: 'USDT' },
+          capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
         });
       }
       // 4. Handle transactions
@@ -210,7 +212,7 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 
@@ -220,14 +222,14 @@ const Dashboard: React.FC = () => {
     const transactionsSubscription = supabase
       .channel('public:transactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `uid=eq.${userId}` }, () => {
-        fetchAllData();
+        fetchAllData(false); // Silent refresh
       })
       .subscribe();
     
     const paymentsSubscription = supabase
       .channel('public:payments')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'payments', filter: `uid=eq.${userId}` }, () => {
-        fetchAllData();
+        fetchAllData(false); // Silent refresh
       })
       .subscribe();
 
@@ -262,7 +264,7 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    fetchAllData(true); // Initial load with spinner
 
     // Subscribe to real-time profile updates
     let profileUnsubscribe: (() => void) | undefined;
@@ -279,13 +281,19 @@ const Dashboard: React.FC = () => {
             const masterBalance = updatedProfile.wallet_balance || 0;
             const referralBalance = updatedProfile.referral_income || 0;
             const matchingBalance = updatedProfile.matching_income || 0;
-            const binaryBalance = updatedProfile.wallet || 0;
+            const rankBonusBalance = updatedProfile.rank_income || 0;
+            const rewardsBalance = updatedProfile.incentive_income || 0;
+            const yieldBalance = updatedProfile.yield_income || 0;
+            const cappingBoxBalance = updatedProfile.wallets?.capping_box?.balance || 0;
             
             setUserWallets({ 
               master: { balance: Number(masterBalance), currency: 'USDT' },
               referral: { balance: Number(referralBalance), currency: 'USDT' },
               matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              binary: { balance: Number(binaryBalance), currency: 'USDT' }
+              yield: { balance: Number(yieldBalance), currency: 'USDT' },
+              rankBonus: { balance: Number(rankBonusBalance), currency: 'USDT' },
+              rewards: { balance: Number(rewardsBalance), currency: 'USDT' },
+              capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
             });
           }
         });
@@ -317,7 +325,10 @@ const Dashboard: React.FC = () => {
               master: { balance: Number(profile.wallet_balance || 0), currency: 'USDT' },
               referral: { balance: Number(profile.referral_income || 0), currency: 'USDT' },
               matching: { balance: Number(profile.matching_income || 0), currency: 'USDT' },
-              binary: { balance: Number(profile.wallet || 0), currency: 'USDT' }
+              rankBonus: { balance: Number(profile.rank_income || 0), currency: 'USDT' },
+              rewards: { balance: Number(profile.incentive_income || 0), currency: 'USDT' },
+              yield: { balance: Number(profile.yield_income || 0), currency: 'USDT' },
+              capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
             });
           }
         } catch (err) {
@@ -970,17 +981,6 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex gap-6">
-          <div className="bg-[#121214] border border-white/5 rounded-3xl px-8 py-5 flex items-center gap-6 group hover:border-amber-500/20 transition-all">
-             <div className="p-3 bg-blue-500/10 rounded-xl text-blue-500">
-               <TrendingUp size={22} />
-             </div>
-             <div>
-                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Network Yield</p>
-                <p className="text-xl font-black text-slate-200">+14.2%</p>
-             </div>
-          </div>
-        </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4">
@@ -989,92 +989,46 @@ const Dashboard: React.FC = () => {
           isMaster={true}
           amount={userWallets?.master?.balance || 0}
           buttons={[
-            { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') },
-            { label: 'COLLECT ASSETS', color: 'bg-blue-600 text-white', action: () => navigate('/team-collection') }
+            { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') }
           ]}
         />
       </div>
 
       <div className="max-w-4xl mx-auto px-4 space-y-6">
         {[
-          { key: 'referral', label: 'DIRECT REFERRAL YIELD' },
-          { key: 'capping', label: 'CAPPING INCOME' },
-          { key: 'rewards', label: 'RANK PROTOCOL BONUS' },
-          { key: 'incentive', label: 'INCENTIVE POOL ACCRUAL' }
-        ].map(item => {
-          if (item.key === 'capping') {
-            const today = new Date().toISOString().split('T')[0];
-            const todayMatchingIncome = userData?.daily_income?.date === today ? Number(userData.daily_income.amount || 0) : 0;
-            const userRank = RANKS.find(r => r.level === (userData?.rank || 1));
-            const dailyLimit = Number(userRank?.dailyCapping || 250);
-            
-            return (
-              <div key="capping" className="w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10">
-                <div className="w-full py-3.5 px-6 flex justify-center items-center relative overflow-hidden bg-[#18181b]">
-                  <h3 className="text-white text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-3">
-                    CAPPING INCOME STATUS
-                  </h3>
-                </div>
-                <div className="p-10 text-center bg-[#0d0d0e]">
-                  <div className="flex flex-col items-center mb-10">
-                    <p className="text-4xl font-black text-slate-200 tracking-tight mb-2">
-                      {todayMatchingIncome.toFixed(2)} / {dailyLimit.toFixed(2)}
-                    </p>
-                    <p className="text-[#c0841a] text-[10px] font-black tracking-[0.2em] uppercase">Daily Matching Limit (USDT)</p>
-                    <div className="mt-4 flex flex-col items-center">
-                      <p className="text-2xl font-black text-amber-500 tracking-tight">
-                        ${(userWallets.matching?.balance || 0).toFixed(2)}
-                      </p>
-                      <p className="text-slate-500 text-[8px] font-black tracking-[0.2em] uppercase">Unclaimed Matching Income</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-4">
-                    <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
-                      RANK: {userRank?.name || 'Starter'}
-                    </div>
-                    <div className="px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest bg-[#1e293b] text-slate-400 border border-white/5">
-                      PAIR INCOME: ${userRank?.pairIncome || 5}
-                    </div>
-                    <button 
-                      onClick={() => handleClaim('matching')}
-                      disabled={(userWallets.matching?.balance || 0) <= 0}
-                      className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg border border-white/5 ${
-                        (userWallets.matching?.balance || 0) <= 0 
-                          ? 'opacity-30 cursor-not-allowed bg-[#1e293b] text-slate-400' 
-                          : 'bg-[#a3680e] text-white hover:bg-[#b4791f]'
-                      }`}
-                    >
-                      CLAIM TO VAULT
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-          return (
-            <WalletCardRow 
-              key={item.key}
-              title={item.label}
-              amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
-              buttons={[
-                { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
-                { label: 'DETAILS', action: () => navigate('/master-wallet') }
-              ]}
-            />
-          );
-        })}
-      </div>
+          { key: 'referral', label: '1. DIRECT REFERRAL YIELD' },
+          { key: 'capping_box', label: '2. DAILY CAPPING BOX' },
+          { key: 'matching', label: '3. BINARY MATCHING INCOME' },
+        ].map(item => (
+          <WalletCardRow 
+            key={item.key}
+            title={item.label}
+            amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
+            buttons={[
+              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
+              { label: 'DETAILS', action: () => navigate('/master-wallet') }
+            ]}
+          />
+        ))}
 
-      <div className="bg-slate-900/20 border border-white/5 p-12 rounded-[48px] flex flex-col md:flex-row items-center gap-10">
-        <div className="p-6 bg-blue-500/10 rounded-3xl text-blue-500">
-           <ShieldCheck size={40} />
-        </div>
-        <div className="flex-1 text-center md:text-left">
-          <h4 className="text-xl font-black uppercase tracking-widest text-slate-200">Institutional Settlement Engine</h4>
-          <p className="text-sm text-slate-500 mt-3 leading-relaxed max-w-2xl">
-            Arowin Trading utilizes decentralized verification nodes. All asset yields are distributed in accordance with our transparent proof-of-volume protocol.
-          </p>
-        </div>
+        {/* Removed Capping Status Card as per new per-transaction logic */}
+
+
+        {[
+          { key: 'rankBonus', label: '4. RANK BONUS' },
+          { key: 'rewards', label: '5. REWARD BONUS' },
+          { key: 'yield', label: '6. YIELD INCOME' }
+        ].map(item => (
+          <WalletCardRow 
+            key={item.key}
+            title={item.label}
+            amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
+            buttons={[
+              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
+              { label: 'DETAILS', action: () => navigate('/master-wallet') }
+            ]}
+          />
+        ))}
       </div>
     </div>
   );

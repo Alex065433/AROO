@@ -11,6 +11,7 @@ import Login from './pages/Login';
 import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
 import BinaryTree from './pages/BinaryTree';
+import TeamCollection from './pages/TeamCollection';
 import RankSystem from './pages/RankSystem';
 import ReferralProgram from './pages/ReferralProgram';
 import Rewards from './pages/Rewards';
@@ -19,7 +20,6 @@ import AdminCustomers from './pages/admin/AdminCustomers';
 import AdminTransactions from './pages/admin/AdminTransactions';
 import AdminSettings from './pages/admin/AdminSettings';
 import AdminLogs from './pages/admin/AdminLogs';
-import TeamCollection from './pages/TeamCollection';
 import Profile from './pages/Profile';
 import MasterWallet from './pages/MasterWallet';
 import Help from './pages/Help';
@@ -83,8 +83,8 @@ const App: React.FC = () => {
         <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
-          <Route path="/team-collection" element={<TeamCollection />} />
           <Route path="/binary-tree" element={<BinaryTree />} />
+          <Route path="/team-collection" element={<TeamCollection />} />
           <Route path="/ranks" element={<RankSystem />} />
           <Route path="/rewards" element={<Rewards />} />
           <Route path="/referral" element={<ReferralProgram />} />

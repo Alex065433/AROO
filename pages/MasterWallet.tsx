@@ -28,6 +28,7 @@ const MasterWallet: React.FC = () => {
   
   const [currentDepositAddress, setCurrentDepositAddress] = useState('0xff92bfff708e055593e03ff6fb12dd05e6e09d44');
   const [withdrawalPassword, setWithdrawalPassword] = useState('');
+  const [withdrawalAddress, setWithdrawalAddress] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,12 +45,18 @@ const MasterWallet: React.FC = () => {
             const masterBalance = profile.wallet_balance ?? profile.deposit_wallet ?? (profile.wallets?.master?.balance || 0);
             const referralBalance = profile.wallets?.referral?.balance || 0;
             const matchingBalance = profile.wallets?.matching?.balance || 0;
+            const rankBalance = profile.rank_income || 0;
+            const rewardsBalance = profile.incentive_income || 0;
+            const yieldBalance = profile.yield_income || 0;
             
             setUserWallets({ 
               ...MOCK_USER.wallets, 
               master: { balance: Number(masterBalance), currency: 'USDT' },
               referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' }
+              matching: { balance: Number(matchingBalance), currency: 'USDT' },
+              yield: { balance: Number(yieldBalance), currency: 'USDT' },
+              rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+              rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
             });
           }
 
@@ -69,12 +76,18 @@ const MasterWallet: React.FC = () => {
               const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
               const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
               const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
+              const rankBalance = updatedProfile.rank_income || 0;
+              const rewardsBalance = updatedProfile.incentive_income || 0;
+              const yieldBalance = updatedProfile.yield_income || 0;
               
               setUserWallets({ 
                 ...MOCK_USER.wallets, 
                 master: { balance: Number(masterBalance), currency: 'USDT' },
                 referral: { balance: Number(referralBalance), currency: 'USDT' },
-                matching: { balance: Number(matchingBalance), currency: 'USDT' }
+                matching: { balance: Number(matchingBalance), currency: 'USDT' },
+                yield: { balance: Number(yieldBalance), currency: 'USDT' },
+                rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+                rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
               });
 
               // Re-fetch transactions when profile updates (to show the new fund addition)
@@ -174,7 +187,12 @@ const MasterWallet: React.FC = () => {
 
   const handleAction = async (forcedAmount?: string) => {
     const amountToUse = forcedAmount || exchangeAmount;
-    if (!amountToUse || Number(amountToUse) <= 0) return;
+    const numericAmount = Number(amountToUse);
+    
+    if (!amountToUse || isNaN(numericAmount) || numericAmount <= 0) {
+      setError('Please enter a valid amount greater than 0');
+      return;
+    }
     
     if (activeTab === 'withdraw') {
       if (!userProfile?.active_package) {
@@ -186,20 +204,41 @@ const MasterWallet: React.FC = () => {
         setError('Withdrawal password is required');
         return;
       }
+
+      if (!withdrawalAddress) {
+        setError('Destination address is required');
+        return;
+      }
       
       // Verify withdrawal password
       try {
+        setIsProcessing(true);
         const user = userProfile;
         if (user) {
-          const profile = await supabaseService.getUserProfile(user.id) as any;
-          if (profile && profile.withdrawalPassword !== withdrawalPassword) {
+          const isPasswordValid = await supabaseService.verifyWithdrawalPassword(user.id, withdrawalPassword);
+          if (!isPasswordValid) {
             setError('Incorrect withdrawal password');
+            setIsProcessing(false);
             return;
           }
+
+          // Create withdrawal request
+          await supabaseService.createWithdrawal(user.id, numericAmount, withdrawalAddress);
+          
+          setSuccess(true);
+          setTimeout(() => {
+            setSuccess(false);
+            setActiveTab(null);
+            setExchangeAmount('');
+            setWithdrawalPassword('');
+            setWithdrawalAddress('');
+          }, 2500);
+          return;
         }
-      } catch (err) {
-        console.error('Error verifying withdrawal password:', err);
-        setError('Verification failed. Please try again.');
+      } catch (err: any) {
+        console.error('Error processing withdrawal:', err);
+        setError(err.message || 'Withdrawal failed. Please try again.');
+        setIsProcessing(false);
         return;
       }
     }
@@ -229,7 +268,10 @@ const MasterWallet: React.FC = () => {
               ...MOCK_USER.wallets, 
               master: { balance: Number(masterBalance), currency: 'USDT' },
               referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' }
+              matching: { balance: Number(matchingBalance), currency: 'USDT' },
+              yield: { balance: Number(updatedProfile.yield_income || 0), currency: 'USDT' },
+              rankBonus: { balance: Number(updatedProfile.rank_income || 0), currency: 'USDT' },
+              rewards: { balance: Number(updatedProfile.incentive_income || 0), currency: 'USDT' }
             });
           }
           
@@ -567,14 +609,16 @@ const MasterWallet: React.FC = () => {
                       </p>
                    </div>
 
-                   <div className="space-y-4">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Destination Node Address</label>
-                      <input 
-                        type="text" 
-                        placeholder="Enter Protocol Address" 
-                        className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-5 text-white font-mono text-xs focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
-                      />
-                   </div>
+                    <div className="space-y-4">
+                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Destination Node Address</label>
+                       <input 
+                         type="text" 
+                         value={withdrawalAddress}
+                         onChange={(e) => setWithdrawalAddress(e.target.value)}
+                         placeholder="Enter Protocol Address" 
+                         className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-5 text-white font-mono text-xs focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
+                       />
+                    </div>
 
                    <div className="space-y-4">
                       <label className="text-[10px] font-black text-orange-500 uppercase tracking-widest px-1">Withdrawal Password</label>
@@ -602,10 +646,10 @@ const MasterWallet: React.FC = () => {
                  </div>
                ) : (
                  <button 
-                  onClick={handleAction}
-                  disabled={isProcessing || (activeTab === 'exchange' && !exchangeAmount)}
+                  onClick={() => handleAction()}
+                  disabled={isProcessing || ((activeTab === 'exchange' || activeTab === 'withdraw' || activeTab === 'package') && !exchangeAmount)}
                   className={`w-full font-black py-6 rounded-2xl transition-all active:scale-95 text-xs uppercase tracking-[0.2em] ${
-                    isProcessing || (activeTab === 'exchange' && !exchangeAmount) ? 'bg-slate-900 text-slate-700 cursor-not-allowed' : 'bg-orange-600 text-white shadow-xl shadow-orange-950/20'
+                    isProcessing || ((activeTab === 'exchange' || activeTab === 'withdraw' || activeTab === 'package') && !exchangeAmount) ? 'bg-slate-900 text-slate-700 cursor-not-allowed' : 'bg-orange-600 text-white shadow-xl shadow-orange-950/20'
                   }`}
                 >
                   {isProcessing ? <RefreshCw className="animate-spin mx-auto" size={24} /> : `Authorize ${activeTab === 'exchange' ? 'Conversion' : 'Transaction'}`}
@@ -653,6 +697,29 @@ const MasterWallet: React.FC = () => {
                 <div className="h-[1px] w-12 bg-orange-500/20" />
                 <p className="text-orange-500 text-base font-black uppercase tracking-[0.5em]">Tether (USDT)</p>
                 <div className="h-[1px] w-12 bg-orange-500/20" />
+              </div>
+
+              <div className="mt-12 grid grid-cols-2 md:grid-cols-5 gap-4 relative z-10">
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Referral</p>
+                    <p className="text-sm font-black text-white">${(userWallets?.referral?.balance || 0).toFixed(2)}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Matching</p>
+                    <p className="text-sm font-black text-white">${(userWallets?.matching?.balance || 0).toFixed(2)}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Yield</p>
+                    <p className="text-sm font-black text-white">${(userWallets?.yield?.balance || 0).toFixed(2)}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Rank</p>
+                    <p className="text-sm font-black text-white">${(userWallets?.rankBonus?.balance || 0).toFixed(2)}</p>
+                 </div>
+                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Rewards</p>
+                    <p className="text-sm font-black text-white">${(userWallets?.rewards?.balance || 0).toFixed(2)}</p>
+                 </div>
               </div>
            </div>
 
@@ -708,8 +775,8 @@ const MasterWallet: React.FC = () => {
                 transactions.map((tx, idx) => (
                   <div key={idx} className="flex justify-between items-center group cursor-pointer hover:translate-x-1 transition-all">
                     <div className="flex items-center gap-5">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tx.status === 'finished' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
-                          {tx.status === 'finished' ? <ArrowDownLeft size={18} /> : <RefreshCw size={18} className="animate-spin" />}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tx.status === 'finished' ? (tx.type === 'withdrawal' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20') : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                          {tx.status === 'finished' ? (tx.type === 'withdrawal' ? <ArrowUpRight size={18} /> : <ArrowDownLeft size={18} />) : <RefreshCw size={18} className="animate-spin" />}
                         </div>
                         <div>
                           <p className="text-sm font-bold text-white group-hover:text-orange-500 transition-colors">
@@ -721,8 +788,8 @@ const MasterWallet: React.FC = () => {
                         </div>
                     </div>
                     <div className="text-right">
-                        <span className={`text-sm font-black block ${tx.status === 'finished' ? 'text-emerald-500' : 'text-slate-400'}`}>
-                          {tx.amount > 0 ? '+' : ''}{tx.amount}
+                        <span className={`text-sm font-black block ${tx.status === 'finished' ? (tx.type === 'withdrawal' ? 'text-rose-500' : 'text-emerald-500') : 'text-slate-400'}`}>
+                          {tx.type === 'withdrawal' ? '-' : (tx.amount > 0 ? '+' : '')}{tx.amount}
                         </span>
                         <span className="text-[8px] font-black text-slate-700 uppercase">{tx.status}</span>
                     </div>
