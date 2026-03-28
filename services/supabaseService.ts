@@ -396,20 +396,21 @@ export const supabaseService = {
     if (error) throw error;
   },
 
-  async getUserProfile(uid: string) {
+  async getUserProfile(uid: string, columns: string = '*') {
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select(columns)
       .eq('id', uid)
       .single();
     if (error) return null;
     
+    const profile = data as any;
     // Force admin role for the owner
-    if (data.email === 'kethankumar130@gmail.com') {
-      data.role = 'admin';
+    if (profile.email === 'kethankumar130@gmail.com') {
+      profile.role = 'admin';
     }
     
-    return data;
+    return profile;
   },
 
   // Package Activation

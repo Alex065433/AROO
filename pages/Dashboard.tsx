@@ -183,25 +183,19 @@ const Dashboard: React.FC = () => {
 
       // 3. Handle profile data
       if (profileResponse) {
-  setUserData(profileResponse);
+        const profile = profileResponse as any;
+        console.log('profileResponse:', profile);
+        setUserData(profile);
 
-  const masterBalance =
-    profileResponse.wallet_balance ??
-    profileResponse.deposit_wallet ??
-    (profileResponse.wallets?.master?.balance || 0);
-
-  const referralBalance =
-    profileResponse.wallets?.referral?.balance || 0;
-
-  const matchingBalance =
-    profileResponse.wallets?.matching?.balance || 0;
-
-  setUserWallets({
-    master: { balance: Number(masterBalance), currency: 'USDT' },
-    referral: { balance: Number(referralBalance), currency: 'USDT' },
-    matching: { balance: Number(matchingBalance), currency: 'USDT' },
-  });
-}
+        const masterBalance = Number(profile.wallet_balance ?? 0);
+const referralBalance = Number(profile.referral_income ?? 0);
+const matchingBalance = Number(profile.matching_income ?? 0);
+        setUserWallets({
+          master: { balance: Number(masterBalance), currency: 'USDT' },
+          referral: { balance: Number(referralBalance), currency: 'USDT' },
+          matching: { balance: Number(matchingBalance), currency: 'USDT' },
+        });
+      }
       // 4. Handle transactions
       console.log("USER ID:", userId);
       console.log("INCOME TRANSACTIONS:", transactionsData);
@@ -252,12 +246,11 @@ const Dashboard: React.FC = () => {
           if (updatedProfile && isMounted) {
             setUserData(updatedProfile);
             // Use nullish coalescing for better robustness
-            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
-            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
+            const masterBalance = updatedProfile.wallet_balance || 0;
+            const referralBalance = updatedProfile.referral_income || 0;
+            const matchingBalance = updatedProfile.matching_income || 0;
             
             setUserWallets({ 
-              ...MOCK_USER.wallets, 
               master: { balance: Number(masterBalance), currency: 'USDT' },
               referral: { balance: Number(referralBalance), currency: 'USDT' },
               matching: { balance: Number(matchingBalance), currency: 'USDT' }
@@ -288,7 +281,11 @@ const Dashboard: React.FC = () => {
           const profile = await supabaseService.getUserProfile(session.user.id);
           if (profile && isMounted) {
             setUserData(profile);
-            setUserWallets(profile.wallets || MOCK_USER.wallets);
+            setUserWallets({
+              master: { balance: Number(profile.wallet_balance || 0), currency: 'USDT' },
+              referral: { balance: Number(profile.referral_income || 0), currency: 'USDT' },
+              matching: { balance: Number(profile.matching_income || 0), currency: 'USDT' },
+            });
           }
         } catch (err) {
           console.error('Error updating profile on auth change:', err);
