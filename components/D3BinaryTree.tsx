@@ -14,8 +14,8 @@ interface NodeData {
   status: 'Active' | 'Pending' | 'Vacant';
   joinDate: string;
   totalTeam: number;
-  leftVolume: string;
-  rightVolume: string;
+  leftBusiness: string;
+  rightBusiness: string;
   parentId: string | null;
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
@@ -361,7 +361,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             .attr("y", 28)
             .attr("fill", "rgba(255,255,255,0.4)")
             .attr("font-size", "7px")
-            .text(`(${d.data.leftVolume})`);
+            .text(`(${d.data.leftBusiness})`);
 
           // Right Leg
           statsGroup.append("text")
@@ -379,7 +379,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             .attr("y", 28)
             .attr("fill", "rgba(255,255,255,0.4)")
             .attr("font-size", "7px")
-            .text(`(${d.data.rightVolume})`);
+            .text(`(${d.data.rightBusiness})`);
             
           // Total Badge
           const totalBadge = el.append("g").attr("transform", `translate(0, ${-nodeHeight/2})`);

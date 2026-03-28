@@ -12,8 +12,8 @@ interface NodeData {
   status: 'Active' | 'Pending' | 'Vacant';
   joinDate: string;
   totalTeam: number;
-  leftVolume: string;
-  rightVolume: string;
+  leftBusiness: string;
+  rightBusiness: string;
   parentId: string | null;
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;

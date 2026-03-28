@@ -188,12 +188,14 @@ const Dashboard: React.FC = () => {
         setUserData(profile);
 
         const masterBalance = Number(profile.wallet_balance ?? 0);
-const referralBalance = Number(profile.referral_income ?? 0);
-const matchingBalance = Number(profile.matching_income ?? 0);
+        const referralBalance = Number(profile.referral_income ?? 0);
+        const matchingBalance = Number(profile.matching_income ?? 0);
+        const binaryBalance = Number(profile.wallet ?? 0); // Map wallet to binary
         setUserWallets({
           master: { balance: Number(masterBalance), currency: 'USDT' },
           referral: { balance: Number(referralBalance), currency: 'USDT' },
           matching: { balance: Number(matchingBalance), currency: 'USDT' },
+          binary: { balance: Number(binaryBalance), currency: 'USDT' },
         });
       }
       // 4. Handle transactions
@@ -206,6 +208,29 @@ const matchingBalance = Number(profile.matching_income ?? 0);
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!userData) return;
+    const userId = userData.id;
+    const transactionsSubscription = supabase
+      .channel('public:transactions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `uid=eq.${userId}` }, () => {
+        fetchAllData();
+      })
+      .subscribe();
+    
+    const paymentsSubscription = supabase
+      .channel('public:payments')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'payments', filter: `uid=eq.${userId}` }, () => {
+        fetchAllData();
+      })
+      .subscribe();
+
+    return () => {
+      transactionsSubscription.unsubscribe();
+      paymentsSubscription.unsubscribe();
+    };
+  }, [userData]);
 
   const handleDeposit = async () => {
     if (!userData) return;
@@ -249,11 +274,13 @@ const matchingBalance = Number(profile.matching_income ?? 0);
             const masterBalance = updatedProfile.wallet_balance || 0;
             const referralBalance = updatedProfile.referral_income || 0;
             const matchingBalance = updatedProfile.matching_income || 0;
+            const binaryBalance = updatedProfile.wallet || 0;
             
             setUserWallets({ 
               master: { balance: Number(masterBalance), currency: 'USDT' },
               referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' }
+              matching: { balance: Number(matchingBalance), currency: 'USDT' },
+              binary: { balance: Number(binaryBalance), currency: 'USDT' }
             });
           }
         });
@@ -285,6 +312,7 @@ const matchingBalance = Number(profile.matching_income ?? 0);
               master: { balance: Number(profile.wallet_balance || 0), currency: 'USDT' },
               referral: { balance: Number(profile.referral_income || 0), currency: 'USDT' },
               matching: { balance: Number(profile.matching_income || 0), currency: 'USDT' },
+              binary: { balance: Number(profile.wallet || 0), currency: 'USDT' }
             });
           }
         } catch (err) {
@@ -346,8 +374,11 @@ const matchingBalance = Number(profile.matching_income ?? 0);
 
   const handleClaim = async (walletKey: string) => {
     setIsProcessing(true);
+    console.log('Claiming wallet:', walletKey);
     try {
+      if (!walletKey) throw new Error('Invalid wallet key');
       await supabaseService.claimWallet(walletKey);
+      console.log('Claim successful');
       setNotification(`Successfully claimed to Vault`);
       
       // Refresh user data

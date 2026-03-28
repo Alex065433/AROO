@@ -26,8 +26,8 @@ interface NodeData {
   status: 'Active' | 'Pending' | 'Vacant';
   joinDate: string;
   totalTeam: number;
-  leftVolume: string;
-  rightVolume: string;
+  leftBusiness: string;
+  rightBusiness: string;
   parentId: string | null;
   side: 'LEFT' | 'RIGHT' | 'ROOT';
   uid?: string;
@@ -37,7 +37,7 @@ interface NodeData {
 }
 
 const TREE_DATA: Record<string, NodeData> = {
-  'root': { id: 'ARW-XXXX', name: 'Loading...', rank: 'Partner', status: 'Active', joinDate: '2024-01-01', totalTeam: 0, leftVolume: '0.00', rightVolume: '0.00', parentId: null, side: 'ROOT' },
+  'root': { id: 'ARW-XXXX', name: 'Loading...', rank: 'Partner', status: 'Active', joinDate: '2024-01-01', totalTeam: 0, leftBusiness: '0.00', rightBusiness: '0.00', parentId: null, side: 'ROOT' },
 };
 
 const BinaryTree: React.FC = () => {
@@ -676,13 +676,13 @@ const BinaryTree: React.FC = () => {
               <div className="flex-1 space-y-6 overflow-y-auto custom-scrollbar pr-2">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-5 bg-white/5 rounded-3xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Left Volume</p>
-                    <p className="text-lg font-black text-white mt-1">{selectedNode.leftVolume} <span className="text-[10px] opacity-50">USDT</span></p>
+                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Left Business</p>
+                    <p className="text-lg font-black text-white mt-1">{selectedNode.leftBusiness} <span className="text-[10px] opacity-50">USDT</span></p>
                     <p className="text-[10px] text-orange-500 font-bold mt-1">L: {selectedNode.team_size?.left || 0}</p>
                   </div>
                   <div className="p-5 bg-white/5 rounded-3xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Right Volume</p>
-                    <p className="text-lg font-black text-white mt-1">{selectedNode.rightVolume} <span className="text-[10px] opacity-50">USDT</span></p>
+                    <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Right Business</p>
+                    <p className="text-lg font-black text-white mt-1">{selectedNode.rightBusiness} <span className="text-[10px] opacity-50">USDT</span></p>
                     <p className="text-[10px] text-orange-500 font-bold mt-1">R: {selectedNode.team_size?.right || 0}</p>
                   </div>
                 </div>

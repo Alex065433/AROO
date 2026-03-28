@@ -491,13 +491,16 @@ export const supabaseService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
-    const { error } = await supabase.rpc('claim_wallet', {
-      p_uid: user.id,
+    const { data, error } = await supabase.rpc('claim_wallet', {
+      p_user_id: user.id,
       p_wallet_key: walletKey
     });
 
     if (error) throw error;
-    return true;
+    if (data && !data.success) {
+      throw new Error(data.message || 'Failed to claim wallet');
+    }
+    return data;
   },
 
   async processWeeklyIncome() {
@@ -835,8 +838,8 @@ export const supabaseService = {
         joinDate: node.created_at?.split('T')[0] || 'N/A',
         totalTeam: leftCount + rightCount,
         team_size: { left: leftCount, right: rightCount },
-        leftVolume: ((node.matching_volume?.left || 0) * 50).toFixed(2),
-        rightVolume: ((node.matching_volume?.right || 0) * 50).toFixed(2),
+        leftBusiness: ((node.matching_volume?.left || 0) * 50).toFixed(2),
+        rightBusiness: ((node.matching_volume?.right || 0) * 50).toFixed(2),
         parentId: node.parent_id,
         sponsorId: node.sponsor_id,
         email: node.email,
@@ -889,8 +892,8 @@ export const supabaseService = {
         status: child.active_package > 0 ? 'Active' : 'Pending',
         joinDate: child.created_at?.split('T')[0],
         totalTeam: (child.team_size?.left || 0) + (child.team_size?.right || 0),
-        leftVolume: (child.matching_volume?.left || 0).toFixed(2) || '0.00',
-        rightVolume: (child.matching_volume?.right || 0).toFixed(2) || '0.00',
+        leftBusiness: (child.matching_volume?.left || 0).toFixed(2) || '0.00',
+        rightBusiness: (child.matching_volume?.right || 0).toFixed(2) || '0.00',
         parentId: child.parent_id,
         side: child.side || 'ROOT',
         uid: child.id
@@ -1024,7 +1027,7 @@ export const supabaseService = {
       .from('payments')
       .select('*')
       .eq('uid', uid)
-      .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual'])
+      .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual', 'claim'])
       .order('created_at', { ascending: false });
 
     // 3. Combine and deduplicate if necessary, or just return the most complete set

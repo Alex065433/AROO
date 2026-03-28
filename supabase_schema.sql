@@ -690,7 +690,7 @@ BEGIN
                 NEW.uid::uuid,
                 'NODE-' || substring(gen_random_uuid()::text from 1 for 8) || '-' || i,
                 'Node ' || i || ' (Package ' || v_package_amount || ')',
-                0,
+                50,
                 true,
                 NOW()
             FROM generate_series(1, CASE 
@@ -991,7 +991,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Function to claim a specific wallet balance to the master vault
 CREATE OR REPLACE FUNCTION public.claim_wallet(p_user_id UUID, p_wallet_key TEXT)
-RETURNS VOID AS $$
+RETURNS JSONB AS $$
 DECLARE
     v_balance NUMERIC;
 BEGIN
@@ -1001,19 +1001,14 @@ BEGIN
     WHERE id = p_user_id::uuid;
 
     IF v_balance > 0 THEN
-        -- Deduct from specific wallet
+        -- Update master wallet and deduct from specific wallet atomically
         UPDATE public.profiles
         SET wallets = jsonb_set(
-            wallets,
-            ARRAY[p_wallet_key, 'balance'],
-            '0'::jsonb
-        )
-        WHERE id = p_user_id::uuid;
-
-        -- Add to master wallet
-        UPDATE public.profiles
-        SET wallets = jsonb_set(
-            wallets,
+            jsonb_set(
+                wallets,
+                ARRAY[p_wallet_key, 'balance'],
+                '0'::jsonb
+            ),
             ARRAY['master', 'balance'],
             to_jsonb((COALESCE(wallets->'master'->>'balance', '0'))::numeric + v_balance)
         )
@@ -1022,6 +1017,10 @@ BEGIN
         -- Log transaction
         INSERT INTO public.payments (uid, amount, type, status, order_description, created_at)
         VALUES (p_user_id::uuid, v_balance, 'claim', 'finished', 'Claimed ' || p_wallet_key || ' to Master Vault', NOW());
+        
+        RETURN jsonb_build_object('success', true, 'claimed', v_balance);
+    ELSE
+        RETURN jsonb_build_object('success', false, 'message', 'No balance to claim');
     END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
