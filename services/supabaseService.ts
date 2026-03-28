@@ -449,7 +449,10 @@ export const supabaseService = {
       if (!userProfile) throw new Error("User not found");
 
       // 2. Check and deduct balance if not free
-      if (finalAmount > 0) {
+      const isAdmin = userProfile.email === 'kethankumar130@gmail.com' || userProfile.role === 'admin';
+      const shouldSkipBalanceCheck = isFree || isAdmin;
+
+      if (finalAmount > 0 && !shouldSkipBalanceCheck) {
         // Check all possible balance sources
         const masterBalance = Number(userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0));
         
@@ -518,6 +521,9 @@ export const supabaseService = {
         }
 
         // Update user's own business counts for their internal tree (for rank qualification)
+        // Formula: (nodes - 1) / 2 gives the units on each side
+        // Starter (3 nodes) -> 1 unit left, 1 unit right (Qualifies for Starter rank)
+        // Bronze (7 nodes) -> 3 units left, 3 units right (Qualifies for Bronze rank)
         const internalCount = (packageData.nodes - 1) / 2;
         if (internalCount > 0) {
           await supabase.from('profiles').update({
@@ -533,12 +539,13 @@ export const supabaseService = {
         if (numIds > 0) {
           const nodesToCreate = [];
           const numRankNodes = (numIds + 1) / 2;
+          const timestamp = Date.now().toString().slice(-6);
           
           for (let i = 0; i < numIds; i++) {
             // Only the first numRankNodes are "Rank Nodes"
             nodesToCreate.push({
               uid: uid,
-              node_id: `${userProfile.operator_id}-ID${i + 1}`,
+              node_id: `${userProfile.operator_id}-ID${timestamp}-${i + 1}`,
               name: `${userProfile.name} Node ${i + 1}`,
               balance: 0,
               eligible: i < numRankNodes, // First N nodes are rank nodes
@@ -547,7 +554,6 @@ export const supabaseService = {
             });
           }
           
-          await supabase.from('team_collection').delete().eq('uid', uid);
           const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
           if (nodeError) console.error('Failed to create team nodes:', nodeError);
         }
@@ -561,7 +567,12 @@ export const supabaseService = {
 
       // 5. Update Team Business & Team Size up the tree
       const pkg = PACKAGES.find(p => p.price === amount);
-      const nodesToAdd = pkg ? pkg.nodes : 1;
+      // Rank Units logic:
+      // Activation (1 node) -> 1 unit
+      // Starter (3 nodes) -> 1 unit (User said "3 starters for Bronze", so 1 Starter pkg = 1 unit)
+      // Bronze (7 nodes) -> 3 units (1 Bronze pkg = 3 units = Bronze rank)
+      // Silver (15 nodes) -> 7 units (1 Silver pkg = 7 units = Silver rank)
+      const rankUnitsToAdd = pkg ? Math.max(1, (pkg.nodes - 1) / 2) : 1;
 
       let currentId = uid;
       while (true) {
@@ -591,12 +602,12 @@ export const supabaseService = {
 
           if (side === 'LEFT') {
             updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
-            updateData.left_count = (Number(parentProfile.left_count) || 0) + nodesToAdd;
-            newTeamSize.left += nodesToAdd;
+            updateData.left_count = (Number(parentProfile.left_count) || 0) + rankUnitsToAdd;
+            newTeamSize.left += rankUnitsToAdd;
           } else if (side === 'RIGHT') {
             updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
-            updateData.right_count = (Number(parentProfile.right_count) || 0) + nodesToAdd;
-            newTeamSize.right += nodesToAdd;
+            updateData.right_count = (Number(parentProfile.right_count) || 0) + rankUnitsToAdd;
+            newTeamSize.right += rankUnitsToAdd;
           }
           
           updateData.team_size = newTeamSize;
@@ -774,7 +785,7 @@ export const supabaseService = {
       if (!profile || !profile.active_package) return [];
 
       const packageData = PACKAGES.find(p => p.price === profile.active_package);
-      if (!packageData || packageData.weeklyEarning <= 0) return [];
+      if (!packageData) return [];
 
       // 2. Fetch nodes
       const { data: nodes, error } = await supabase

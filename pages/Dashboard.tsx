@@ -5,7 +5,7 @@ import {
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
-  QrCode, Search, ShieldAlert
+  QrCode, Search, ShieldAlert, Package
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
@@ -794,10 +794,31 @@ const Dashboard: React.FC = () => {
                         {isProcessing ? <RefreshCw className="animate-spin" size={14} /> : 'INJECT'}
                       </button>
                     </div>
+
+                    <button 
+                      onClick={async () => {
+                        if (!adminFoundUser) return;
+                        setIsProcessing(true);
+                        try {
+                          await supabaseService.activatePackage(adminFoundUser.id, 1550, { isFree: true });
+                          setNotification(`System: Gold Node (1550 USDT) Activated for ${adminFoundUser.username || adminFoundUser.operator_id}`);
+                          handleAdminSearch(); // Refresh searched user data
+                        } catch (err) {
+                          console.error('Package Activation Failed:', err);
+                          setNotification("Activation Failed: " + (err as Error).message);
+                        }
+                        setIsProcessing(false);
+                      }}
+                      disabled={isProcessing}
+                      className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-3 rounded-xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-2 mt-2"
+                    >
+                      {isProcessing ? <RefreshCw className="animate-spin" size={14} /> : <Package size={14} />}
+                      ACTIVATE GOLD NODE (1550 USDT) FREE
+                    </button>
                   </motion.div>
                 )}
 
-                <div className="pt-4 border-t border-white/5">
+                <div className="pt-4 border-t border-white/5 space-y-2">
                   <button 
                     onClick={async () => {
                       setIsProcessing(true);
@@ -815,6 +836,27 @@ const Dashboard: React.FC = () => {
                   >
                     {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
                     ADD 10,000 USDT TO MY WALLET
+                  </button>
+
+                  <button 
+                    onClick={async () => {
+                      setIsProcessing(true);
+                      try {
+                        // Activate Gold Node (1550 USDT) for free for the admin
+                        await supabaseService.activatePackage(userData.id, 1550, { isFree: true });
+                        setNotification("System: Gold Node (1550 USDT) Activated for Free");
+                        fetchAllData();
+                      } catch (err) {
+                        console.error('Package Activation Failed:', err);
+                        setNotification("Activation Failed: " + (err as Error).message);
+                      }
+                      setIsProcessing(false);
+                    }}
+                    disabled={isProcessing}
+                    className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
+                  >
+                    {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Package size={16} />}
+                    ACTIVATE GOLD NODE (1550 USDT) FOR FREE
                   </button>
                 </div>
               </div>
