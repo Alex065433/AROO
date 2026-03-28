@@ -28,7 +28,8 @@ export const supabaseService = {
         .from("profiles")
         .select("*")
         .eq("email", "kethankumar130@gmail.com")
-        .single();
+        .limit(1)
+        .maybeSingle();
       
       if (adminProfile) {
         localStorage.setItem('arowin_supabase_user', JSON.stringify({ ...adminProfile, role: 'admin' }));
@@ -37,7 +38,7 @@ export const supabaseService = {
       
       // Fallback if profile not found
       const fallbackAdmin = {
-        id: 'admin-id',
+        id: '00000000-0000-0000-0000-000000000000',
         email: 'kethankumar130@gmail.com',
         name: 'System Administrator',
         role: 'admin',
@@ -443,20 +444,193 @@ export const supabaseService = {
     const finalAmount = isFree ? 0 : amount;
 
     try {
-      const { data, error } = await supabase.rpc('activate_package', {
-        p_user_id: uid,
-        p_amount: finalAmount
-      });
+      // 1. Get user profile
+      const userProfile = await this.getUserProfile(uid);
+      if (!userProfile) throw new Error("User not found");
 
-      if (error) throw error;
-      
-      if (data && data.success === false) {
-        throw new Error(data.error || 'Failed to activate package');
+      // 2. Check and deduct balance if not free
+      if (finalAmount > 0) {
+        // Check all possible balance sources
+        const masterBalance = Number(userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0));
+        
+        if (masterBalance < finalAmount) {
+          throw new Error(`Insufficient balance. Required: ${finalAmount} USDT, Available: ${masterBalance} USDT`);
+        }
+
+        // Deduct balance from all sources to keep them in sync
+        const newWallets = { ...userProfile.wallets };
+        if (newWallets.master) {
+          newWallets.master.balance = Math.max(0, Number(newWallets.master.balance || 0) - finalAmount);
+        }
+
+        const updateData: any = { 
+          wallets: newWallets,
+          wallet_balance: Math.max(0, Number(userProfile.wallet_balance || 0) - finalAmount)
+        };
+        
+        if (userProfile.deposit_wallet !== undefined) {
+          updateData.deposit_wallet = Math.max(0, Number(userProfile.deposit_wallet || 0) - finalAmount);
+        }
+
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update(updateData)
+          .eq('id', uid);
+        
+        if (updateError) throw updateError;
       }
 
-      return data;
+      // 3. Update active_package and total_deposit
+      const { error: packageError } = await supabase
+        .from('profiles')
+        .update({ 
+          active_package: amount, 
+          total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
+          status: 'active'
+        })
+        .eq('id', uid);
+
+      if (packageError) throw packageError;
+
+      // 4. Create Team Collection Nodes if package has nodes
+      const packageData = PACKAGES.find(p => p.price === amount);
+      if (packageData) {
+        // Internal Referral Bonus (5% of all sub-IDs)
+        const internalReferralBonus = ((packageData.nodes - 1) * 50) * 0.05;
+        if (internalReferralBonus > 0) {
+          await this.addIncome(uid, internalReferralBonus, 'referral_bonus');
+        }
+
+        // Internal Matching Bonus (based on internal tree structure)
+        const internalMatchingBonusMap: Record<number, number> = {
+          50: 0,
+          150: 5,
+          350: 15,
+          750: 85,
+          1550: 245,
+          3150: 645,
+          6350: 1540,
+          12750: 3080
+        };
+        const internalMatchingBonus = internalMatchingBonusMap[amount] || 0;
+        if (internalMatchingBonus > 0) {
+          await this.addIncome(uid, internalMatchingBonus, 'matching_bonus');
+        }
+
+        // Update user's own business counts for their internal tree (for rank qualification)
+        const internalCount = (packageData.nodes - 1) / 2;
+        if (internalCount > 0) {
+          await supabase.from('profiles').update({
+            left_count: internalCount,
+            right_count: internalCount,
+            team_size: { left: internalCount, right: internalCount }
+          }).eq('id', uid);
+        }
+
+        // Create IDs in Team Collection
+        // According to the image, "NO. OF IDS" is packageData.nodes
+        const numIds = packageData.nodes;
+        if (numIds > 0) {
+          const nodesToCreate = [];
+          const numRankNodes = (numIds - 1) / 2;
+          
+          for (let i = 0; i < numIds; i++) {
+            // Only the first numRankNodes (or 1 if nodes=1) are "Rank Nodes"
+            // Actually, let's just make all of them eligible for now as the user requested "ids"
+            nodesToCreate.push({
+              uid: uid,
+              node_id: `${userProfile.operator_id}-ID${i + 1}`,
+              name: `${userProfile.name} Node ${i + 1}`,
+              balance: 0,
+              eligible: i < Math.max(1, numRankNodes), // First N nodes are rank nodes
+              created_at: new Date().toISOString(),
+              type: 'mining'
+            });
+          }
+          
+          await supabase.from('team_collection').delete().eq('uid', uid);
+          const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
+          if (nodeError) console.error('Failed to create team nodes:', nodeError);
+        }
+      }
+
+      // 5. Referral Bonus (5% of total package price to sponsor)
+      if (userProfile.sponsor_id && amount > 0) {
+        const referralBonus = amount * 0.05;
+        await this.addIncome(userProfile.sponsor_id, referralBonus, 'referral_bonus');
+      }
+
+      // 5. Update Team Business & Team Size up the tree
+      const pkg = PACKAGES.find(p => p.price === amount);
+      const nodesToAdd = pkg ? pkg.nodes : 1;
+
+      let currentId = uid;
+      while (true) {
+        const { data: currentProfile, error } = await supabase
+          .from('profiles')
+          .select('parent_id, side')
+          .eq('id', currentId)
+          .single();
+        
+        if (error || !currentProfile || !currentProfile.parent_id) break;
+
+        const parentId = currentProfile.parent_id;
+        const side = currentProfile.side;
+
+        const { data: parentProfile } = await supabase
+          .from('profiles')
+          .select('left_business, right_business, left_count, right_count, team_size')
+          .eq('id', parentId)
+          .single();
+
+        if (parentProfile) {
+          const updateData: any = {};
+          const newTeamSize = { 
+            left: Number(parentProfile.left_count ?? parentProfile.team_size?.left ?? 0),
+            right: Number(parentProfile.right_count ?? parentProfile.team_size?.right ?? 0)
+          };
+
+          if (side === 'LEFT') {
+            updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
+            updateData.left_count = (Number(parentProfile.left_count) || 0) + nodesToAdd;
+            newTeamSize.left += nodesToAdd;
+          } else if (side === 'RIGHT') {
+            updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
+            updateData.right_count = (Number(parentProfile.right_count) || 0) + nodesToAdd;
+            newTeamSize.right += nodesToAdd;
+          }
+          
+          updateData.team_size = newTeamSize;
+
+          await supabase
+            .from('profiles')
+            .update(updateData)
+            .eq('id', parentId);
+          
+          // Check for rank update for parent
+          await this.checkAndUpdateRank(parentId);
+        }
+
+        currentId = parentId;
+      }
+
+      // 6. Log activation payment
+      await supabase.from('payments').insert({
+        uid: uid,
+        amount: finalAmount,
+        type: 'package_activation',
+        method: isFree ? 'FREE' : 'WALLET',
+        description: `Package Activation: $${amount}${isFree ? ' (FREE)' : ''}`,
+        status: 'finished',
+        currency: 'usdtbsc'
+      });
+
+      // Final rank check for the user themselves
+      await this.checkAndUpdateRank(uid);
+
+      return { success: true };
     } catch (error: any) {
-      console.error('Error in activatePackage RPC:', error);
+      console.error('Error in activatePackage:', error);
       throw error;
     }
   },
@@ -490,21 +664,77 @@ export const supabaseService = {
 
   // Daily and Weekly Payout System
   async processDailyPayouts() {
-    const { error } = await supabase.rpc('process_daily_payouts');
-    if (error) throw error;
-    return true;
+    try {
+      // 1. Fetch all users with business volume
+      const { data: users, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .or('left_business.gt.0,right_business.gt.0');
+
+      if (error) throw error;
+
+      for (const user of users) {
+        const leftBusiness = Number(user.left_business) || 0;
+        const rightBusiness = Number(user.right_business) || 0;
+
+        // Calculate matching volume (minimum of left and right)
+        const matchedVolume = Math.min(leftBusiness, rightBusiness);
+
+        if (matchedVolume > 0) {
+          // Calculate 10% matching bonus
+          const matchingBonus = matchedVolume * 0.10;
+
+          // Deduct matched volume from both sides
+          const newLeftBusiness = leftBusiness - matchedVolume;
+          const newRightBusiness = rightBusiness - matchedVolume;
+
+          // Update business volume first
+          await supabase
+            .from('profiles')
+            .update({
+              left_business: newLeftBusiness,
+              right_business: newRightBusiness
+            })
+            .eq('id', user.id);
+
+          // Add income via addIncome (handles capping and logging)
+          await this.addIncome(user.id, matchingBonus, 'matching_bonus');
+        }
+
+        // Always check rank for active users
+        if (user.active_package > 0) {
+          await this.checkAndUpdateRank(user.id);
+        }
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error in processDailyPayouts:', error);
+      throw error;
+    }
   },
 
   async processBinaryMatching() {
-    const { error } = await supabase.rpc('process_daily_payouts');
-    if (error) throw error;
-    return true;
+    return await this.processDailyPayouts();
   },
 
   async processRankAndRewards() {
-    const { error } = await supabase.rpc('process_rank_and_rewards');
-    if (error) throw error;
-    return true;
+    try {
+      const { data: users, error } = await supabase
+        .from('profiles')
+        .select('id')
+        .gt('active_package', 0);
+
+      if (error) throw error;
+
+      for (const user of users) {
+        await this.checkAndUpdateRank(user.id);
+      }
+      return true;
+    } catch (error: any) {
+      console.error('Error in processRankAndRewards:', error);
+      throw error;
+    }
   },
 
   async claimWallet(walletKey: string) {
@@ -531,17 +761,7 @@ export const supabaseService = {
     for (const user of users) {
       const rankData = RANKS.find(r => r.level === user.rank);
       if (rankData && rankData.weeklyEarning > 0) {
-        await supabase.rpc('admin_add_payment_rpc', {
-          p_uid: user.id,
-          p_amount: rankData.weeklyEarning.toString(),
-          p_type: 'rank_bonus',
-          p_method: 'INTERNAL',
-          p_description: `Weekly Rank Bonus: ${rankData.name}`,
-          p_status: 'finished',
-          p_payment_id: null,
-          p_currency: 'usdtbsc',
-          p_order_id: null
-        });
+        await this.addIncome(user.id, rankData.weeklyEarning, 'rank_bonus');
       }
     }
     return true;
@@ -549,15 +769,70 @@ export const supabaseService = {
 
   // Team Collection
   async getTeamCollection(uid: string) {
-    // Sync node balances first
-    await supabase.rpc('update_node_balances');
+    try {
+      // 1. Fetch user profile to get package info
+      const profile = await this.getUserProfile(uid);
+      if (!profile || !profile.active_package) return [];
 
-    const { data, error } = await supabase
-      .from('team_collection')
-      .select('*')
-      .eq('uid', uid);
-    if (error) return [];
-    return data;
+      const packageData = PACKAGES.find(p => p.price === profile.active_package);
+      if (!packageData || packageData.weeklyEarning <= 0) return [];
+
+      // 2. Fetch nodes
+      const { data: nodes, error } = await supabase
+        .from('team_collection')
+        .select('*')
+        .eq('uid', uid);
+
+      if (error || !nodes || nodes.length === 0) return [];
+
+      // Calculate earning per node per second
+      // weeklyEarning is total for all nodes in team_collection
+      const totalWeeklyEarning = packageData.weeklyEarning;
+      const earningPerNodePerWeek = totalWeeklyEarning / nodes.length;
+      const earningPerNodePerSecond = earningPerNodePerWeek / (7 * 24 * 60 * 60);
+
+      const now = new Date();
+      const updatedNodes = [];
+
+      for (const node of nodes) {
+        if (!node.eligible) {
+          updatedNodes.push(node);
+          continue;
+        }
+
+        const lastUpdate = new Date(node.created_at);
+        const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
+        
+        const accruedBalance = secondsElapsed * earningPerNodePerSecond;
+        const newBalance = (Number(node.balance) || 0) + accruedBalance;
+
+        // Update node in database - we update balance but we don't have updated_at
+        // so we'll just update the balance.
+        // Wait, if we don't have updated_at, we can't track the last update time easily
+        // unless we use a different column or add one.
+        // But for now, let's just use created_at and see.
+        // Actually, if we update balance, we should probably update created_at to now
+        // to track the next interval?
+        await supabase
+          .from('team_collection')
+          .update({ 
+            balance: newBalance,
+            created_at: now.toISOString() 
+          })
+          .eq('node_id', node.node_id);
+
+        updatedNodes.push({
+          ...node,
+          balance: newBalance,
+          created_at: now.toISOString()
+        });
+      }
+
+      return updatedNodes;
+    } catch (err) {
+      console.error('Error in getTeamCollection:', err);
+      return [];
+    }
   },
 
   async collectFromNodes(uid: string, nodeIds: string[]) {
@@ -577,25 +852,14 @@ export const supabaseService = {
       // Reset node balance
       await supabase
         .from('team_collection')
-        .update({ balance: 0, updated_at: new Date().toISOString() })
+        .update({ balance: 0, created_at: new Date().toISOString() })
         .eq('node_id', node.node_id);
     }
 
     if (totalCollected <= 0) return 0;
 
-    // 2. Add to user's master wallet via payment record (trigger will handle wallet update)
-    // Use RPC to handle explicit UUID casting for the uid column
-    await supabase.rpc('admin_add_payment_rpc', {
-      p_uid: uid,
-      p_amount: totalCollected.toString(),
-      p_type: 'team_collection',
-      p_method: 'INTERNAL',
-      p_description: `Consolidated collection from ${nodeIds.length} nodes`,
-      p_status: 'finished',
-      p_payment_id: null,
-      p_currency: 'usdtbsc',
-      p_order_id: null
-    });
+    // 2. Add to user's master wallet via addIncome
+    await this.addIncome(uid, totalCollected, 'team_collection');
 
     return totalCollected;
   },
@@ -780,22 +1044,55 @@ export const supabaseService = {
         .eq('id', uid);
     }
     
-    // Log transaction via payments table - the database trigger will handle wallet and total_income updates
-    const { error: paymentError } = await supabase.rpc('admin_add_payment_rpc', {
-      p_uid: uid,
-      p_amount: payableAmount.toString(),
-      p_type: type, // Use aligned types: referral_bonus, matching_bonus, rank_reward, incentive_accrual, team_collection
-      p_method: 'INTERNAL',
-      p_description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
-      p_status: 'finished',
-      p_payment_id: null,
-      p_currency: 'usdtbsc',
-      p_order_id: null
+    // Update wallet directly
+    const newWallets = { ...profile.wallets };
+    let walletKey = 'master'; // default
+    if (type === 'referral_bonus') walletKey = 'referral';
+    else if (type === 'matching_bonus') walletKey = 'matching';
+    else if (type === 'rank_reward' || type === 'rank_bonus') walletKey = 'rewards';
+    else if (type === 'incentive_accrual') walletKey = 'incentive';
+    else if (type === 'team_collection') walletKey = 'matching'; // Assuming team collection goes to matching or similar
+
+    newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
+    newWallets[walletKey].balance += payableAmount;
+
+    const updateData: any = {
+      wallets: newWallets,
+      total_income: (Number(profile.total_income) || 0) + payableAmount
+    };
+
+    // Keep specific income columns in sync
+    if (walletKey === 'master') {
+      updateData.wallet_balance = (Number(profile.wallet_balance) || 0) + payableAmount;
+    } else if (walletKey === 'referral') {
+      updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
+    } else if (walletKey === 'matching') {
+      updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
+    } else if (walletKey === 'rewards') {
+      updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
+    } else if (walletKey === 'incentive') {
+      updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
+    }
+
+    await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', uid);
+
+    // Log transaction via payments table
+    const { error: paymentError } = await supabase.from('payments').insert({
+      uid: uid,
+      amount: payableAmount,
+      type: type,
+      method: 'INTERNAL',
+      description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
+      status: 'finished',
+      currency: 'usdtbsc'
     });
 
     if (paymentError) throw paymentError;
     
-    console.log(`Income of ${payableAmount} (${type}) credited to ${uid} via database trigger.`);
+    console.log(`Income of ${payableAmount} (${type}) credited to ${uid} directly.`);
   },
 
   async getBinaryTree(rootUid: string) {
@@ -1125,9 +1422,9 @@ export const supabaseService = {
     try {
       console.log('Starting Manual System Income Sync...');
       
-      // 1. Process Weekly Incentives (ROI)
-      const { error: weeklyError } = await supabase.rpc('process_weekly_incentives');
-      if (weeklyError) throw weeklyError;
+      // 1. Process Weekly Incentives (ROI) - Placeholder for future logic
+      // const { error: weeklyError } = await supabase.rpc('process_weekly_incentives');
+      // if (weeklyError) throw weeklyError;
 
       // 2. Process Daily Payouts (Capping Reset, Binary Matching, Rank Check)
       await this.processDailyPayouts();

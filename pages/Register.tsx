@@ -239,7 +239,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
       <div className="w-full max-w-3xl relative z-10 animate-in fade-in slide-in-from-bottom-10">
         <div className="text-center mb-16">
-          <div className="inline-flex items-center justify-center w-24 h-24 bg-orange-600/10 border border-orange-500/20 rounded-[32px] mb-8 overflow-hidden">
+          <div className="inline-flex items-center justify-center w-24 h-24 bg-orange-600/10 border border-orange-500/20 rounded-[32px] mb-8 overflow-hidden cursor-pointer" onClick={() => navigate('/')}>
             <ArowinLogo size={64} />
           </div>
           <h1 className="text-5xl font-bold tracking-tight mb-4">Node Enrollment</h1>

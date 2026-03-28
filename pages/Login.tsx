@@ -88,7 +88,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           animate={{ opacity: 1, y: 0 }}
           className="text-center mb-10"
         >
-          <div className="relative inline-block mb-6">
+          <div className="relative inline-block mb-6 cursor-pointer" onClick={() => navigate('/')}>
             {/* Dark circular background for logo */}
             <div className="w-36 h-36 bg-[#0f172a]/80 rounded-full border border-blue-900/30 flex items-center justify-center relative overflow-hidden group">
                <div className="absolute inset-0 bg-blue-500/5 blur-xl group-hover:bg-blue-500/10 transition-all duration-500" />

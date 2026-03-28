@@ -67,7 +67,12 @@ const App: React.FC = () => {
       )}
       <Routes>
         {/* Public Routes */}
-        <Route path="/" element={isUserAuth ? <Navigate to="/dashboard" /> : <Landing />} />
+        <Route path="/" element={
+          isUserAuth ? <Navigate to="/dashboard" /> : 
+          isAdminAuth ? <Navigate to="/admin/dashboard" /> : 
+          <Landing />
+        } />
+        <Route path="/landing" element={<Landing />} />
         <Route path="/login" element={<Login onLogin={() => setIsUserAuth(true)} />} />
         <Route path="/register" element={<Register onLogin={() => setIsUserAuth(true)} />} />
         
@@ -75,7 +80,7 @@ const App: React.FC = () => {
         <Route path="/admin/login" element={<AdminLogin onLogin={() => setIsAdminAuth(true)} />} />
 
         {/* User Protected Routes */}
-        <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/login" />}>
+        <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
           <Route path="/team-collection" element={<TeamCollection />} />
@@ -88,7 +93,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/admin/login" />}>
+        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />
