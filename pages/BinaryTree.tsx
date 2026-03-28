@@ -163,7 +163,12 @@ const BinaryTree: React.FC = () => {
           setIsTreeLoading(false);
         }
       };
+      
       fetchTree();
+      
+      // Refresh tree every 10 seconds to ensure leg counts are updated
+      const interval = setInterval(fetchTree, 10000);
+      return () => clearInterval(interval);
     }
   }, [viewRootId]);
 

@@ -687,7 +687,8 @@ const matchingBalance = Number(profile.matching_income ?? 0);
                   try {
                     await supabaseService.activatePackage(userData.id, 1000);
                     setNotification("MLM Protocol Triggered: 1000 USDT Package Active");
-                    // Refresh data
+                    // Refresh data with a delay to allow database triggers to complete
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     fetchAllData();
                   } catch (err) {
                     console.error('MLM Trigger Failed:', err);
