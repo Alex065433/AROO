@@ -101,7 +101,8 @@ const BinaryTree: React.FC = () => {
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
       if (user) {
         try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          const profile = await supabaseService.getUserProfile(user.id || user.uid, 'id, name, rank, team_size, parent_id, role, operator_id, email') as any;
+          console.log('BinaryTree userProfile:', profile);
           if (profile) {
             setUserProfile(profile);
             
@@ -135,6 +136,10 @@ const BinaryTree: React.FC = () => {
         // Then fetch the updated tree data
         const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
         setTreeData(dynamicTree);
+        
+        // Refetch profile to update leg counts
+        const updatedProfile = await supabaseService.getUserProfile(userProfile.id, 'id, name, rank, team_size, parent_id, role, operator_id, email');
+        setUserProfile(updatedProfile);
       } catch (err) {
         console.error('Error refreshing tree:', err);
       } finally {
@@ -150,6 +155,7 @@ const BinaryTree: React.FC = () => {
         setIsTreeLoading(true);
         try {
           const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
+          console.log('BinaryTree treeData:', dynamicTree);
           setTreeData(dynamicTree);
         } catch (err) {
           console.error('Error fetching tree:', err);
