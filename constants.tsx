@@ -10,17 +10,17 @@ const RANK_NAMES = [
 
 const RANK_DATA = [
   { required: 1, weekly: 4, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 30, weekly: 6, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 70, weekly: 10, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 150, weekly: 16, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 300, weekly: 31, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 700, weekly: 50, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 1500, weekly: 125, capping: 250, pairIncome: 5, reward: 0 },
-  { required: 3000, weekly: 250, capping: 360, pairIncome: 6, reward: 0 },
-  { required: 7000, weekly: 500, capping: 490, pairIncome: 7, reward: 0 },
-  { required: 15000, weekly: 1000, capping: 640, pairIncome: 8, reward: 0 },
-  { required: 30000, weekly: 2500, capping: 900, pairIncome: 10, reward: 0 },
-  { required: 70000, weekly: 10000, capping: 2500, pairIncome: 25, reward: 0 },
+  { required: 3, weekly: 6, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 7, weekly: 10, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 15, weekly: 16, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 31, weekly: 31, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 100, weekly: 50, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 250, weekly: 125, capping: 250, pairIncome: 5, reward: 0 },
+  { required: 500, weekly: 250, capping: 360, pairIncome: 6, reward: 0 },
+  { required: 1000, weekly: 500, capping: 490, pairIncome: 7, reward: 0 },
+  { required: 2500, weekly: 1000, capping: 640, pairIncome: 8, reward: 0 },
+  { required: 5000, weekly: 2500, capping: 900, pairIncome: 10, reward: 0 },
+  { required: 10000, weekly: 10000, capping: 2500, pairIncome: 25, reward: 0 },
 ];
 
 export const PACKAGES = [

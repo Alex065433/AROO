@@ -331,6 +331,13 @@ export const supabaseService = {
       throw new Error(`Profile Sync Error: ${profileError.message}`);
     }
 
+    // Update binary counts up the tree
+    try {
+      await supabase.rpc('update_binary_count', { p_user_id: user.id });
+    } catch (err) {
+      console.warn('Failed to update binary counts:', err);
+    }
+
     return { ...profileData, uid: user.id };
   },
 
@@ -397,9 +404,14 @@ export const supabaseService = {
   },
 
   async getUserProfile(uid: string, columns: string = '*') {
+    let queryColumns = columns;
+    if (columns !== '*' && !columns.includes('left_count')) {
+      queryColumns += ', left_count, right_count';
+    }
+
     const { data, error } = await supabase
       .from('profiles')
-      .select(columns)
+      .select(queryColumns)
       .eq('id', uid)
       .single();
     if (error) return null;
@@ -408,6 +420,14 @@ export const supabaseService = {
     // Force admin role for the owner
     if (profile.email === 'kethankumar130@gmail.com') {
       profile.role = 'admin';
+    }
+    
+    // Map column-based counts to team_size for frontend compatibility
+    if (profile.left_count !== undefined && profile.right_count !== undefined) {
+      profile.team_size = {
+        left: Number(profile.left_count) || 0,
+        right: Number(profile.right_count) || 0
+      };
     }
     
     return profile;
@@ -827,8 +847,8 @@ export const supabaseService = {
     if (!rootProfile) return {};
 
     const buildNode = (node: any, path: string) => {
-      const leftCount = parseInt(node.team_size?.left || '0');
-      const rightCount = parseInt(node.team_size?.right || '0');
+      const leftCount = parseInt(node.left_count || node.team_size?.left || '0');
+      const rightCount = parseInt(node.right_count || node.team_size?.right || '0');
       
       tree[path] = {
         id: node.operator_id,
@@ -838,8 +858,8 @@ export const supabaseService = {
         joinDate: node.created_at?.split('T')[0] || 'N/A',
         totalTeam: leftCount + rightCount,
         team_size: { left: leftCount, right: rightCount },
-        leftBusiness: ((node.matching_volume?.left || 0) * 50).toFixed(2),
-        rightBusiness: ((node.matching_volume?.right || 0) * 50).toFixed(2),
+        leftBusiness: (Number(node.left_business) || (node.matching_volume?.left || 0) * 50).toFixed(2),
+        rightBusiness: (Number(node.right_business) || (node.matching_volume?.right || 0) * 50).toFixed(2),
         parentId: node.parent_id,
         sponsorId: node.sponsor_id,
         email: node.email,
@@ -891,9 +911,9 @@ export const supabaseService = {
         rank: child.rank_name || 'Partner',
         status: child.active_package > 0 ? 'Active' : 'Pending',
         joinDate: child.created_at?.split('T')[0],
-        totalTeam: (child.team_size?.left || 0) + (child.team_size?.right || 0),
-        leftBusiness: (child.matching_volume?.left || 0).toFixed(2) || '0.00',
-        rightBusiness: (child.matching_volume?.right || 0).toFixed(2) || '0.00',
+        totalTeam: (Number(child.left_count) || child.team_size?.left || 0) + (Number(child.right_count) || child.team_size?.right || 0),
+        leftBusiness: (Number(child.left_business) || (child.matching_volume?.left || 0) * 50).toFixed(2) || '0.00',
+        rightBusiness: (Number(child.right_business) || (child.matching_volume?.right || 0) * 50).toFixed(2) || '0.00',
         parentId: child.parent_id,
         side: child.side || 'ROOT',
         uid: child.id
