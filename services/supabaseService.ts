@@ -23,13 +23,31 @@ export const supabaseService = {
     const ADMIN_SECRET = "CORE_SECURE_999";
 
     if (adminId === ADMIN_ID && secretKey === ADMIN_SECRET) {
-      // Return a mock admin profile or fetch the actual admin user
+      // Fetch admin profile by operator_id
       const { data: adminProfile } = await supabase
         .from("profiles")
         .select("*")
-        .eq("email", "kethankumar130@gmail.com")
+        .eq("operator_id", ADMIN_ID)
         .limit(1)
         .maybeSingle();
+      
+      console.log('adminLogin: Admin profile found:', !!adminProfile, 'Email:', adminProfile?.email);
+
+      // Also sign in with Supabase Auth using the email from the profile
+      const adminEmail = adminProfile?.email || 'admin@arowin.internal';
+      console.log('adminLogin: Attempting Supabase signInWithPassword with email:', adminEmail);
+      
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: adminEmail,
+        password: secretKey
+      });
+      
+      if (authError) {
+        console.error('adminLogin: Supabase signInWithPassword failed:', authError);
+        // If sign in fails, we might still proceed if we have a fallback admin
+      } else {
+        console.log('adminLogin: Supabase signInWithPassword succeeded:', authData);
+      }
       
       if (adminProfile) {
         localStorage.setItem('arowin_supabase_user', JSON.stringify({ ...adminProfile, role: 'admin' }));
@@ -39,7 +57,7 @@ export const supabaseService = {
       // Fallback if profile not found
       const fallbackAdmin = {
         id: '00000000-0000-0000-0000-000000000000',
-        email: 'kethankumar130@gmail.com',
+        email: 'admin@arowin.internal',
         name: 'System Administrator',
         role: 'admin',
         operator_id: ADMIN_ID
@@ -488,7 +506,8 @@ export const supabaseService = {
       if (!userProfile) throw new Error("User not found");
 
       // 2. Check and deduct balance if not free
-      const isAdmin = userProfile.email === 'kethankumar130@gmail.com' || userProfile.role === 'admin';
+      const currentUser = this.getCurrentUser();
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
       const shouldSkipBalanceCheck = isFree || isAdmin;
 
       if (finalAmount > 0 && !shouldSkipBalanceCheck) {
@@ -523,16 +542,26 @@ export const supabaseService = {
       }
 
       // 3. Update active_package and total_deposit
-      const { error: packageError } = await supabase
-        .from('profiles')
-        .update({ 
-          active_package: amount, 
-          total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
-          status: 'active'
-        })
-        .eq('id', uid);
+      const packageUpdateData = { 
+        active_package: amount, 
+        total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
+        status: 'active'
+      };
 
-      if (packageError) throw packageError;
+      if (isAdmin) {
+        try {
+          await this.adminQuery('profiles', 'update', packageUpdateData, { id: uid });
+        } catch (packageError) {
+          throw packageError;
+        }
+      } else {
+        const { error: packageError } = await supabase
+          .from('profiles')
+          .update(packageUpdateData)
+          .eq('id', uid);
+
+        if (packageError) throw packageError;
+      }
 
       // 4. Create Team Collection Nodes if package has nodes
       const packageData = PACKAGES.find(p => p.price === amount);
@@ -565,11 +594,21 @@ export const supabaseService = {
         // Bronze (7 nodes) -> 3 units left, 3 units right (Qualifies for Bronze rank)
         const internalCount = (packageData.nodes - 1) / 2;
         if (internalCount > 0) {
-          await supabase.from('profiles').update({
+          const countUpdateData = {
             left_count: internalCount,
             right_count: internalCount,
             team_size: { left: internalCount, right: internalCount }
-          }).eq('id', uid);
+          };
+          
+          if (isAdmin) {
+            try {
+              await this.adminQuery('profiles', 'update', countUpdateData, { id: uid });
+            } catch (error) {
+              console.error('Failed to update internal counts via admin query:', error);
+            }
+          } else {
+            await supabase.from('profiles').update(countUpdateData).eq('id', uid);
+          }
         }
 
         // Create IDs in Team Collection
@@ -591,14 +630,20 @@ export const supabaseService = {
               name: `${userProfile.name} Node ${i + 1}`,
               balance: 0,
               eligible: i < numRankNodes, // First N nodes are rank nodes
-              created_at: new Date().toISOString(),
-              type: 'mining',
-              generation: generation
+              created_at: new Date().toISOString()
             });
           }
           
-          const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
-          if (nodeError) console.error('Failed to create team nodes:', nodeError);
+          if (isAdmin) {
+            try {
+              await this.adminQuery('team_collection', 'insert', nodesToCreate);
+            } catch (nodeError) {
+              console.error('Failed to create team nodes via admin query:', nodeError);
+            }
+          } else {
+            const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
+            if (nodeError) console.error('Failed to create team nodes:', nodeError);
+          }
         }
       }
 
@@ -632,7 +677,7 @@ export const supabaseService = {
 
         const { data: parentProfile } = await supabase
           .from('profiles')
-          .select('left_business, right_business, left_count, right_count, team_size')
+          .select('left_business, right_business, left_count, right_count, team_size, matching_volume, matched_pairs')
           .eq('id', parentId)
           .single();
 
@@ -642,24 +687,52 @@ export const supabaseService = {
             left: Number(parentProfile.left_count ?? parentProfile.team_size?.left ?? 0),
             right: Number(parentProfile.right_count ?? parentProfile.team_size?.right ?? 0)
           };
+          const matchingVolume = parentProfile.matching_volume || { left: 0, right: 0 };
+          let newMatchedPairs = parentProfile.matched_pairs || 0;
+          let matchingIncomeToAdd = 0;
 
           if (side === 'LEFT') {
             updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
             updateData.left_count = (Number(parentProfile.left_count) || 0) + rankUnitsToAdd;
             newTeamSize.left += rankUnitsToAdd;
+            matchingVolume.left += amount;
           } else if (side === 'RIGHT') {
             updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
             updateData.right_count = (Number(parentProfile.right_count) || 0) + rankUnitsToAdd;
             newTeamSize.right += rankUnitsToAdd;
+            matchingVolume.right += amount;
           }
           
-          updateData.team_size = newTeamSize;
+          // Calculate matching income (10% of matched volume)
+          const matchedAmount = Math.min(matchingVolume.left, matchingVolume.right);
+          if (matchedAmount > 0) {
+            matchingIncomeToAdd = matchedAmount * 0.10;
+            matchingVolume.left -= matchedAmount;
+            matchingVolume.right -= matchedAmount;
+            newMatchedPairs += matchedAmount;
+          }
 
-          await supabase
-            .from('profiles')
-            .update(updateData)
-            .eq('id', parentId);
+          updateData.team_size = newTeamSize;
+          updateData.matching_volume = matchingVolume;
+          updateData.matched_pairs = newMatchedPairs;
+
+          if (isAdmin) {
+            try {
+              await this.adminQuery('profiles', 'update', updateData, { id: parentId });
+            } catch (error) {
+              console.error('Failed to update parent profile via admin query:', error);
+            }
+          } else {
+            await supabase
+              .from('profiles')
+              .update(updateData)
+              .eq('id', parentId);
+          }
           
+          if (matchingIncomeToAdd > 0) {
+            await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
+          }
+
           // Check for rank update for parent
           await this.checkAndUpdateRank(parentId);
         }
@@ -668,7 +741,7 @@ export const supabaseService = {
       }
 
       // 6. Log activation payment
-      await supabase.from('payments').insert({
+      const paymentData = {
         uid: uid,
         amount: finalAmount,
         type: 'package_activation',
@@ -676,7 +749,17 @@ export const supabaseService = {
         description: `Package Activation: $${amount}${isFree ? ' (FREE)' : ''}`,
         status: 'finished',
         currency: 'usdtbsc'
-      });
+      };
+
+      if (isAdmin) {
+        try {
+          await this.adminQuery('payments', 'insert', paymentData);
+        } catch (error) {
+          console.error('Failed to log payment via admin query:', error);
+        }
+      } else {
+        await supabase.from('payments').insert(paymentData);
+      }
 
       // Final rank check for the user themselves
       await this.checkAndUpdateRank(uid);
@@ -688,22 +771,76 @@ export const supabaseService = {
     }
   },
 
+  async adminQuery(table: string, operation: 'insert' | 'update' | 'delete', data?: any, match?: Record<string, any>) {
+    const currentUser = this.getCurrentUser();
+    let token = '';
+    
+    if (currentUser?.operator_id === 'ADMIN_AROWIN_2026') {
+      token = 'CORE_SECURE_999';
+    } else {
+      const { data: sessionData } = await supabase.auth.getSession();
+      token = sessionData.session?.access_token || '';
+    }
+
+    if (!token) {
+      throw new Error("No active session found. Please log in again.");
+    }
+
+    const response = await fetch('/api/admin/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ table, operation, data, match }),
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || `Failed to execute admin query on ${table}`);
+    }
+
+    return result;
+  },
+
   async addFunds(uid: string, amount: number) {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      console.log('addFunds: getSession result:', { session: !!session, error: sessionError });
+
+      if (!session) {
+        console.log('addFunds: No active session found, attempting refresh...');
+        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !refreshedSession) {
+          console.error('addFunds: Failed to refresh session:', refreshError || 'Auth session missing!');
+          
+          // Fallback for hardcoded admin
+          const currentUser = this.getCurrentUser();
+          if (currentUser?.operator_id === 'ADMIN_AROWIN_2026') {
+            console.log('addFunds: Using hardcoded admin secret as token');
+            session = { access_token: 'CORE_SECURE_999' } as any;
+          } else {
+            throw new Error('No active session found. Please log in again.');
+          }
+        } else {
+          session = refreshedSession;
+        }
+      }
       
       if (!session) {
-        console.error('addFunds: No active session found');
         throw new Error('No active session found. Please log in again.');
       }
 
-      console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}`);
+      const token = session.access_token;
+
+      console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}, token length: ${token.length}`);
       
       const response = await fetch('/api/admin/add-funds', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ uid, amount }),
       });
@@ -863,17 +1000,22 @@ export const supabaseService = {
 
       const now = new Date();
       const updatedNodes = nodes.map(node => {
-        if (!node.eligible) return node;
-
-        const lastUpdate = new Date(node.created_at);
-        const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
-        
-        const accruedBalance = secondsElapsed * earningPerNodePerSecond;
-        const newBalance = (Number(node.balance) || 0) + accruedBalance;
+        let newBalance = Number(node.balance) || 0;
+        if (node.eligible) {
+          const lastUpdate = new Date(node.created_at);
+          const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
+          
+          const accruedBalance = secondsElapsed * earningPerNodePerSecond;
+          newBalance += accruedBalance;
+        }
 
         return {
           ...node,
-          balance: newBalance
+          balance: newBalance,
+          package_name: packageData.name,
+          package_amount: packageData.price,
+          daily_yield: (earningPerNodePerWeek / 7),
+          status: node.eligible ? 'active' : 'inactive'
         };
       });
 
@@ -946,10 +1088,21 @@ export const supabaseService = {
     const profile = await this.getUserProfile(uid);
     if (!profile) return;
 
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
     // CRITICAL: Without ID activation (active_package), rank should not unlock
     if (!profile.active_package || profile.active_package < 50) {
       if (profile.rank > 1) {
-        await supabase.from('profiles').update({ rank: 1 }).eq('id', uid);
+        if (isAdmin) {
+          try {
+            await this.adminQuery('profiles', 'update', { rank: 1 }, { id: uid });
+          } catch (error) {
+            console.error('Failed to reset rank via admin query:', error);
+          }
+        } else {
+          await supabase.from('profiles').update({ rank: 1 }).eq('id', uid);
+        }
       }
       return;
     }
@@ -977,10 +1130,18 @@ export const supabaseService = {
         }
       }
 
-      await supabase
-        .from('profiles')
-        .update({ rank: newRank })
-        .eq('id', uid);
+      if (isAdmin) {
+        try {
+          await this.adminQuery('profiles', 'update', { rank: newRank }, { id: uid });
+        } catch (error) {
+          console.error('Failed to update rank via admin query:', error);
+        }
+      } else {
+        await supabase
+          .from('profiles')
+          .update({ rank: newRank })
+          .eq('id', uid);
+      }
       
       console.log(`User ${uid} promoted to Rank ${newRank}`);
     }
@@ -1012,6 +1173,9 @@ export const supabaseService = {
 
   async updatePaymentStatus(paymentId: string, status: string) {
     try {
+      const currentUser = this.getCurrentUser();
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
       // Fetch the payment first to check if it's a withdrawal and if we need to refund
       const { data: payment, error: fetchError } = await supabase
         .from('payments')
@@ -1021,14 +1185,27 @@ export const supabaseService = {
       
       if (fetchError) throw fetchError;
 
-      const { data, error } = await supabase
-        .from('payments')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', paymentId)
-        .select()
-        .single();
+      let data;
+      if (isAdmin) {
+        try {
+          // Note: adminQuery doesn't return the updated row directly in the same way, 
+          // but we can just assume success if it doesn't throw.
+          await this.adminQuery('payments', 'update', { status, updated_at: new Date().toISOString() }, { id: paymentId });
+          data = { ...payment, status, updated_at: new Date().toISOString() };
+        } catch (error) {
+          throw error;
+        }
+      } else {
+        const { data: updateData, error } = await supabase
+          .from('payments')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('id', paymentId)
+          .select()
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
+        data = updateData;
+      }
 
       // If a withdrawal is rejected, refund the user
       if (payment.type === 'withdrawal' && status === 'rejected') {
@@ -1043,13 +1220,23 @@ export const supabaseService = {
           newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
           newWallets.master.balance += payment.amount;
 
-          await supabase
-            .from('profiles')
-            .update({ 
-              wallet_balance: (Number(profile.wallet_balance) || 0) + payment.amount,
-              wallets: newWallets
-            })
-            .eq('id', payment.uid);
+          const updateProfileData = { 
+            wallet_balance: (Number(profile.wallet_balance) || 0) + payment.amount,
+            wallets: newWallets
+          };
+
+          if (isAdmin) {
+            try {
+              await this.adminQuery('profiles', 'update', updateProfileData, { id: payment.uid });
+            } catch (error) {
+              console.error('Failed to refund user via admin query:', error);
+            }
+          } else {
+            await supabase
+              .from('profiles')
+              .update(updateProfileData)
+              .eq('id', payment.uid);
+          }
         }
       }
 
@@ -1203,20 +1390,65 @@ export const supabaseService = {
       // Per-transaction capping: Max $5 per matching bonus
       const transactionCapping = 5;
       payableAmount = Math.min(amount, transactionCapping);
+      const excessAmount = Math.max(0, amount - transactionCapping);
       
-      // The capped amount goes to the 'capping_box' wallet
       const newWallets = { ...profile.wallets };
-      newWallets['capping_box'] = newWallets['capping_box'] || { balance: 0, currency: 'USDT' };
-      newWallets['capping_box'].balance += payableAmount;
+      
+      // The capped amount goes to the 'matching' wallet
+      newWallets['matching'] = newWallets['matching'] || { balance: 0, currency: 'USDT' };
+      newWallets['matching'].balance += payableAmount;
 
-      await supabase
-        .from('profiles')
-        .update({ 
-          wallets: newWallets,
-          total_income: (Number(profile.total_income) || 0) + payableAmount,
-          matching_income: (Number(profile.matching_income) || 0) + payableAmount
-        })
-        .eq('id', uid);
+      // The excess amount goes to the 'capping_box' wallet
+      if (excessAmount > 0) {
+        newWallets['capping_box'] = newWallets['capping_box'] || { balance: 0, currency: 'USDT' };
+        newWallets['capping_box'].balance += excessAmount;
+      }
+
+      const updateData = { 
+        wallets: newWallets,
+        total_income: (Number(profile.total_income) || 0) + payableAmount,
+        matching_income: (Number(profile.matching_income) || 0) + payableAmount
+      };
+
+      const currentUser = this.getCurrentUser();
+      const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
+      if (isAdmin) {
+        try {
+          await this.adminQuery('profiles', 'update', updateData, { id: uid });
+        } catch (updateError) {
+          console.error('Failed to update matching income via admin query:', updateError);
+        }
+      } else {
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update(updateData)
+          .eq('id', uid);
+          
+        if (updateError) console.error('Failed to update matching income:', updateError);
+      }
+
+      // Log transaction via payments table for the payable amount
+      const paymentData = {
+        uid: uid,
+        amount: payableAmount,
+        type: type,
+        method: 'INTERNAL',
+        description: `Income: MATCHING BONUS`,
+        status: 'finished',
+        currency: 'usdtbsc'
+      };
+
+      if (isAdmin) {
+        try {
+          await this.adminQuery('payments', 'insert', paymentData);
+        } catch (paymentError) {
+          console.error('Failed to log matching income payment via admin query:', paymentError);
+        }
+      } else {
+        const { error: paymentError } = await supabase.from('payments').insert(paymentData);
+        if (paymentError) console.error('Failed to log matching income payment:', paymentError);
+      }
       
       return; // Handled separately for matching bonus
     }
@@ -1257,13 +1489,24 @@ export const supabaseService = {
       // Let's just update total_income and wallets for now if no specific column
     }
 
-    await supabase
-      .from('profiles')
-      .update(updateData)
-      .eq('id', uid);
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
+    if (isAdmin) {
+      try {
+        await this.adminQuery('profiles', 'update', updateData, { id: uid });
+      } catch (updateError) {
+        console.error('Failed to update income via admin query:', updateError);
+      }
+    } else {
+      await supabase
+        .from('profiles')
+        .update(updateData)
+        .eq('id', uid);
+    }
 
     // Log transaction via payments table
-    const { error: paymentError } = await supabase.from('payments').insert({
+    const paymentData = {
       uid: uid,
       amount: payableAmount,
       type: type,
@@ -1271,9 +1514,18 @@ export const supabaseService = {
       description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
       status: 'finished',
       currency: 'usdtbsc'
-    });
+    };
 
-    if (paymentError) throw paymentError;
+    if (isAdmin) {
+      try {
+        await this.adminQuery('payments', 'insert', paymentData);
+      } catch (paymentError) {
+        console.error('Failed to log income payment via admin query:', paymentError);
+      }
+    } else {
+      const { error: paymentError } = await supabase.from('payments').insert(paymentData);
+      if (paymentError) throw paymentError;
+    }
     
     console.log(`Income of ${payableAmount} (${type}) credited to ${uid} directly.`);
   },
@@ -1725,40 +1977,78 @@ export const supabaseService = {
 
   async updateUser(uid: string, data: any) {
     if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
-    const { error } = await supabase
-      .from('profiles')
-      .update(data)
-      .eq('id', uid);
-    if (error) throw error;
-    return true;
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
+    if (isAdmin) {
+      try {
+        await this.adminQuery('profiles', 'update', data, { id: uid });
+        return true;
+      } catch (error) {
+        throw error;
+      }
+    } else {
+      const { error } = await supabase
+        .from('profiles')
+        .update(data)
+        .eq('id', uid);
+      if (error) throw error;
+      return true;
+    }
   },
 
   async updateUserStatus(uid: string, status: 'active' | 'pending' | 'blocked') {
     if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
-    const { error } = await supabase
-      .from('profiles')
-      .update({ status })
-      .eq('id', uid);
-    if (error) throw error;
-    return true;
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+
+    if (isAdmin) {
+      try {
+        await this.adminQuery('profiles', 'update', { status }, { id: uid });
+        return true;
+      } catch (error) {
+        throw error;
+      }
+    } else {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status })
+        .eq('id', uid);
+      if (error) throw error;
+      return true;
+    }
   },
 
   async deleteUser(uid: string) {
     if (!this.isUuid(uid)) throw new Error('Invalid User ID format (UUID required)');
-    // 1. Delete profile
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .delete()
-      .eq('id', uid);
-    if (profileError) throw profileError;
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
 
-    // 3. Delete payments
-    await supabase.from('payments').delete().eq('uid', uid);
-    
-    // 4. Delete team nodes
-    await supabase.from('team_collection').delete().eq('uid', uid);
+    if (isAdmin) {
+      try {
+        await this.adminQuery('profiles', 'delete', undefined, { id: uid });
+        await this.adminQuery('payments', 'delete', undefined, { uid: uid });
+        await this.adminQuery('team_collection', 'delete', undefined, { uid: uid });
+        return true;
+      } catch (error) {
+        throw error;
+      }
+    } else {
+      // 1. Delete profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', uid);
+      if (profileError) throw profileError;
 
-    return true;
+      // 3. Delete payments
+      await supabase.from('payments').delete().eq('uid', uid);
+      
+      // 4. Delete team nodes
+      await supabase.from('team_collection').delete().eq('uid', uid);
+
+      return true;
+    }
   },
 
   // Notifications
