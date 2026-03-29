@@ -577,11 +577,11 @@ export const supabaseService = {
           50: 0,
           150: 5,
           350: 15,
-          750: 85,
-          1550: 245,
-          3150: 645,
-          6350: 1540,
-          12750: 3080
+          750: 35,
+          1550: 75,
+          3150: 155,
+          6350: 315,
+          12750: 635
         };
         const internalMatchingBonus = internalMatchingBonusMap[amount] || 0;
         if (internalMatchingBonus > 0) {
@@ -871,42 +871,15 @@ export const supabaseService = {
   // Daily and Weekly Payout System
   async processDailyPayouts() {
     try {
-      // 1. Fetch all users with business volume
+      // 1. Fetch all active users
       const { data: users, error } = await supabase
         .from('profiles')
         .select('*')
-        .or('left_business.gt.0,right_business.gt.0');
+        .gt('active_package', 0);
 
       if (error) throw error;
 
       for (const user of users) {
-        const leftBusiness = Number(user.left_business) || 0;
-        const rightBusiness = Number(user.right_business) || 0;
-
-        // Calculate matching volume (minimum of left and right)
-        const matchedVolume = Math.min(leftBusiness, rightBusiness);
-
-        if (matchedVolume > 0) {
-          // Calculate 10% matching bonus
-          const matchingBonus = matchedVolume * 0.10;
-
-          // Deduct matched volume from both sides
-          const newLeftBusiness = leftBusiness - matchedVolume;
-          const newRightBusiness = rightBusiness - matchedVolume;
-
-          // Update business volume first
-          await supabase
-            .from('profiles')
-            .update({
-              left_business: newLeftBusiness,
-              right_business: newRightBusiness
-            })
-            .eq('id', user.id);
-
-          // Add income via addIncome (handles capping and logging)
-          await this.addIncome(user.id, matchingBonus, 'matching_bonus');
-        }
-
         // Always check rank for active users
         if (user.active_package > 0) {
           await this.checkAndUpdateRank(user.id);
@@ -1379,85 +1352,12 @@ export const supabaseService = {
     if (!profile) return;
 
     let payableAmount = amount;
-
-    // Only apply daily capping to matching income
-    if (type === 'matching_bonus') {
-      // Only users with $150 package or higher get matching bonus (Capping starts at $150)
-      if ((profile.active_package || 0) < 150) {
-        return;
-      }
-
-      // Per-transaction capping: Max $5 per matching bonus
-      const transactionCapping = 5;
-      payableAmount = Math.min(amount, transactionCapping);
-      const excessAmount = Math.max(0, amount - transactionCapping);
-      
-      const newWallets = { ...profile.wallets };
-      
-      // The capped amount goes to the 'matching' wallet
-      newWallets['matching'] = newWallets['matching'] || { balance: 0, currency: 'USDT' };
-      newWallets['matching'].balance += payableAmount;
-
-      // The excess amount goes to the 'capping_box' wallet
-      if (excessAmount > 0) {
-        newWallets['capping_box'] = newWallets['capping_box'] || { balance: 0, currency: 'USDT' };
-        newWallets['capping_box'].balance += excessAmount;
-      }
-
-      const updateData = { 
-        wallets: newWallets,
-        total_income: (Number(profile.total_income) || 0) + payableAmount,
-        matching_income: (Number(profile.matching_income) || 0) + payableAmount
-      };
-
-      const currentUser = this.getCurrentUser();
-      const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
-
-      if (isAdmin) {
-        try {
-          await this.adminQuery('profiles', 'update', updateData, { id: uid });
-        } catch (updateError) {
-          console.error('Failed to update matching income via admin query:', updateError);
-        }
-      } else {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update(updateData)
-          .eq('id', uid);
-          
-        if (updateError) console.error('Failed to update matching income:', updateError);
-      }
-
-      // Log transaction via payments table for the payable amount
-      const paymentData = {
-        uid: uid,
-        amount: payableAmount,
-        type: type,
-        method: 'INTERNAL',
-        description: `Income: MATCHING BONUS`,
-        status: 'finished',
-        currency: 'usdtbsc'
-      };
-
-      if (isAdmin) {
-        try {
-          await this.adminQuery('payments', 'insert', paymentData);
-        } catch (paymentError) {
-          console.error('Failed to log matching income payment via admin query:', paymentError);
-        }
-      } else {
-        const { error: paymentError } = await supabase.from('payments').insert(paymentData);
-        if (paymentError) console.error('Failed to log matching income payment:', paymentError);
-      }
-      
-      return; // Handled separately for matching bonus
-    }
     
     // Update wallet directly
     const newWallets = { ...profile.wallets };
     let walletKey = 'master'; // default
     if (type === 'referral_bonus') walletKey = 'referral';
-    else if (type === 'matching_bonus') walletKey = 'matching';
+    else if (type === 'matching_bonus' || type === 'matching_income') walletKey = 'matching';
     else if (type === 'rank_bonus') walletKey = 'rankBonus';
     else if (type === 'rank_reward') walletKey = 'rewards';
     else if (type === 'team_collection') walletKey = 'yield'; 
