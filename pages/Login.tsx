@@ -208,7 +208,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               </button>
               
               <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-[0.3em] px-2">
-                 <button className="text-slate-700 hover:text-white transition-colors">Recover Protocol</button>
+                 <button onClick={() => setShowReset(true)} className="text-slate-700 hover:text-white transition-colors">Recover Protocol</button>
                  <button onClick={() => navigate('/register')} className="text-blue-600 hover:text-blue-400 transition-all">Initialize Node</button>
               </div>
             </motion.div>

@@ -31,6 +31,7 @@ interface TreeNodeProps {
 }
 
 const TreeNode: React.FC<TreeNodeProps> = ({ path, data, onSelect, onInvite, level }) => {
+  if (level > 100) return null;
   const node = data[path];
   
   // If node doesn't exist, it's a potential vacant spot if its parent exists

@@ -99,7 +99,7 @@ export const supabaseService = {
     // Try exact match first
     let { data, error } = await supabase
       .from("profiles")
-      .select("email, status, role")
+      .select("operator_id, email, status, role")
       .eq("operator_id", cleanId)
       .single();
 
@@ -107,7 +107,7 @@ export const supabaseService = {
     if (error || !data) {
       const { data: retryData, error: retryError } = await supabase
         .from("profiles")
-        .select("email, status, role")
+        .select("operator_id, email, status, role")
         .ilike("operator_id", cleanId)
         .single();
       
@@ -123,9 +123,10 @@ export const supabaseService = {
         // Use ilike and handle potential quotes in the or filter
         const { data: emailData, error: emailError } = await supabase
           .from("profiles")
-          .select("email, status, role")
-          .or(`email.ilike."${cleanId}",real_email.ilike."${cleanId}"`)
-          .single();
+          .select("operator_id, email, status, role")
+          .or(`email.ilike."${cleanId}"`)
+          .limit(1)
+          .maybeSingle();
         
         if (!emailError && emailData) {
           data = emailData;
@@ -149,10 +150,26 @@ export const supabaseService = {
     // }
 
     // Step 2: login using email (which is the internal email)
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: data.email,
+    const internalEmail = `${data.operator_id.toLowerCase()}@arowin.internal`;
+    
+    let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: internalEmail,
       password: password
     });
+
+    // If internal email fails, try the real email (for older accounts or admin)
+    if (authError) {
+      const { data: retryAuthData, error: retryAuthError } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: password
+      });
+      
+      if (retryAuthError) {
+        throw authError; // Throw original error
+      }
+      authData = retryAuthData;
+      authError = null;
+    }
 
     if (authError) throw authError;
 
@@ -172,9 +189,9 @@ export const supabaseService = {
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
     const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-    const internalEmail = `${operatorId}@arowin.internal`;
+    const internalEmail = `${operatorId.toLowerCase()}@arowin.internal`;
 
-    // 1. Create Supabase Auth User with internal email to allow multiple accounts per real email
+    // 1. Create Supabase Auth User with internal email to allow unlimited IDs per real email
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: internalEmail,
       password,
@@ -282,8 +299,7 @@ export const supabaseService = {
     // We use snake_case for database columns
     const profileData = {
       id: user.id,
-      email: internalEmail,
-      real_email: email,
+      email: email,
       operator_id: operatorId,
       name: additionalData.name || email.split('@')[0],
       mobile: additionalData.mobile || '',
@@ -320,10 +336,10 @@ export const supabaseService = {
       .upsert([profileData], { onConflict: 'id' });
 
     if (profileError && profileError.message.includes('column')) {
-      console.warn('Database schema mismatch detected. Attempting minimal profile creation...');
+      console.warn('Database schema mismatch detected. Attempting minimal profile creation...', profileError);
       const minimalProfile = {
         id: user.id,
-        email: user.email,
+        email: email,
         operator_id: operatorId,
         sponsor_id: profileData.sponsor_id,
         parent_id: profileData.parent_id,
@@ -360,7 +376,7 @@ export const supabaseService = {
 
     // Send Welcome Email
     try {
-      await this.sendWelcomeEmail(email, profileData.name);
+      await this.sendWelcomeEmail(user.id);
     } catch (err) {
       console.warn('Failed to send welcome email:', err);
     }
@@ -368,11 +384,48 @@ export const supabaseService = {
     return { ...profileData, uid: user.id };
   },
 
-  async sendWelcomeEmail(email: string, name: string) {
-    const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  async registerUser(name: string, email: string) {
+    if (!email) {
+      throw new Error('Invalid email address. Please use a real email like Gmail.');
+    }
 
     try {
+      // 1. Insert into profiles
+      const { data, error } = await supabase
+        .from('profiles')
+        .insert([
+          {
+            name: name,
+            email: email,
+            operator_id: `ARW-${Math.floor(100000 + Math.random() * 900000)}`,
+            status: 'active',
+            role: 'user',
+            created_at: new Date().toISOString()
+          }
+        ])
+        .select();
+
+      // 3. Safety check
+      if (error || !data || data.length === 0) {
+        console.error('Insert failed or data empty:', error);
+        throw new Error('Failed to insert user profile.');
+      }
+
+      // 4. Extract UUID
+      const userId = data[0].id;
+
+      // 5. Console logs
+      console.log('Inserted data:', data[0]);
+      console.log('userId:', userId);
+
+      // 6. Add 500ms delay
+      console.log("⏳ Waiting 500ms for database replication before sending email...");
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 7. Call Edge Function
+      const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
       const response = await fetch(functionUrl, {
         method: 'POST',
         headers: {
@@ -380,19 +433,65 @@ export const supabaseService = {
           'Authorization': `Bearer ${supabaseAnonKey}`
         },
         body: JSON.stringify({
-          email: email,
-          subject: "Welcome Message",
-          html: `Welcome ${name}`
+          user_id: userId,
+          type: "welcome"
         })
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Email function error:', errorData);
-        throw new Error(errorData.message || 'Failed to send email');
+        const errorText = await response.text();
+        console.error('Email function error:', errorText);
+        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
       }
 
-      return await response.json();
+      const responseData = await response.json();
+      console.log('Response from Edge Function:', responseData);
+
+      // 8. Return success
+      return { success: true, user: data[0], emailResponse: responseData };
+
+    } catch (error) {
+      console.error('registerUser error:', error);
+      throw error;
+    }
+  },
+
+  async sendWelcomeEmail(userId: string) {
+    const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    try {
+      // IMPORTANT: Add delay after insert to fix the "User not found" timing issue
+      // This gives Supabase enough time to replicate the new row before the Edge Function queries it
+      console.log("⏳ Waiting 500ms for database replication before sending email...");
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          type: "welcome"
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Email function error:', errorText);
+        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
+      }
+
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (e) {
+        throw new Error("Invalid JSON response from email server");
+      }
+
+      return responseData;
     } catch (error) {
       console.error('Error calling send-email function:', error);
       throw error;
@@ -663,7 +762,10 @@ export const supabaseService = {
       const rankUnitsToAdd = pkg ? Math.max(1, (pkg.nodes - 1) / 2) : 1;
 
       let currentId = uid;
-      while (true) {
+      let loopDepth = 0;
+      const MAX_LOOP_DEPTH = 1000;
+      while (loopDepth < MAX_LOOP_DEPTH) {
+        loopDepth++;
         const { data: currentProfile, error } = await supabase
           .from('profiles')
           .select('parent_id, side')
@@ -1287,8 +1389,11 @@ export const supabaseService = {
   // MLM Logic
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     let currentParentId = startNodeId;
+    let depth = 0;
+    const MAX_DEPTH = 1000;
     
-    while (true) {
+    while (depth < MAX_DEPTH) {
+      depth++;
       const { data: children, error } = await supabase
         .from('profiles')
         .select('id, side')
@@ -1309,8 +1414,11 @@ export const supabaseService = {
 
   async updateAncestorsTeamSize(uid: string) {
     let currentId = uid;
+    let loopDepth = 0;
+    const MAX_LOOP_DEPTH = 1000;
     
-    while (true) {
+    while (loopDepth < MAX_LOOP_DEPTH) {
+      loopDepth++;
       const { data: profile, error } = await supabase
         .from('profiles')
         .select('parent_id, side')
@@ -1493,7 +1601,13 @@ export const supabaseService = {
     const rootProfile = finalDownline.find((p: any) => p.id === rootId);
     if (!rootProfile) return {};
 
-    const buildNode = (node: any, path: string) => {
+    const visited = new Set<string>();
+    const MAX_DEPTH = 100;
+
+    const buildNode = (node: any, path: string, depth: number = 0) => {
+      if (visited.has(node.id) || depth > MAX_DEPTH) return;
+      visited.add(node.id);
+
       const userTeamNodes = teamNodesByUser.get(node.id) || [];
       // Sort nodes by ID suffix to ensure consistent internal tree structure
       userTeamNodes.sort((a, b) => {
@@ -1527,8 +1641,8 @@ export const supabaseService = {
       // Recursively process children
       const children = nodesByParent.get(node.id);
       if (children) {
-        if (children.LEFT) buildNode(children.LEFT, `${path}-left`);
-        if (children.RIGHT) buildNode(children.RIGHT, `${path}-right`);
+        if (children.LEFT) buildNode(children.LEFT, `${path}-left`, depth + 1);
+        if (children.RIGHT) buildNode(children.RIGHT, `${path}-right`, depth + 1);
       }
     };
 

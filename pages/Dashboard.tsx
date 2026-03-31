@@ -170,7 +170,7 @@ const Dashboard: React.FC = () => {
 
       if (!user) {
         navigate('/login');
-        return;
+        return null;
       }
 
       const userId = user.id;
@@ -208,9 +208,12 @@ const Dashboard: React.FC = () => {
       // 4. Handle transactions
       console.log("USER ID:", userId);
       console.log("INCOME TRANSACTIONS:", transactionsData);
+      
+      return userId;
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      return null;
     } finally {
       if (isInitial) setLoading(false);
     }
@@ -264,16 +267,14 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchAllData(true); // Initial load with spinner
-
-    // Subscribe to real-time profile updates
     let profileUnsubscribe: (() => void) | undefined;
     let isMounted = true;
     
-    const setupSubscription = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user && isMounted) {
-        profileUnsubscribe = supabaseService.subscribeToProfile(user.id, (updatedProfile) => {
+    const setupDashboard = async () => {
+      const userId = await fetchAllData(true); // Initial load with spinner
+      
+      if (userId && isMounted) {
+        profileUnsubscribe = supabaseService.subscribeToProfile(userId, (updatedProfile) => {
           console.log('Real-time profile update received in Dashboard:', updatedProfile);
           if (updatedProfile && isMounted) {
             setUserData(updatedProfile);
@@ -300,7 +301,7 @@ const Dashboard: React.FC = () => {
       }
     };
 
-    setupSubscription();
+    setupDashboard();
 
     const checkAdminStatus = async () => {
       try {
@@ -713,252 +714,6 @@ const Dashboard: React.FC = () => {
         </div>
       </Modal>
 
-      {/* Admin Console (Only for kethankumar130@gmail.com) */}
-      {userData.email === 'kethankumar130@gmail.com' && (
-        <div className="bg-rose-500/10 border border-rose-500/20 p-12 rounded-[48px] space-y-8">
-          <div className="flex items-center gap-4">
-            <ShieldCheck className="text-rose-500" size={32} />
-            <div>
-              <h3 className="text-xl font-black uppercase tracking-widest text-slate-200">Admin Control Node</h3>
-              <p className="text-[10px] font-black text-rose-500/60 uppercase tracking-[0.3em]">System Identity: kethankumar130@gmail.com</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Test MLM Protocol</h4>
-              <p className="text-[10px] text-slate-600 font-bold uppercase leading-relaxed">Simulate a package activation to trigger referral and binary matching yields across the network.</p>
-              <button 
-                onClick={async () => {
-                  setIsProcessing(true);
-                  try {
-                    await supabaseService.activatePackage(userData.id, 1000);
-                    setNotification("MLM Protocol Triggered: 1000 USDT Package Active");
-                    // Refresh data with a delay to allow database triggers to complete
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    fetchAllData();
-                  } catch (err) {
-                    console.error('MLM Trigger Failed:', err);
-                  }
-                  setIsProcessing(false);
-                }}
-                disabled={isProcessing}
-                className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] flex items-center justify-center gap-3"
-              >
-                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
-                ACTIVATE 1000 USDT TEST PACKAGE
-              </button>
-            </div>
-
-            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-6">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">Node Fund Injection</h4>
-              <p className="text-[10px] text-slate-600 font-bold uppercase leading-relaxed">Directly inject USDT liquidity into any network node by Operator ID.</p>
-              
-              <div className="space-y-4">
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="OPERATOR ID (e.g. ARW-123456)" 
-                    value={adminSearchId}
-                    onChange={(e) => setAdminSearchId(e.target.value)}
-                    className="flex-1 bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-bold text-slate-200 focus:outline-none focus:border-rose-500/50 uppercase"
-                  />
-                  <button 
-                    onClick={handleAdminSearch}
-                    disabled={isSearching || !adminSearchId}
-                    className="px-6 bg-white/5 hover:bg-white/10 text-slate-300 rounded-xl transition-all border border-white/5"
-                  >
-                    {isSearching ? <RefreshCw className="animate-spin" size={14} /> : <Search size={14} />}
-                  </button>
-                </div>
-
-                {adminFoundUser && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="p-4 bg-rose-500/5 border border-rose-500/20 rounded-2xl space-y-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] font-black text-slate-200 uppercase">{adminFoundUser.name}</p>
-                        <p className="text-[8px] font-bold text-rose-500/60 uppercase tracking-widest">{adminFoundUser.operator_id}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[8px] font-bold text-slate-500 uppercase">Current Balance</p>
-                        <p className="text-[10px] font-black text-emerald-500">${adminFoundUser.wallets?.master?.balance?.toFixed(2) || '0.00'}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      <input 
-                        type="number" 
-                        placeholder="AMOUNT (USDT)" 
-                        value={adminFundAmount}
-                        onChange={(e) => setAdminFundAmount(e.target.value)}
-                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-bold text-slate-200 focus:outline-none focus:border-rose-500/50"
-                      />
-                      <button 
-                        onClick={handleAdminAddFunds}
-                        disabled={isProcessing || !adminFundAmount}
-                        className="px-6 bg-rose-600 hover:bg-rose-500 text-white font-black rounded-xl transition-all uppercase tracking-widest text-[10px]"
-                      >
-                        {isProcessing ? <RefreshCw className="animate-spin" size={14} /> : 'INJECT'}
-                      </button>
-                    </div>
-
-                    <button 
-                      onClick={async () => {
-                        if (!adminFoundUser) return;
-                        setIsProcessing(true);
-                        try {
-                          await supabaseService.activatePackage(adminFoundUser.id, 1550, { isFree: true });
-                          setNotification(`System: Gold Node (1550 USDT) Activated for ${adminFoundUser.username || adminFoundUser.operator_id}`);
-                          handleAdminSearch(); // Refresh searched user data
-                        } catch (err) {
-                          console.error('Package Activation Failed:', err);
-                          setNotification("Activation Failed: " + (err as Error).message);
-                        }
-                        setIsProcessing(false);
-                      }}
-                      disabled={isProcessing}
-                      className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-3 rounded-xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-2 mt-2"
-                    >
-                      {isProcessing ? <RefreshCw className="animate-spin" size={14} /> : <Package size={14} />}
-                      ACTIVATE GOLD NODE (1550 USDT) FREE
-                    </button>
-                  </motion.div>
-                )}
-
-                <div className="pt-4 border-t border-white/5 space-y-2">
-                  <button 
-                    onClick={async () => {
-                      setIsProcessing(true);
-                      try {
-                        await supabaseService.addFunds(userData.id, 10000);
-                        setNotification("System: 10,000 USDT Credited to Master Vault");
-                        fetchAllData();
-                      } catch (err) {
-                        console.error('Fund Addition Failed:', err);
-                      }
-                      setIsProcessing(false);
-                    }}
-                    disabled={isProcessing}
-                    className="w-full bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-emerald-500/20 flex items-center justify-center gap-3"
-                  >
-                    {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Zap size={16} />}
-                    ADD 10,000 USDT TO MY WALLET
-                  </button>
-
-                  <button 
-                    onClick={async () => {
-                      setIsProcessing(true);
-                      try {
-                        // Activate Gold Node (1550 USDT) for free for the admin
-                        await supabaseService.activatePackage(userData.id, 1550, { isFree: true });
-                        setNotification("System: Gold Node (1550 USDT) Activated for Free");
-                        fetchAllData();
-                      } catch (err) {
-                        console.error('Package Activation Failed:', err);
-                        setNotification("Activation Failed: " + (err as Error).message);
-                      }
-                      setIsProcessing(false);
-                    }}
-                    disabled={isProcessing}
-                    className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
-                  >
-                    {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <Package size={16} />}
-                    ACTIVATE GOLD NODE (1550 USDT) FOR FREE
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-8 bg-black/40 rounded-3xl border border-white/5 space-y-4">
-              <h4 className="text-xs font-black uppercase tracking-widest text-slate-400">System Maintenance</h4>
-              <button 
-                onClick={async () => {
-                  setIsProcessing(true);
-                  try {
-                    await supabaseService.fixSystemWallets();
-                    setNotification("System Wallets & Income Logic Synchronized");
-                    fetchAllData();
-                  } catch (err) {
-                    console.error('Fix Failed:', err);
-                    setNotification("Fix Failed: " + (err as Error).message);
-                  }
-                  setIsProcessing(false);
-                }}
-                disabled={isProcessing}
-                className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-rose-500/20 flex items-center justify-center gap-3"
-              >
-                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
-                FIX SYSTEM WALLETS & INCOME
-              </button>
-              <button 
-                onClick={async () => {
-                  setIsProcessing(true);
-                  try {
-                    await supabaseService.fixSystemWallets();
-                    setNotification("System Wallets & Income Logic Synchronized");
-                    fetchAllData();
-                  } catch (err) {
-                    console.error('Fix Failed:', err);
-                    setNotification("Fix Failed: " + (err as Error).message);
-                  }
-                  setIsProcessing(false);
-                }}
-                disabled={isProcessing}
-                className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-rose-500/20 flex items-center justify-center gap-3"
-              >
-                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
-                FIX SYSTEM WALLETS & INCOME
-              </button>
-              <button 
-                onClick={async () => {
-                  setIsProcessing(true);
-                  try {
-                    await supabaseService.rebuildTreeCounts();
-                    setNotification("Binary Tree Counts Rebuilt Successfully");
-                  } catch (err) {
-                    console.error('Rebuild Failed:', err);
-                    setNotification("Rebuild Failed: " + (err as Error).message);
-                  }
-                  setIsProcessing(false);
-                }}
-                disabled={isProcessing}
-                className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-blue-500/20 flex items-center justify-center gap-3"
-              >
-                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                REBUILD TREE COUNTS
-              </button>
-              <button 
-                onClick={async () => {
-                  setIsProcessing(true);
-                  try {
-                    await supabaseService.rebuildCumulativeVolume();
-                    setNotification("Cumulative Volume Rebuilt Successfully");
-                  } catch (err) {
-                    console.error('Rebuild Failed:', err);
-                    setNotification("Rebuild Failed: " + (err as Error).message);
-                  }
-                  setIsProcessing(false);
-                }}
-                disabled={isProcessing}
-                className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-amber-500/20 flex items-center justify-center gap-3"
-              >
-                {isProcessing ? <RefreshCw className="animate-spin" size={16} /> : <RefreshCw size={16} />}
-                REBUILD CUMULATIVE VOLUME
-              </button>
-              <button onClick={() => navigate('/admin/dashboard')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
-                ACCESS CORE DASHBOARD
-              </button>
-              <button onClick={() => navigate('/admin/users')} className="w-full bg-white/5 hover:bg-white/10 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-[10px] border border-white/5">
-                MANAGE NETWORK NODES
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Top Welcome Section */}
       <div className="bg-[#0c0c0d] p-12 rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden group">

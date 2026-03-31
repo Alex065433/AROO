@@ -338,7 +338,7 @@ const AdminCustomers: React.FC = () => {
                   <td className="px-8 py-5">
                     <div className="flex flex-col">
                       <span className="text-sm font-bold text-slate-900 dark:text-white">{user.name || 'Unnamed User'}</span>
-                      <span className="text-xs text-slate-500 dark:text-slate-400">{user.real_email || user.email}</span>
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{user.email}</span>
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
