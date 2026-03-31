@@ -32,15 +32,18 @@ const Landing: React.FC = () => {
           </div>
 
           {/* Mobile Auth Buttons */}
-          <div className="flex md:hidden items-center gap-4">
-            <Link to="/login" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+          <div className="flex md:hidden items-center gap-3">
+            <Link 
+              to="/login" 
+              className="px-4 py-2 bg-white/5 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
+            >
               Login
             </Link>
             <Link 
               to="/register" 
-              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/20"
+              className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/40 animate-pulse"
             >
-              Join
+              Join Now
             </Link>
           </div>
           

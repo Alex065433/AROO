@@ -43,8 +43,10 @@ export const supabaseService = {
       });
       
       if (authError) {
-        console.error('adminLogin: Supabase signInWithPassword failed:', authError);
-        // If sign in fails, we might still proceed if we have a fallback admin
+        // If it's the hardcoded admin, we expect this to fail if they haven't signed up in Supabase Auth yet.
+        // We log it as a minor info instead of a warning to keep the console clean.
+        console.log('adminLogin: Supabase signInWithPassword failed (expected if admin user not in Auth):', authError.message);
+        // If sign in fails, we still proceed with the hardcoded fallback
       } else {
         console.log('adminLogin: Supabase signInWithPassword succeeded:', authData);
       }
@@ -1602,7 +1604,7 @@ export const supabaseService = {
     if (!rootProfile) return {};
 
     const visited = new Set<string>();
-    const MAX_DEPTH = 100;
+    const MAX_DEPTH = 20;
 
     const buildNode = (node: any, path: string, depth: number = 0) => {
       if (visited.has(node.id) || depth > MAX_DEPTH) return;
