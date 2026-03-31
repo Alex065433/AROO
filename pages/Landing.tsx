@@ -25,10 +25,23 @@ const Landing: React.FC = () => {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-black/50 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <ArowinLogo size={40} className="drop-shadow-[0_0_10px_rgba(251,191,36,0.3)]" />
-            <span className="text-xl font-black tracking-tighter uppercase font-display">
-              Arowin<span className="text-amber-500">Trading</span>
+            <ArowinLogo size={32} className="sm:w-10 sm:h-10 drop-shadow-[0_0_10px_rgba(251,191,36,0.3)]" />
+            <span className="text-lg sm:text-xl font-black tracking-tighter uppercase font-display">
+              Arowin<span className="text-amber-500 hidden sm:inline">Trading</span>
             </span>
+          </div>
+
+          {/* Mobile Auth Buttons */}
+          <div className="flex md:hidden items-center gap-4">
+            <Link to="/login" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-colors">
+              Login
+            </Link>
+            <Link 
+              to="/register" 
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/20"
+            >
+              Join
+            </Link>
           </div>
           
           <div className="hidden md:flex items-center gap-8">

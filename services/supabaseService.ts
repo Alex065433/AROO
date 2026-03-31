@@ -1650,8 +1650,7 @@ export const supabaseService = {
 
     // Add any "orphaned" nodes that were returned by the RPC but not connected in the tree
     finalDownline.forEach((node: any) => {
-      const alreadyInTree = Object.values(tree).some((n: any) => n.uid === node.id);
-      if (!alreadyInTree && node.id !== rootId) {
+      if (!visited.has(node.id) && node.id !== rootId) {
         buildNode(node, `orphan-${node.id}`);
       }
     });
