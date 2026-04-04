@@ -8,6 +8,7 @@ import { SplashScreen } from './components/SplashScreen';
 import Dashboard from './pages/Dashboard';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import TwoFactorPage from './pages/TwoFactorPage';
 import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
 import BinaryTree from './pages/BinaryTree';
@@ -23,39 +24,21 @@ import AdminLogs from './pages/admin/AdminLogs';
 import Profile from './pages/Profile';
 import MasterWallet from './pages/MasterWallet';
 import Help from './pages/Help';
+import { useUser } from './src/context/UserContext';
 
 const App: React.FC = () => {
-  // Set to false to start at the user login screen
-  const [isUserAuth, setIsUserAuth] = useState(() => {
-    const saved = localStorage.getItem('arowin_supabase_user');
-    if (saved) {
-      const user = JSON.parse(saved);
-      return user && user.role !== 'admin';
-    }
-    return false;
-  });
-  // Set to false to allow testing the new Admin Login flow
-  const [isAdminAuth, setIsAdminAuth] = useState(() => {
-    const saved = localStorage.getItem('arowin_supabase_user');
-    if (saved) {
-      const user = JSON.parse(saved);
-      return user && user.role === 'admin';
-    }
-    return false;
-  });
-
-  const handleLogout = () => {
-    localStorage.removeItem('arowin_supabase_user');
-    setIsUserAuth(false);
-    setIsAdminAuth(false);
-  };
+  const { profile, loading, logout } = useUser();
   const [showSplash, setShowSplash] = useState(true);
 
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  if (showSplash) {
+  if (showSplash || loading) {
     return <SplashScreen onComplete={() => setShowSplash(false)} />;
   }
+
+  const is2FAPending = profile && profile.role !== 'admin' && profile.two_factor_pin && sessionStorage.getItem('2fa_verified') !== 'true';
+  const isUserAuth = profile && profile.role !== 'admin' && !is2FAPending;
+  const isAdminAuth = profile && profile.role === 'admin';
 
   return (
     <HashRouter>
@@ -68,19 +51,29 @@ const App: React.FC = () => {
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={
+          is2FAPending ? <Navigate to="/two-factor" /> :
           isUserAuth ? <Navigate to="/dashboard" /> : 
           isAdminAuth ? <Navigate to="/admin/dashboard" /> : 
           <Landing />
         } />
         <Route path="/landing" element={<Landing />} />
-        <Route path="/login" element={<Login onLogin={() => setIsUserAuth(true)} />} />
-        <Route path="/register" element={<Register onLogin={() => setIsUserAuth(true)} />} />
+        <Route path="/login" element={
+          is2FAPending ? <Navigate to="/two-factor" /> :
+          isUserAuth ? <Navigate to="/dashboard" /> : 
+          <Login />
+        } />
+        <Route path="/two-factor" element={
+          !profile ? <Navigate to="/login" /> :
+          isUserAuth ? <Navigate to="/dashboard" /> :
+          <TwoFactorPage />
+        } />
+        <Route path="/register" element={isUserAuth ? <Navigate to="/dashboard" /> : <Register onLogin={() => {}} />} />
         
         {/* Admin Public Route */}
-        <Route path="/admin/login" element={<AdminLogin onLogin={() => setIsAdminAuth(true)} />} />
+        <Route path="/admin/login" element={isAdminAuth ? <Navigate to="/admin/dashboard" /> : <AdminLogin onLogin={() => {}} />} />
 
         {/* User Protected Routes */}
-        <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/" />}>
+        <Route element={isUserAuth ? <Layout role="user" onLogout={logout} /> : <Navigate to="/" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
           <Route path="/binary-tree" element={<BinaryTree />} />
@@ -93,7 +86,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/" />}>
+        <Route element={isAdminAuth ? <AdminLayout onLogout={logout} /> : <Navigate to="/" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />

@@ -136,7 +136,7 @@ const AdminCustomers: React.FC = () => {
     if (!selectedUser) return;
     
     const amount = parseFloat(selectedPackage);
-    const balance = Number(selectedUser.wallet_balance ?? selectedUser.deposit_wallet ?? selectedUser.wallets?.master?.balance ?? 0);
+    const balance = Number(selectedUser.wallet_balance || 0);
     
     setConfirmDialog({
       isOpen: true,
@@ -342,7 +342,7 @@ const AdminCustomers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
-                    {(user.wallet_balance ?? user.deposit_wallet ?? user.wallets?.master?.balance ?? 0).toFixed(2)} USDT
+                    {(user.wallet_balance || 0).toFixed(2)} USDT
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -564,13 +564,13 @@ const AdminCustomers: React.FC = () => {
                     <div>
                       <input 
                         type="text"
-                        value={selectedUser.name}
+                        value={selectedUser.name || ''}
                         onChange={(e) => setSelectedUser({...selectedUser, name: e.target.value})}
                         className="w-full bg-transparent border-none p-0 font-bold text-slate-900 dark:text-white focus:ring-0"
                       />
                       <input 
                         type="email"
-                        value={selectedUser.email}
+                        value={selectedUser.email || ''}
                         onChange={(e) => setSelectedUser({...selectedUser, email: e.target.value})}
                         className="w-full bg-transparent border-none p-0 text-xs text-slate-500 dark:text-slate-400 focus:ring-0"
                       />

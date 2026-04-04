@@ -239,4 +239,3 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 };
 
 export default Login;
-

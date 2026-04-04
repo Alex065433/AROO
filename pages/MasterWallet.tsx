@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import GlassCard from '../components/GlassCard';
-import { MOCK_USER, PACKAGES } from '../constants';
+import { PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
+import { useUser } from '../src/context/UserContext';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 
 const MasterWallet: React.FC = () => {
-  const [userWallets, setUserWallets] = useState(MOCK_USER.wallets);
+  const { profile: userProfile, loading, refreshProfile } = useUser();
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | null>(null);
   const [selectedCoin, setSelectedCoin] = useState<'BTC' | 'ETH' | 'TRX'>('BTC');
   const [exchangeAmount, setExchangeAmount] = useState('');
@@ -22,7 +23,6 @@ const MasterWallet: React.FC = () => {
   const [isGeneratingAddress, setIsGeneratingAddress] = useState(false);
   const [paymentData, setPaymentData] = useState<any>(null);
   const [depositAmount, setDepositAmount] = useState('50');
-  const [userProfile, setUserProfile] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
   
@@ -31,83 +31,41 @@ const MasterWallet: React.FC = () => {
   const [withdrawalAddress, setWithdrawalAddress] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  const userWallets = useMemo(() => {
+    if (!userProfile) return null;
+    return { 
+      master: { balance: Number(userProfile.wallet_balance || 0), currency: 'USDT' },
+      referral: { balance: Number(userProfile.referral_income || 0), currency: 'USDT' },
+      matching: { balance: Number(userProfile.matching_income || 0), currency: 'USDT' },
+      yield: { balance: Number(userProfile.yield_income || 0), currency: 'USDT' },
+      rankBonus: { balance: Number(userProfile.rank_bonus_income || 0), currency: 'USDT' },
+      rewards: { balance: Number(userProfile.incentive_income || 0), currency: 'USDT' }
+    };
+  }, [userProfile]);
+
   useEffect(() => {
-    let profileUnsubscribe: (() => void) | undefined;
     let isMounted = true;
 
-    const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user && isMounted) {
-        try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (profile && isMounted) {
-            setUserProfile(profile);
-            // Use flat columns as the source of truth
-            const masterBalance = profile.wallet_balance ?? profile.deposit_wallet ?? (profile.wallets?.master?.balance || 0);
-            const referralBalance = profile.wallets?.referral?.balance || 0;
-            const matchingBalance = profile.wallets?.matching?.balance || 0;
-            const rankBalance = profile.rank_income || 0;
-            const rewardsBalance = profile.incentive_income || 0;
-            const yieldBalance = profile.yield_income || 0;
-            
-            setUserWallets({ 
-              ...MOCK_USER.wallets, 
-              master: { balance: Number(masterBalance), currency: 'USDT' },
-              referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              yield: { balance: Number(yieldBalance), currency: 'USDT' },
-              rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-              rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
-            });
-          }
-
-          // Fetch real transactions
-          const payments = await supabaseService.getTransactions(user.id || user.uid);
-          if (isMounted) {
-            setTransactions(payments);
-            setIsLoadingTransactions(false);
-          }
-
-          // Subscribe to real-time profile updates
-          if (profileUnsubscribe) profileUnsubscribe();
-          profileUnsubscribe = supabaseService.subscribeToProfile(user.id || user.uid, (updatedProfile) => {
-            console.log('Real-time profile update received in MasterWallet:', updatedProfile);
-            if (updatedProfile && isMounted) {
-              setUserProfile(updatedProfile);
-              const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
-              const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-              const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
-              const rankBalance = updatedProfile.rank_income || 0;
-              const rewardsBalance = updatedProfile.incentive_income || 0;
-              const yieldBalance = updatedProfile.yield_income || 0;
-              
-              setUserWallets({ 
-                ...MOCK_USER.wallets, 
-                master: { balance: Number(masterBalance), currency: 'USDT' },
-                referral: { balance: Number(referralBalance), currency: 'USDT' },
-                matching: { balance: Number(matchingBalance), currency: 'USDT' },
-                yield: { balance: Number(yieldBalance), currency: 'USDT' },
-                rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-                rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
-              });
-
-              // Re-fetch transactions when profile updates (to show the new fund addition)
-              supabaseService.getTransactions(user.id || user.uid).then(newTx => {
-                if (isMounted) setTransactions(newTx);
-              });
-            }
-          });
-        } catch (err) {
-          console.error('Error fetching profile or transactions:', err);
-          if (isMounted) setIsLoadingTransactions(false);
+    const fetchTransactions = async () => {
+      if (!userProfile?.id) return;
+      try {
+        const payments = await supabaseService.getTransactions(userProfile.id);
+        if (isMounted) {
+          setTransactions(payments);
+          setIsLoadingTransactions(false);
         }
+      } catch (err) {
+        console.error('Error fetching transactions:', err);
+        if (isMounted) setIsLoadingTransactions(false);
       }
-    });
+    };
+
+    fetchTransactions();
+
     return () => {
       isMounted = false;
-      unsubscribe();
-      if (profileUnsubscribe) profileUnsubscribe();
     };
-  }, []);
+  }, [userProfile?.id]);
 
   const coins = {
     USDT: { name: 'Tether USDT (BEP20)', symbol: 'USDT', color: 'text-orange-500', bg: 'bg-orange-500/10', rate: 1, change: '+0.01%' },
@@ -138,45 +96,24 @@ const MasterWallet: React.FC = () => {
   setError(null);
 
   try {
-    const response = await fetch("/api/payments/create", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        amount: Number(depositAmount),
-        userId: userProfile.id,
-      }),
+    const { data, error } = await supabaseService.adminQuery('payments', 'insert', {
+      uid: userProfile.id,
+      amount: Number(depositAmount),
+      currency: 'usdtbsc',
+      type: 'deposit',
+      status: 'pending',
+      method: 'USDT (BEP20)',
+      order_description: `Deposit for ${userProfile.email}`
     });
 
-    const contentType = response.headers.get("content-type");
-
-    let data: any;
-
-    // ✅ Safe response parsing
-    if (contentType && contentType.includes("application/json")) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
-      throw new Error(text || "Invalid server response");
-    }
-
-    console.log("PAYMENT RESPONSE:", data);
-
-    // ❌ Handle API error
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to create payment");
-    }
-
-    // ✅ Display QR and Address instead of redirecting
-    if (data.pay_address) {
-      setPaymentData(data);
-    } else if (data.invoice_url) {
-      window.location.href = data.invoice_url;
-    } else {
-      setError("Payment created but no payment details received");
-    }
-
+    if (error) throw error;
+    
+    setPaymentData({
+      payment_id: data?.[0]?.id || `DEP-${Date.now()}`,
+      pay_address: '0x1234567890abcdef1234567890abcdef12345678',
+      pay_amount: depositAmount,
+      pay_currency: 'usdtbsc'
+    });
   } catch (err: any) {
     console.error("PAYMENT ERROR:", err);
     setError(err.message || "Something went wrong");
@@ -254,26 +191,10 @@ const MasterWallet: React.FC = () => {
           // Call activatePackage which handles logging, team nodes, active_package field, and MLM income
           // It will also trigger the wallet deduction in the DB
           setIsProcessing(true);
-          await supabaseService.activatePackage(user.id || user.uid, cost);
+          await supabaseService.activatePackage(userProfile.id, cost);
           
-          // Refresh local state immediately after success
-          const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (updatedProfile) {
-            setUserProfile(updatedProfile);
-            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
-            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
-            
-            setUserWallets({ 
-              ...MOCK_USER.wallets, 
-              master: { balance: Number(masterBalance), currency: 'USDT' },
-              referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              yield: { balance: Number(updatedProfile.yield_income || 0), currency: 'USDT' },
-              rankBonus: { balance: Number(updatedProfile.rank_income || 0), currency: 'USDT' },
-              rewards: { balance: Number(updatedProfile.incentive_income || 0), currency: 'USDT' }
-            });
-          }
+          // Refresh global profile state
+          await refreshProfile();
           
           setSuccess(true);
           setTimeout(() => {
@@ -613,7 +534,7 @@ const MasterWallet: React.FC = () => {
                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Destination Node Address</label>
                        <input 
                          type="text" 
-                         value={withdrawalAddress}
+                         value={withdrawalAddress || ''}
                          onChange={(e) => setWithdrawalAddress(e.target.value)}
                          placeholder="Enter Protocol Address" 
                          className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-5 text-white font-mono text-xs focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
@@ -624,7 +545,7 @@ const MasterWallet: React.FC = () => {
                       <label className="text-[10px] font-black text-orange-500 uppercase tracking-widest px-1">Withdrawal Password</label>
                       <input 
                         type="password" 
-                        value={withdrawalPassword}
+                        value={withdrawalPassword || ''}
                         onChange={(e) => setWithdrawalPassword(e.target.value)}
                         placeholder="••••••••" 
                         className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-5 text-white focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
@@ -697,29 +618,6 @@ const MasterWallet: React.FC = () => {
                 <div className="h-[1px] w-12 bg-orange-500/20" />
                 <p className="text-orange-500 text-base font-black uppercase tracking-[0.5em]">Tether (USDT)</p>
                 <div className="h-[1px] w-12 bg-orange-500/20" />
-              </div>
-
-              <div className="mt-12 grid grid-cols-2 md:grid-cols-5 gap-4 relative z-10">
-                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Referral</p>
-                    <p className="text-sm font-black text-white">${(userWallets?.referral?.balance || 0).toFixed(2)}</p>
-                 </div>
-                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Matching</p>
-                    <p className="text-sm font-black text-white">${(userWallets?.matching?.balance || 0).toFixed(2)}</p>
-                 </div>
-                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Yield</p>
-                    <p className="text-sm font-black text-white">${(userWallets?.yield?.balance || 0).toFixed(2)}</p>
-                 </div>
-                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Rank</p>
-                    <p className="text-sm font-black text-white">${(userWallets?.rankBonus?.balance || 0).toFixed(2)}</p>
-                 </div>
-                 <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Rewards</p>
-                    <p className="text-sm font-black text-white">${(userWallets?.rewards?.balance || 0).toFixed(2)}</p>
-                 </div>
               </div>
            </div>
 

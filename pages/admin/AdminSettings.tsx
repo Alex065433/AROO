@@ -46,13 +46,13 @@ const AdminSettings: React.FC = () => {
   const handleProcessPayouts = async () => {
     setIsProcessingPayouts(true);
     try {
-      await supabaseService.processDailyPayouts();
-      setSuccessMessage('Daily payouts processed successfully!');
+      await supabaseService.processAllIncomes();
+      setSuccessMessage('All incomes processed successfully!');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
     } catch (err) {
       console.error('Payout processing failed:', err);
-      toast.error('Failed to process daily payouts. Check system logs.');
+      toast.error('Failed to process all incomes. Check system logs.');
     } finally {
       setIsProcessingPayouts(false);
     }

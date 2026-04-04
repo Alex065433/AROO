@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, RefreshCw, ArrowRight, Lock, Smartphone } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { supabaseService } from '../services/supabaseService';
+import { supabase } from '../services/supabase';
 
 interface TwoFactorAuthProps {
   onVerify: () => void;
@@ -22,32 +22,46 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
   const [error, setError] = useState<string | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const [realPin, setRealPin] = useState<string | null>(null);
+  const verify2FA = async (enteredCode: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
 
-  useEffect(() => {
-    const fetchPin = async () => {
-      // Use supabaseService to get the current mock user
-      const currentUser = supabaseService.getCurrentUser();
-      if (currentUser) {
-        try {
-          const profile = await supabaseService.getUserProfile(currentUser.id || currentUser.uid) as any;
-          if (profile && profile.two_factor_pin) {
-            setRealPin(profile.two_factor_pin);
-          } else {
-            setRealPin('123456'); // Fallback
-          }
-        } catch (err) {
-          console.error('Error fetching 2FA PIN:', err);
-          setRealPin('123456');
-        }
-      } else {
-        // If no user, maybe it's an admin login with username/password
-        // For now, default to 123456 for mock
-        setRealPin('123456');
+    console.log("User ID:", user?.id);
+    console.log("Entered Code:", enteredCode);
+
+    if (!user) {
+      console.error("2FA Verification Error: User not authenticated.");
+      return false;
+    }
+
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('two_factor_pin')
+        .eq('id', user.id)
+        .single();
+
+      if (error) {
+        console.error("2FA Verification Error: Failed to fetch profile:", error.message);
+        return false;
       }
-    };
-    fetchPin();
-  }, []);
+
+      const dbPin = profile?.two_factor_pin;
+      console.log("DB Pin:", dbPin);
+      console.log("Entered Code:", enteredCode);
+
+      if (String(dbPin || '').trim() === String(enteredCode || '').trim()) {
+        console.log("2FA Verification Successful");
+        return true;
+      } else {
+        console.error("2FA Verification Failed: Invalid code.");
+        return false;
+      }
+    } catch (err: any) {
+      console.error("2FA Verification Error: An unexpected error occurred:", err);
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (resendTimer > 0) {
@@ -75,7 +89,7 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
     }
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     const fullCode = code.join('');
     if (fullCode.length !== 6) {
       setError('Please enter the full 6-digit code.');
@@ -85,17 +99,16 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
     setIsVerifying(true);
     setError(null);
 
-    // Simulate verification
-    setTimeout(() => {
-      if (fullCode === realPin) { 
-        onVerify();
-      } else {
-        setIsVerifying(false);
-        setError('Invalid verification code. Please try again.');
-        setCode(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
-      }
-    }, 1500);
+    const isValid = await verify2FA(fullCode);
+
+    if (isValid) {
+      onVerify();
+    } else {
+      setIsVerifying(false);
+      setError('Invalid verification code. Please try again.');
+      setCode(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+    }
   };
 
   const handleResend = () => {

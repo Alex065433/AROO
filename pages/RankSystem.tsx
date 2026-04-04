@@ -1,34 +1,15 @@
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import GlassCard from '../components/GlassCard';
 import { RANKS } from '../constants';
-import { supabaseService } from '../services/supabaseService';
+import { useUser } from '../src/context/UserContext';
 import { Crown, Star, Shield, Zap, Lock, CheckCircle2, Award, Gem, Medal, RefreshCw } from 'lucide-react';
 
 const RankSystem: React.FC = () => {
-  const [userRank, setUserRank] = useState(1);
-  const [isActive, setIsActive] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchRank = async () => {
-      try {
-        const user = supabaseService.getCurrentUser();
-        if (user) {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (profile) {
-            setUserRank(profile.rank || 1);
-            setIsActive(profile.active_package > 0);
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching rank:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchRank();
-  }, []);
+  const { profile, loading } = useUser();
+  
+  const userRank = profile?.rank || 1;
+  const isActive = (profile?.active_package || 0) > 0;
 
   const tiers = [
     { name: 'Tier 1 – Foundation Level', levels: [1, 2, 3], color: 'from-slate-400 to-slate-600', icon: Medal },

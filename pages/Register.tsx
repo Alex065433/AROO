@@ -145,35 +145,13 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const handleGoogleLogin = async () => {
     setError(null);
     try {
-      const user = await supabaseService.loginWithGoogle() as any;
-      
-      // Check if profile exists, if not create one
-      const profile = await supabaseService.getUserProfile(user.id);
-      if (!profile) {
-        await supabaseService.createUserProfile(user.id, {
-          name: user.user_metadata?.full_name || 'New Operator',
-          email: user.email || '',
-          mobile: '',
-          operator_id: `ARW-${Math.floor(100000 + Math.random() * 900000)}`,
-          rank: 1,
-          wallets: {
-            master: { balance: 0, currency: 'USDT' },
-            referral: { balance: 0, currency: 'USDT' },
-            matching: { balance: 0, currency: 'USDT' },
-            rankBonus: { balance: 0, currency: 'USDT' },
-            rewards: { balance: 0, currency: 'USDT' },
-          },
-          team_size: 0,
-          matched_pairs: 0,
-          role: 'user'
-        });
-      }
-
-      onLogin();
-      navigate('/dashboard');
+      await supabase.auth.signInWithOAuth({
+        provider: 'google',
+      });
+      // The redirect will handle the rest
     } catch (err: any) {
       console.error('Google login failed:', err);
-      setError(supabaseService.formatError(err));
+      setError(err.message || 'Google login failed');
     }
   };
 
@@ -252,7 +230,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 <input 
                   readOnly
                   type="text" 
-                  value={parentId}
+                  value={parentId || ''}
                   className="w-full bg-slate-900/60 border border-blue-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none opacity-70" 
                 />
                 {parentName && (
