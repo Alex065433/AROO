@@ -111,10 +111,12 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             fetchProfile(session.user.id, true);
           }
         } else {
+          if (session?.user) {
+            localStorage.removeItem(`2fa_verified_${session.user.id}`);
+          }
           setUser(null);
           setProfile(null);
           localStorage.removeItem('arowin_supabase_user');
-          sessionStorage.removeItem('2fa_verified');
         }
         setLoading(false);
       }

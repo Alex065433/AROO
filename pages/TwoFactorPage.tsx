@@ -11,7 +11,9 @@ const TwoFactorPage: React.FC = () => {
   const emailOrId = profile?.operator_id || profile?.email || localStorage.getItem('arowin_login_id') || 'Operator';
 
   const handleVerify = () => {
-    sessionStorage.setItem('2fa_verified', 'true');
+    if (profile?.id) {
+      localStorage.setItem(`2fa_verified_${profile.id}`, 'true');
+    }
     refreshProfile(); // Ensure profile is up to date
     if (profile?.role === 'admin') {
       navigate('/admin/dashboard');
@@ -21,8 +23,10 @@ const TwoFactorPage: React.FC = () => {
   };
 
   const handleCancel = async () => {
+    if (profile?.id) {
+      localStorage.removeItem(`2fa_verified_${profile.id}`);
+    }
     await logout();
-    sessionStorage.removeItem('2fa_verified');
     navigate('/login');
   };
 

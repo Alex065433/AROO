@@ -121,7 +121,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           name: name || 'New Operator',
           mobile: mobile || '',
           withdrawalPassword: withdrawalPassword,
-          twoFactorPin: twoFactorPin || '123456',
+          twoFactorPin: twoFactorPin,
           parentId: parentUUID
         }
       );

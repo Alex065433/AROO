@@ -37,7 +37,7 @@ const App: React.FC = () => {
   const isAuthenticated = !!user;
   const isAdmin = profile?.role === 'admin';
   const isUser = profile && profile.role !== 'admin';
-  const is2FAPending = isAuthenticated && profile?.two_factor_pin && sessionStorage.getItem('2fa_verified') !== 'true';
+  const is2FAPending = isAuthenticated && profile?.two_factor_pin && localStorage.getItem(`2fa_verified_${user?.id}`) !== 'true';
   const isProfileLoading = isAuthenticated && !profile && profileLoading;
 
   if (showSplash || loading || isProfileLoading) {

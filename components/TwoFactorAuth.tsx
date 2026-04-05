@@ -29,7 +29,7 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
 
     if (!user) {
       console.error("2FA Verification Error: User not authenticated.");
-      return enteredCode === '123456'; // Bypass for testing
+      return false;
     }
 
     try {
@@ -38,14 +38,14 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
       const dbPin = profile?.two_factor_pin || profile?.withdrawal_password;
 
       if (!dbPin) {
-        // If no pin is set in DB, allow 123456 as default for new users
-        return enteredCode === '123456';
+        // If no pin is set in DB, return false for security
+        return false;
       }
 
       return String(dbPin || '').trim() === String(enteredCode || '').trim();
     } catch (err: any) {
       console.error("2FA Verification Error:", err);
-      return enteredCode === '123456';
+      return false;
     }
   };
 

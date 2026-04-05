@@ -232,8 +232,11 @@ export const supabaseService = {
   },
 
   async logout() {
+    const user = this.getCurrentUser();
+    if (user?.id) {
+      localStorage.removeItem(`2fa_verified_${user.id}`);
+    }
     localStorage.removeItem('arowin_supabase_user');
-    sessionStorage.removeItem('2fa_verified');
     await supabase.auth.signOut();
   },
 
@@ -375,7 +378,7 @@ export const supabaseService = {
       name: additionalData.name || email.split('@')[0],
       mobile: additionalData.mobile || '',
       withdrawal_password: additionalData.withdrawalPassword || '',
-      two_factor_pin: additionalData.twoFactorPin || '123456',
+      two_factor_pin: additionalData.twoFactorPin || '',
       sponsor_id: sponsor?.id || null,
       parent_id: parentId,
       side: finalSide,
