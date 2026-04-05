@@ -28,7 +28,7 @@ async function run() {
     console.log('User creation error:', userError.message);
     // Try to find the user anyway
     const { data: listData, error: listError } = await supabase.auth.admin.listUsers();
-    const user = listData?.users.find(u => u.email === email);
+    const user = (listData?.users as any[])?.find(u => u.email === email);
     if (user) {
       console.log('Found existing user in Auth:', user.id);
       await createProfile(user.id);

@@ -77,7 +77,11 @@ const App: React.FC = () => {
         
         {/* Admin Public Route */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
-        <Route path="/admin/login" element={(isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : <AdminLogin onLogin={refreshProfile} />} />
+        <Route path="/admin/login" element={
+          is2FAPending ? <Navigate to="/two-factor" /> :
+          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : 
+          <AdminLogin onLogin={refreshProfile} />
+        } />
 
         {/* User Protected Routes */}
         <Route element={isAuthenticated ? (is2FAPending ? <Navigate to="/two-factor" /> : <Layout role="user" onLogout={logout} />) : <Navigate to="/" />}>

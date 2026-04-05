@@ -5,7 +5,7 @@ import {
   LayoutDashboard, GitBranch, Trophy, 
   LogOut, Menu, Gift, Bell, Search, Wallet, Share2, User, X,
   HelpCircle, ChevronRight, AlertCircle, Info, Zap, Cpu,
-  Wallet2
+  Wallet2, ShieldCheck
 } from 'lucide-react';
 import { RANKS } from '../constants';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -94,6 +94,7 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     { name: 'Rank Ladder', path: '/ranks', icon: Trophy },
     { name: 'Rewards', path: '/rewards', icon: Gift },
     { name: 'Support & Help', path: '/help', icon: HelpCircle },
+    ...(profile?.role === 'admin' ? [{ name: 'Admin Panel', path: '/admin/dashboard', icon: ShieldCheck }] : []),
   ];
 
   const SidebarContent = () => (

@@ -9,7 +9,7 @@ async function run() {
   if (error) {
     console.error('Error:', error.message);
   } else {
-    const user = data.users.find(u => u.email === 'kethankumar130@gmail.com');
+    const user = (data.users as any[]).find(u => u.email === 'kethankumar130@gmail.com');
     if (user) {
       console.log('Found user in Auth:', user.id);
       // Now find the profile

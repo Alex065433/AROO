@@ -203,7 +203,8 @@ const AdminCustomers: React.FC = () => {
     try {
       await supabaseService.updateUser(selectedUser.id, {
         name: selectedUser.name,
-        email: selectedUser.email
+        email: selectedUser.email,
+        role: selectedUser.role
       });
       toast.success('User updated successfully');
       fetchUsers();
@@ -575,7 +576,7 @@ const AdminCustomers: React.FC = () => {
                         className="w-full bg-transparent border-none p-0 text-xs text-slate-500 dark:text-slate-400 focus:ring-0"
                       />
                       <p className="text-[10px] text-slate-400 font-mono mt-1">{selectedUser.id}</p>
-                      <div className="mt-2">
+                      <div className="mt-2 flex items-center gap-2">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                           selectedUser.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 
                           selectedUser.status === 'pending' ? 'bg-amber-500/10 text-amber-500' : 
@@ -583,12 +584,29 @@ const AdminCustomers: React.FC = () => {
                         }`}>
                           {selectedUser.status || 'pending'}
                         </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                          selectedUser.role === 'admin' ? 'bg-blue-500/10 text-blue-500' : 'bg-slate-500/10 text-slate-500'
+                        }`}>
+                          {selectedUser.role || 'user'}
+                        </span>
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
                     <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
+                       <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">System Role</label>
+                          <select 
+                            value={selectedUser.role || 'user'}
+                            onChange={(e) => setSelectedUser({...selectedUser, role: e.target.value})}
+                            className="w-full bg-white dark:bg-slate-800 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+                          >
+                            <option value="user">Standard User</option>
+                            <option value="admin">Administrator</option>
+                          </select>
+                       </div>
+
                        <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                              <ShieldAlert size={18} />

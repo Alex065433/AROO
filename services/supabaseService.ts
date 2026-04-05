@@ -911,7 +911,7 @@ export const supabaseService = {
     const currentUser = this.getCurrentUser();
     let token = '';
     
-    if (currentUser?.operator_id === 'ADMIN_AROWIN_2026') {
+    if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
       token = 'CORE_SECURE_999';
     } else {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -953,7 +953,7 @@ export const supabaseService = {
           
           // Fallback for hardcoded admin
           const currentUser = this.getCurrentUser();
-          if (currentUser?.operator_id === 'ADMIN_AROWIN_2026') {
+          if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
             console.log('addFunds: Using hardcoded admin secret as token');
             session = { access_token: 'CORE_SECURE_999' } as any;
           } else {
@@ -1000,6 +1000,22 @@ export const supabaseService = {
       return true;
     } catch (error) {
       console.error('Error in addFunds:', error);
+      throw error;
+    }
+  },
+
+  async setupAdmin(secret: string) {
+    try {
+      const response = await fetch('/api/admin/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to setup admin');
+      return data;
+    } catch (error) {
+      console.error('Error in setupAdmin:', error);
       throw error;
     }
   },

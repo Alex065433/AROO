@@ -67,6 +67,14 @@ const Landing: React.FC = () => {
             <a href="#features" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Features</a>
             <a href="#ecosystem" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Ecosystem</a>
             <a href="#security" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Security</a>
+            {isAdmin && (
+              <Link 
+                to="/admin/dashboard" 
+                className="text-xs font-black uppercase tracking-widest text-blue-500 hover:text-blue-400 transition-all border border-blue-500/20 px-4 py-2 rounded-full bg-blue-500/5"
+              >
+                Admin Portal
+              </Link>
+            )}
             {isAuthenticated ? (
               <Link 
                 to={isAdmin ? "/admin/dashboard" : "/dashboard"} 
@@ -465,6 +473,7 @@ const Landing: React.FC = () => {
               <ul className="space-y-4 text-slate-500 text-sm font-medium">
                 <li><a href="#" className="hover:text-amber-500 transition-colors">About Us</a></li>
                 <li><a href="#" className="hover:text-amber-500 transition-colors">Contact</a></li>
+                <li><Link to="/admin/login" className="hover:text-amber-500 transition-colors">Admin Login</Link></li>
                 <li><a href="#" className="hover:text-amber-500 transition-colors">Privacy Policy</a></li>
                 <li><a href="#" className="hover:text-amber-500 transition-colors">Terms of Service</a></li>
               </ul>

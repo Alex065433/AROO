@@ -69,6 +69,78 @@ const verifyAdmin = async (req: express.Request, res: express.Response, next: ex
   }
 };
 
+app.post("/api/admin/setup", async (req, res) => {
+  const { secret } = req.body;
+  
+  // Security check for initialization
+  if (secret !== 'INITIALIZE_AROWIN_2026') {
+    return res.status(403).json({ error: 'Unauthorized: Invalid setup secret.' });
+  }
+
+  try {
+    const email = 'admin@arowin.internal';
+    const password = 'ArowinAdmin2024!';
+    
+    // We need service role key for admin operations
+    const serviceKey = process.env.VITE_SUPABASE_SERVICE_KEY;
+    if (!serviceKey) {
+      return res.status(500).json({ error: 'VITE_SUPABASE_SERVICE_KEY is not configured in environment variables.' });
+    }
+
+    const adminClient = createClient(supabaseUrl, serviceKey);
+
+    // 1. Check if user exists in Auth
+    const { data: listData, error: listError } = await adminClient.auth.admin.listUsers();
+    if (listError) throw listError;
+
+    let user = (listData.users as any[]).find(u => u.email === email);
+    
+    if (!user) {
+      // Create new admin user
+      const { data: userData, error: userError } = await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { role: 'admin' }
+      });
+      if (userError) throw userError;
+      user = userData.user;
+      console.log('Admin user created in Auth');
+    } else {
+      // Reset password for existing admin
+      const { error: resetError } = await adminClient.auth.admin.updateUserById(user.id, {
+        password: password
+      });
+      if (resetError) throw resetError;
+      console.log('Admin password reset in Auth');
+    }
+
+    // 2. Ensure profile exists in database
+    const { error: profileError } = await adminClient.from('profiles').upsert({
+      id: user.id,
+      email: email,
+      operator_id: 'ARW-ADMIN-01',
+      role: 'admin',
+      status: 'active',
+      name: 'System Administrator',
+      wallet_balance: 0,
+      wallets: {
+        master: { balance: 0, currency: 'USDT' },
+        referral: { balance: 0, currency: 'USDT' },
+        matching: { balance: 0, currency: 'USDT' },
+        rankBonus: { balance: 0, currency: 'USDT' },
+        rewards: { balance: 0, currency: 'USDT' },
+      }
+    });
+    if (profileError) throw profileError;
+
+    res.json({ success: true, message: 'Admin account initialized/reset successfully with password: ArowinAdmin2024!' });
+  } catch (error: any) {
+    console.error('Admin setup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/admin/add-funds", verifyAdmin, async (req, res) => {
   const { uid, amount } = req.body;
 

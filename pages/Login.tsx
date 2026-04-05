@@ -11,7 +11,6 @@ import { supabaseService } from '../services/supabaseService';
 const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const navigate = useNavigate();
   const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [show2FA, setShow2FA] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [operatorId, setOperatorId] = useState('');
   const [password, setPassword] = useState('');
@@ -42,9 +41,13 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       setIsAuthorizing(false);
       isAuthorizingRef.current = false;
       
+      // Save for 2FA page display
+      localStorage.setItem('arowin_login_id', operatorId);
+      
       // The profile will be fetched in background by UserContext
-      // We can proceed to 2FA
-      setShow2FA(true);
+      // App.tsx will handle the redirect to /two-factor if needed
+      onLogin();
+      navigate('/dashboard');
     } catch (err: any) {
       clearTimeout(timeout);
       console.error('Login failed:', err);
@@ -89,17 +92,6 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     }
   };
 
-  const handleVerify = () => {
-    sessionStorage.setItem('2fa_verified', 'true');
-    const profile = supabaseService.getCurrentUser();
-    onLogin();
-    if (profile?.role === 'admin') {
-      navigate('/admin/dashboard');
-    } else {
-      navigate('/dashboard');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center p-6 relative overflow-hidden font-inter text-slate-100">
       {/* Background Atmosphere - Large Dark Blue Glow as seen in screenshot */}
@@ -134,7 +126,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               key="reset-form"
               onCancel={() => setShowReset(false)}
             />
-          ) : !show2FA ? (
+          ) : (
             <motion.div 
               key="login-form"
               initial={{ opacity: 0, x: -20 }}
@@ -237,13 +229,6 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                  <button onClick={() => navigate('/register')} className="text-blue-600 hover:text-blue-400 transition-all">Initialize Node</button>
               </div>
             </motion.div>
-          ) : (
-            <TwoFactorAuth 
-              key="2fa-form"
-              emailOrId={operatorId}
-              onVerify={handleVerify}
-              onCancel={() => setShow2FA(false)}
-            />
           )}
         </AnimatePresence>
 
@@ -252,12 +237,16 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           animate={{ opacity: 1 }}
           className="mt-12 text-center"
         >
-           <div className="flex items-center justify-center gap-4 opacity-20 mb-6">
-              <ShieldCheck size={16} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Protocol Secured</span>
+           <div className="flex items-center justify-center gap-4 opacity-40 mb-6">
+              <ShieldCheck size={16} className="text-blue-500" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Protocol Secured</span>
            </div>
-           {/* Admin gateway hidden for regular users as per request */}
-           {/* <button onClick={() => navigate('/admin/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button> */}
+           <button 
+             onClick={() => navigate('/admin/login')} 
+             className="px-6 py-2 border border-white/5 hover:border-blue-500/30 bg-white/5 hover:bg-blue-500/5 text-[9px] font-black uppercase tracking-[0.4em] text-slate-600 hover:text-blue-400 rounded-full transition-all duration-500"
+           >
+             ADMIN GATEWAY
+           </button>
         </motion.div>
       </div>
     </div>
