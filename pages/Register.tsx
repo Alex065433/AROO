@@ -31,9 +31,9 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const ref = params.get('ref');
-    const parentParam = params.get('parent');
-    const sideParam = params.get('side');
+    const ref = params.get('ref') || localStorage.getItem('arowin_ref');
+    const parentParam = params.get('parent') || localStorage.getItem('arowin_parent');
+    const sideParam = params.get('side') || localStorage.getItem('arowin_side');
     
     if (ref) setSponsorId(ref);
     if (parentParam) setParentId(parentParam);
@@ -129,6 +129,11 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       setRegisteredUser(user);
       setIsSubmitting(false);
       setIsSuccess(true);
+      
+      // Clear stored referral params
+      localStorage.removeItem('arowin_ref');
+      localStorage.removeItem('arowin_parent');
+      localStorage.removeItem('arowin_side');
 
       // 5. Redirect
       setTimeout(() => {

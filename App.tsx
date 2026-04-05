@@ -40,6 +40,27 @@ const App: React.FC = () => {
   const is2FAPending = isAuthenticated && profile?.two_factor_pin && localStorage.getItem(`2fa_verified_${user?.id}`) !== 'true';
   const isProfileLoading = isAuthenticated && !profile && profileLoading;
 
+  useEffect(() => {
+    // Capture referral params from URL and store in sessionStorage
+    const captureParams = () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParts = window.location.hash.split('?');
+      const hashParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
+      
+      const ref = searchParams.get('ref') || hashParams.get('ref');
+      const parent = searchParams.get('parent') || hashParams.get('parent');
+      const side = searchParams.get('side') || hashParams.get('side');
+      
+      if (ref) localStorage.setItem('arowin_ref', ref);
+      if (parent) localStorage.setItem('arowin_parent', parent);
+      if (side) localStorage.setItem('arowin_side', side);
+    };
+    
+    captureParams();
+    window.addEventListener('hashchange', captureParams);
+    return () => window.removeEventListener('hashchange', captureParams);
+  }, []);
+
   if (showSplash || loading || isProfileLoading) {
     return <SplashScreen onComplete={() => setShowSplash(false)} />;
   }
