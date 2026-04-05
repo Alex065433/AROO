@@ -21,27 +21,59 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [show2FA, setShow2FA] = useState(false);
   const [showReset, setShowReset] = useState(false);
 
+  const isAuthenticatingRef = React.useRef(false);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsAuthenticating(true);
+    isAuthenticatingRef.current = true;
+
+    // Safety timeout to prevent infinite buffering
+    const timeout = setTimeout(() => {
+      if (isAuthenticatingRef.current) {
+        setIsAuthenticating(false);
+        isAuthenticatingRef.current = false;
+        setError('Connection timeout. The database is taking longer than expected to wake up. Please try again in a moment.');
+      }
+    }, 45000);
 
     try {
-      // Unique Admin Login Protocol
-      await supabaseService.adminLogin(username, password);
+      // Unique Admin Login Protocol - using the same login service
+      const authData = await supabaseService.login(username, password);
+      
+      // For Admin, we MUST verify role before proceeding to 2FA
+      const profile = await supabaseService.getUserProfile(authData.user.id);
+      
+      if (!profile || profile.role !== 'admin') {
+        await supabaseService.logout();
+        throw new Error('Unauthorized: You do not have administrative privileges.');
+      }
+
+      clearTimeout(timeout);
       setIsAuthenticating(false);
+      isAuthenticatingRef.current = false;
       setShow2FA(true);
     } catch (err: any) {
+      clearTimeout(timeout);
       console.error('Admin login failed:', err);
       setError(err.message || 'Authorization Failed: Invalid System Signature.');
       setIsAuthenticating(false);
+      isAuthenticatingRef.current = false;
     }
   };
 
   const handleGoogleLogin = async () => {
     setError(null);
     try {
-      await supabaseService.loginWithGoogle();
+      const user = await supabaseService.loginWithGoogle() as any;
+      const profile = await supabaseService.getUserProfile(user.id);
+      
+      if (profile?.role !== 'admin') {
+        await supabaseService.logout();
+        throw new Error('Unauthorized: Google account is not registered as an administrator.');
+      }
+
       onLogin();
       navigate('/admin/dashboard');
     } catch (err: any) {
@@ -51,6 +83,7 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   };
 
   const handleVerify = () => {
+    sessionStorage.setItem('2fa_verified', 'true');
     onLogin();
     navigate('/admin/dashboard');
   };
@@ -103,7 +136,7 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                       type="text" 
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      placeholder="System Identity" 
+                      placeholder="ARW-ADMIN-01" 
                       className="w-full bg-slate-950/50 border border-white/5 rounded-2xl pl-14 pr-6 py-5 text-blue-400 font-mono focus:outline-none focus:border-blue-500/30 transition-all placeholder:text-slate-900 text-sm font-bold"
                       required
                     />

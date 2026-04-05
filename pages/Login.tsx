@@ -18,20 +18,39 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isAuthorizingRef = React.useRef(false);
+
   const handleAuth = async () => {
     if (!operatorId || !password) return;
     setIsAuthorizing(true);
+    isAuthorizingRef.current = true;
     setError(null);
     
+    // Safety timeout to prevent infinite buffering
+    const timeout = setTimeout(() => {
+      if (isAuthorizingRef.current) {
+        setIsAuthorizing(false);
+        isAuthorizingRef.current = false;
+        setError('Connection timeout. The database is taking longer than expected to wake up. Please try again in a moment.');
+      }
+    }, 45000);
+
     try {
-      // Supabase Login with Operator ID
-      await supabaseService.login(operatorId, password);
+      // Supabase Login with Operator ID or Email
+      const authData = await supabaseService.login(operatorId, password);
+      clearTimeout(timeout);
       setIsAuthorizing(false);
+      isAuthorizingRef.current = false;
+      
+      // The profile will be fetched in background by UserContext
+      // We can proceed to 2FA
       setShow2FA(true);
     } catch (err: any) {
+      clearTimeout(timeout);
       console.error('Login failed:', err);
       setError(supabaseService.formatError(err));
       setIsAuthorizing(false);
+      isAuthorizingRef.current = false;
     }
   };
 
@@ -71,8 +90,14 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   };
 
   const handleVerify = () => {
+    sessionStorage.setItem('2fa_verified', 'true');
+    const profile = supabaseService.getCurrentUser();
     onLogin();
-    navigate('/dashboard');
+    if (profile?.role === 'admin') {
+      navigate('/admin/dashboard');
+    } else {
+      navigate('/dashboard');
+    }
   };
 
   return (
@@ -231,7 +256,8 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               <ShieldCheck size={16} />
               <span className="text-[10px] font-black uppercase tracking-widest">Protocol Secured</span>
            </div>
-           <button onClick={() => navigate('/admin/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button>
+           {/* Admin gateway hidden for regular users as per request */}
+           {/* <button onClick={() => navigate('/admin/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button> */}
         </motion.div>
       </div>
     </div>

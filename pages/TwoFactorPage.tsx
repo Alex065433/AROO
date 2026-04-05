@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TwoFactorAuth } from '../components/TwoFactorAuth';
+import { supabaseService } from '../services/supabaseService';
 
 const TwoFactorPage: React.FC = () => {
   const navigate = useNavigate();
@@ -15,7 +16,12 @@ const TwoFactorPage: React.FC = () => {
           emailOrId={emailOrId}
           onVerify={() => {
             sessionStorage.setItem('2fa_verified', 'true');
-            navigate('/dashboard');
+            const profile = supabaseService.getCurrentUser();
+            if (profile?.role === 'admin') {
+              navigate('/admin/dashboard');
+            } else {
+              navigate('/dashboard');
+            }
           }}
           onCancel={() => navigate('/login')}
         />

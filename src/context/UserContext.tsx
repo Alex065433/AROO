@@ -16,8 +16,10 @@ interface UserProfile {
 }
 
 interface UserContextType {
+  user: any | null;
   profile: UserProfile | null;
   loading: boolean;
+  profileLoading: boolean;
   error: string | null;
   refreshProfile: () => Promise<void>;
   logout: () => Promise<void>;
@@ -26,131 +28,118 @@ interface UserContextType {
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<any | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(() => {
+    // Initial sync from localStorage for fast UI response
+    const saved = localStorage.getItem('arowin_supabase_user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProfile = async (user: any) => {
-    if (!user) {
-      setProfile(null);
-      setLoading(false);
-      return;
-    }
-
-    console.log("FETCH START");
-    console.log("USER:", user);
-
+  const fetchProfile = async (userId: string, silent: boolean = false) => {
+    if (!silent) setProfileLoading(true);
     try {
-      setLoading(true);
-      
-      const timeout = setTimeout(() => {
-        setLoading(false);
-      }, 5000);
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id,name,operator_id,wallet_balance,matching_income,referral_income,rank_bonus_income,yield_income,incentive_income,role,two_factor_pin")
-        .eq("id", user.id)
-        .single();
-
-      clearTimeout(timeout);
-      
-      console.log("PROFILE:", data);
-
-      if (error) {
-        console.error("SUPABASE ERROR:", error.message, error.details);
-        setError(error.message);
-        setLoading(false);
-        return;
+      const data = await supabaseService.getUserProfile(userId);
+      if (data) {
+        setProfile(data as UserProfile);
+        setError(null);
       }
-
-      setProfile(data as UserProfile);
-      setError(null);
-      setLoading(false);
     } catch (err: any) {
-      console.error("SUPABASE ERROR:", err.message, err.details);
-      setError(err.message || 'An unexpected error occurred while fetching your profile.');
-      setLoading(false);
+      const isTimeout = err.message?.includes('timed out') || err.message?.includes('waking up');
+      
+      if (isTimeout) {
+        console.warn("Profile fetch timed out, using cached data if available:", err.message);
+      } else {
+        console.error("Profile fetch error:", err);
+      }
+      
+      // If we have cached data, don't show error to user unless it's a critical auth error
+      if (!profile) {
+        let userMessage = err.message || 'Failed to sync profile.';
+        if (isTimeout) {
+          userMessage = "The database is taking longer than expected to respond. Using cached data if available.";
+        }
+        setError(userMessage);
+      }
+      
+      if (err.message?.includes('not found') || err.status === 401) {
+        setProfile(null);
+        localStorage.removeItem('arowin_supabase_user');
+      }
+    } finally {
+      setProfileLoading(false);
     }
   };
 
   useEffect(() => {
-    let profileSubscription: { unsubscribe: () => void } | null = null;
+    let mounted = true;
 
     const initializeAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-
-      if (!user) {
-        setProfile(null);
-        setLoading(false);
-        return;
-      }
-
-      await fetchProfile(user);
-
-      // Set up real-time subscription
-      const channel = supabase
-        .channel(`public:profiles:id=eq.${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'profiles',
-            filter: `id=eq.${user.id}`,
-          },
-          (payload) => {
-            console.log('Real-time profile update in UserContext:', payload.new);
-            setProfile((prev) => ({ ...prev, ...payload.new } as UserProfile));
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          if (mounted) {
+            setUser(session.user);
+            // Background fetch - non-blocking
+            fetchProfile(session.user.id, true);
           }
-        )
-        .subscribe();
-
-      profileSubscription = { unsubscribe: () => { supabase.removeChannel(channel); } };
+        } else {
+          if (mounted) {
+            setUser(null);
+            setProfile(null);
+            localStorage.removeItem('arowin_supabase_user');
+          }
+        }
+      } catch (err) {
+        console.error('Auth initialization failed:', err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
 
     initializeAuth();
 
     const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.user) {
-          setLoading(true);
-          await fetchProfile(session.user);
-        } else if (event === 'SIGNED_OUT') {
-          setProfile(null);
-          setLoading(false);
-          if (profileSubscription) {
-            profileSubscription.unsubscribe();
-            profileSubscription = null;
+        console.log(`Auth Event: ${event}`);
+        if (session?.user) {
+          setUser(session.user);
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            fetchProfile(session.user.id, true);
           }
+        } else {
+          setUser(null);
+          setProfile(null);
+          localStorage.removeItem('arowin_supabase_user');
+          sessionStorage.removeItem('2fa_verified');
         }
+        setLoading(false);
       }
     );
 
     return () => {
+      mounted = false;
       authSubscription.unsubscribe();
-      if (profileSubscription) {
-        profileSubscription.unsubscribe();
-      }
     };
   }, []);
 
   const refreshProfile = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user) {
-      await fetchProfile(session.user);
+    if (user) {
+      await fetchProfile(user.id);
     }
   };
 
   const logout = async () => {
-    sessionStorage.removeItem('2fa_verified');
     await supabaseService.logout();
+    setUser(null);
     setProfile(null);
   };
 
   return (
-    <UserContext.Provider value={{ profile, loading, error, refreshProfile, logout }}>
+    <UserContext.Provider value={{ user, profile, loading, profileLoading, error, refreshProfile, logout }}>
       {children}
     </UserContext.Provider>
   );

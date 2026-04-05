@@ -17,8 +17,13 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ArowinLogo } from '../components/ArowinLogo';
+import { useUser } from '../src/context/UserContext';
 
 const Landing: React.FC = () => {
+  const { user, profile } = useUser();
+  const isAuthenticated = !!user;
+  const isAdmin = profile?.role === 'admin';
+
   return (
     <div className="min-h-screen bg-[#050505] text-white font-sans selection:bg-amber-500/30">
       {/* Navigation */}
@@ -33,31 +38,53 @@ const Landing: React.FC = () => {
 
           {/* Mobile Auth Buttons */}
           <div className="flex md:hidden items-center gap-3">
-            <Link 
-              to="/login" 
-              className="px-4 py-2 bg-white/5 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
-            >
-              Login
-            </Link>
-            <Link 
-              to="/register" 
-              className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/40 animate-pulse"
-            >
-              Join Now
-            </Link>
+            {isAuthenticated ? (
+              <Link 
+                to={isAdmin ? "/admin/dashboard" : "/dashboard"} 
+                className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/40"
+              >
+                Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link 
+                  to="/login" 
+                  className="px-4 py-2 bg-white/5 border border-white/10 text-white text-[10px] font-black uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
+                >
+                  Login
+                </Link>
+                <Link 
+                  to="/register" 
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[10px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-amber-500/40 animate-pulse"
+                >
+                  Join Now
+                </Link>
+              </>
+            )}
           </div>
           
           <div className="hidden md:flex items-center gap-8">
             <a href="#features" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Features</a>
             <a href="#ecosystem" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Ecosystem</a>
             <a href="#security" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Security</a>
-            <Link to="/login" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Login</Link>
-            <Link 
-              to="/register" 
-              className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-full transition-all hover:scale-105 active:scale-95"
-            >
-              Get Started
-            </Link>
+            {isAuthenticated ? (
+              <Link 
+                to={isAdmin ? "/admin/dashboard" : "/dashboard"} 
+                className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-full transition-all hover:scale-105 active:scale-95"
+              >
+                Go to Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link to="/login" className="text-sm font-medium text-slate-400 hover:text-white transition-colors">Login</Link>
+                <Link 
+                  to="/register" 
+                  className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-full transition-all hover:scale-105 active:scale-95"
+                >
+                  Get Started
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>

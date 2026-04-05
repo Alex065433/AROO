@@ -46,7 +46,7 @@ const AdminSettings: React.FC = () => {
   const handleProcessPayouts = async () => {
     setIsProcessingPayouts(true);
     try {
-      await supabaseService.processAllIncomes();
+      await supabaseService.processSystemIncomes();
       setSuccessMessage('All incomes processed successfully!');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

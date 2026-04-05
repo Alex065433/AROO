@@ -23,6 +23,21 @@ const RANK_DATA = [
   { required: 10000, weekly: 10000, capping: 5, pairIncome: 5, reward: 0 },
 ];
 
+export const MOCK_USER = {
+  id: 'mock-user-id',
+  name: 'Mock Operator',
+  operator_id: 'ARW-000000',
+  wallets: {
+    master: { balance: 100, currency: 'USDT' },
+    referral: { balance: 50, currency: 'USDT' },
+    matching: { balance: 25, currency: 'USDT' },
+    yield: { balance: 10, currency: 'USDT' },
+    rankBonus: { balance: 5, currency: 'USDT' },
+    rewards: { balance: 0, currency: 'USDT' },
+    capping_box: { balance: 0, currency: 'USDT' }
+  }
+};
+
 export const PACKAGES = [
   { id: 'activation', name: 'ID Activation', price: 50, nodes: 1, dailyCapping: 5, weeklyEarning: 0, features: ['5% Direct Referral Yield', '10% Matching Dividend', 'Weekly ROI Yield', 'Node Security Protocol'] },
   { id: 'starter', name: 'Starter Node', price: 150, nodes: 3, dailyCapping: 5, weeklyEarning: 4, features: ['5% Direct Referral Yield', '10% Matching Dividend', 'Weekly ROI Yield', 'Node Security Protocol'] },

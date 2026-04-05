@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
+import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
 
 const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {

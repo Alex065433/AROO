@@ -7,7 +7,7 @@ import { useUser } from '../src/context/UserContext';
 
 const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
   const [copied, setCopied] = useState(false);
-  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${side.toLowerCase()}`;
+  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(link);
@@ -35,7 +35,7 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
       
       <div className="space-y-6">
         <p className="text-sm text-slate-400 leading-relaxed font-medium">
-          Share this link to enroll new partners directly into your <span className="text-white font-bold">{side.toLowerCase()} leg</span>. 
+          Share this link to enroll new partners directly into your <span className="text-white font-bold">{(side || 'LEFT').toLowerCase()} leg</span>. 
           Binary matching is calculated based on volume from this leg.
         </p>
         

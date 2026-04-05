@@ -16,169 +16,225 @@ export const supabaseService = {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   },
 
-  // Auth
-  async adminLogin(adminId: string, secretKey: string) {
-    // Unique Administration ID and Password logic
-    const ADMIN_ID = "ADMIN_AROWIN_2026";
-    const ADMIN_SECRET = "CORE_SECURE_999";
-
-    if (adminId === ADMIN_ID && secretKey === ADMIN_SECRET) {
-      // Fetch admin profile by operator_id
-      const { data: adminProfile } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("operator_id", ADMIN_ID)
-        .limit(1)
-        .maybeSingle();
-      
-      console.log('adminLogin: Admin profile found:', !!adminProfile, 'Email:', adminProfile?.email);
-
-      // Also sign in with Supabase Auth using the email from the profile
-      const adminEmail = adminProfile?.email || 'admin@arowin.internal';
-      console.log('adminLogin: Attempting Supabase signInWithPassword with email:', adminEmail);
-      
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: adminEmail,
-        password: secretKey
-      });
-      
-      if (authError) {
-        // If it's the hardcoded admin, we expect this to fail if they haven't signed up in Supabase Auth yet.
-        // We log it as a minor info instead of a warning to keep the console clean.
-        console.log('adminLogin: Supabase signInWithPassword failed (expected if admin user not in Auth):', authError.message);
-        // If sign in fails, we still proceed with the hardcoded fallback
-      } else {
-        console.log('adminLogin: Supabase signInWithPassword succeeded:', authData);
-      }
-      
-      if (adminProfile) {
-        localStorage.setItem('arowin_supabase_user', JSON.stringify({ ...adminProfile, role: 'admin' }));
-        return { ...adminProfile, role: 'admin' };
-      }
-      
-      // Fallback if profile not found
-      const fallbackAdmin = {
-        id: '00000000-0000-0000-0000-000000000000',
-        email: 'admin@arowin.internal',
-        name: 'System Administrator',
-        role: 'admin',
-        operator_id: ADMIN_ID
-      };
-      localStorage.setItem('arowin_supabase_user', JSON.stringify(fallbackAdmin));
-      return fallbackAdmin;
-    }
-
-    // Try regular login but check for admin role
-    try {
-      const profile = await this.login(adminId, secretKey);
-      if (profile && (profile.role === 'admin' || profile.email === 'kethankumar130@gmail.com')) {
-        const adminProfile = { ...profile, role: 'admin' };
-        localStorage.setItem('arowin_supabase_user', JSON.stringify(adminProfile));
-        return adminProfile;
-      }
-      // If not an admin, we still throw the admin error below
-    } catch (e) {
-      // Ignore regular login errors and throw the admin one
-    }
-
-    throw new Error("Invalid Administrative Credentials. Access Denied.");
+  // Helper for timeout
+  async withTimeout<T>(promise: Promise<T>, ms: number = 25000, errorMessage: string = "Request timed out. The database might be waking up."): Promise<T> {
+    const timeout = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error(errorMessage)), ms)
+    );
+    return Promise.race([promise, timeout]);
   },
 
-  async login(operatorId: string, password: string) {
-    let cleanId = operatorId.trim();
-    
-    // Normalize Operator ID format
-    // 1. If it's just 6 digits, prepend ARW-
-    if (/^\d{6}$/.test(cleanId)) {
-      cleanId = `ARW-${cleanId}`;
+  // Auth
+  async login(identifier: string, secret: string) {
+    // Check if Supabase is configured
+    const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || (typeof process !== 'undefined' && process.env ? process.env.VITE_SUPABASE_URL : undefined);
+    if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
+      throw new Error("Database connection not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in settings.");
     }
-    // 2. If it's ARW followed by 6 digits (no hyphen), insert hyphen
-    if (/^ARW\d{6}$/i.test(cleanId)) {
-      cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
-    }
-    
-    // Step 1: get profile from operator_id
-    // Try exact match first
-    let { data, error } = await supabase
-      .from("profiles")
-      .select("operator_id, email, status, role")
-      .eq("operator_id", cleanId)
-      .single();
 
-    // If not found, try case-insensitive (ilike)
-    if (error || !data) {
-      const { data: retryData, error: retryError } = await supabase
-        .from("profiles")
-        .select("operator_id, email, status, role")
-        .ilike("operator_id", cleanId)
-        .single();
-      
-      if (!retryError && retryData) {
-        data = retryData;
-        error = null;
+    let cleanId = identifier.trim();
+    let email = cleanId;
+
+    // Administrative ID Protocol Resolution
+    const isAdminId = cleanId.toUpperCase() === 'ARW-ADMIN-01';
+    
+    if (isAdminId) {
+      email = 'admin@arowin.internal';
+    }
+
+    // Normalize Operator ID format if it's not an email
+    if (!cleanId.includes('@') && !isAdminId) {
+      if (/^\d{6}$/.test(cleanId)) {
+        cleanId = `ARW-${cleanId}`;
+      } else if (/^ARW\d{6}$/i.test(cleanId)) {
+        cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
+      } else if (/^ARW-\d{6}$/i.test(cleanId)) {
+        cleanId = `ARW-${cleanId.substring(4).toUpperCase()}`;
       }
-    }
 
-    // If still not found, maybe it's an email?
-    if (error || !data) {
-      if (cleanId.includes('@')) {
-        // Use ilike and handle potential quotes in the or filter
-        const { data: emailData, error: emailError } = await supabase
-          .from("profiles")
-          .select("operator_id, email, status, role")
-          .or(`email.ilike."${cleanId}"`)
-          .limit(1)
-          .maybeSingle();
+      // Resolve email from Operator ID
+      try {
+        const { data: profile, error } = await this.withTimeout(
+          supabase.from("profiles").select("email").eq("operator_id", cleanId).single(),
+          20000,
+          "Database is waking up. Please wait a moment and try again."
+        );
         
-        if (!emailError && emailData) {
-          data = emailData;
-          error = null;
+        if (error) {
+          // If it's a real error (not just not found), throw it
+          if (error.code !== 'PGRST116') throw error; 
+          // PGRST116 is "JSON object requested, but no rows were returned"
         }
+        
+        if (profile) {
+          email = profile.email;
+          console.log(`Resolved Operator ID ${cleanId} to real email: ${email}`);
+        } else {
+          // Fallback to internal email format if not found in profiles
+          email = `${cleanId.toLowerCase()}@arowin.internal`;
+          console.log(`Resolved Operator ID ${cleanId} to internal email: ${email}`);
+        }
+      } catch (e: any) {
+        // If it's a timeout, propagate it
+        if (e.message?.includes('waking up') || e.message?.includes('timed out')) {
+          throw e;
+        }
+        // Otherwise fallback to internal format
+        email = `${cleanId.toLowerCase()}@arowin.internal`;
+        console.log(`Resolved Operator ID ${cleanId} to internal email (fallback): ${email}`);
       }
     }
 
-    if (error || !data) {
-      throw new Error("Invalid Operator ID or Email");
-    }
+    // Perform Supabase Auth login
+    try {
+      console.log(`Attempting login for: ${email}`);
+      const { data: authData, error: authError } = await this.withTimeout(
+        supabase.auth.signInWithPassword({ email, password: secret })
+      );
 
-    // Check if account is active (unless it's an admin)
-    if (data.status === 'blocked') {
-      throw new Error("Your account has been blocked by the administrator. Please contact support.");
-    }
-    
-    // Removed admin approval check as per user request
-    // if (data.status === 'pending' && data.role !== 'admin') {
-    //   throw new Error("Your account is pending activation by the administrator. Please wait for approval.");
-    // }
+      if (authError) {
+        console.error(`Auth error for ${email}:`, authError);
+        
+        // Fallback: try internal email if real email failed (for legacy/internal accounts)
+        // BUT ONLY if it's not already an email
+        if (!cleanId.includes('@')) {
+          const internalEmail = `${cleanId.toLowerCase()}@arowin.internal`;
+          console.log(`Retrying with internal email: ${internalEmail}`);
+          const { data: retryData, error: retryError } = await this.withTimeout(
+            supabase.auth.signInWithPassword({ email: internalEmail, password: secret })
+          );
+          if (retryError) {
+            if (retryError.message?.toLowerCase().includes('invalid login credentials')) {
+              throw new Error(`Authentication Failed: Invalid credentials for identity "${cleanId}". Please check your password.`);
+            }
+            throw retryError;
+          }
+          
+          // Trigger background fetch
+          this.getUserProfile(retryData.user.id).catch(console.error);
+          return retryData;
+        }
+        
+        if (authError.message?.toLowerCase().includes('invalid login credentials')) {
+          throw new Error(`Authentication Failed: Invalid credentials for ${email}. Please verify your email and password.`);
+        }
+        throw authError;
+      }
 
-    // Step 2: login using email (which is the internal email)
-    const internalEmail = `${data.operator_id.toLowerCase()}@arowin.internal`;
-    
-    let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: internalEmail,
-      password: password
-    });
-
-    // If internal email fails, try the real email (for older accounts or admin)
-    if (authError) {
-      const { data: retryAuthData, error: retryAuthError } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: password
-      });
+      console.log(`Login successful for: ${email}`);
+      // Trigger background fetch
+      this.getUserProfile(authData.user.id).catch(console.error);
       
-      if (retryAuthError) {
-        throw authError; // Throw original error
+      // Return auth data immediately
+      return authData;
+    } catch (e: any) {
+      console.error(`Login catch block for ${email}:`, e);
+      
+      // If it's already our custom error, just rethrow it
+      if (e.message?.includes('Authentication Failed')) {
+        throw e;
       }
-      authData = retryAuthData;
-      authError = null;
+      
+      if (e.message?.toLowerCase().includes('invalid login credentials')) {
+        throw new Error(`Authentication Failed: Invalid credentials or system signature for ${email}.`);
+      }
+      
+      // Handle other common Supabase errors
+      if (e.message?.includes('Email not confirmed')) {
+        throw new Error(`Authentication Failed: Email not confirmed. Please check your inbox.`);
+      }
+      
+      throw e;
+    }
+  },
+
+  async getUserProfile(userId: string, retries: number = 2) {
+    let lastError: any;
+    
+    for (let i = 0; i <= retries; i++) {
+      try {
+        // Use a longer timeout (30s) to allow for database wake-up
+        const { data, error } = await this.withTimeout(
+          supabase.from("profiles").select("*").eq("id", userId).single(),
+          30000 
+        );
+
+        if (error) {
+          // If profile doesn't exist in DB but user is authenticated, 
+          // check if it's the admin email to allow access
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user && user.email === 'admin@arowin.internal') {
+            return {
+              id: userId,
+              email: user.email,
+              role: 'admin',
+              full_name: 'System Administrator',
+              status: 'active',
+              operator_id: 'ARW-ADMIN-01'
+            };
+          }
+          throw error;
+        }
+        
+        const profile = data as any;
+        
+        if (profile.status === 'blocked') {
+          throw new Error("Your account has been blocked. Please contact system administration.");
+        }
+
+        // Force admin role for Administrative Protocol
+        if (profile.email === 'admin@arowin.internal') {
+          profile.role = 'admin';
+        }
+        
+        // Map column-based counts to team_size for frontend compatibility
+        if (profile.left_count !== undefined && profile.right_count !== undefined) {
+          profile.team_size = {
+            left: Number(profile.left_count) || 0,
+            right: Number(profile.right_count) || 0
+          };
+        }
+
+        // Persist to local storage for fast fallback
+        localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
+        return profile;
+      } catch (e: any) {
+        lastError = e;
+        const isTimeout = e.message?.includes('timed out') || e.message?.includes('waking up');
+        
+        if (isTimeout && i < retries) {
+          console.warn(`Profile fetch attempt ${i + 1} timed out, retrying...`);
+          // Wait a bit before retrying
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        
+        // If it's a non-timeout error or we're out of retries, break and handle
+        break;
+      }
     }
 
-    if (authError) throw authError;
+    // If we get here, all retries failed or we hit a non-timeout error
+    console.warn("Background profile fetch failed, using cache if available:", lastError.message);
+    throw lastError;
+  },
 
-    // Fetch full profile to store in local storage
-    const profile = await this.getUserProfile(authData.user.id);
-    localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
-    return profile;
+  getCurrentUser() {
+    const saved = localStorage.getItem('arowin_supabase_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  },
+
+  async logout() {
+    localStorage.removeItem('arowin_supabase_user');
+    sessionStorage.removeItem('2fa_verified');
+    await supabase.auth.signOut();
   },
 
   async loginWithGoogle() {
@@ -189,9 +245,19 @@ export const supabaseService = {
     return data;
   },
 
+  formatError(err: any): string {
+    if (typeof err === 'string') return err;
+    if (err.message) {
+      if (err.message.includes('Invalid login credentials')) return "Invalid credentials.";
+      if (err.message.includes('Email not confirmed')) return "Please confirm your email address.";
+      return err.message;
+    }
+    return "An unexpected error occurred.";
+  },
+
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
     const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-    const internalEmail = `${operatorId.toLowerCase()}@arowin.internal`;
+    const internalEmail = `${(operatorId || '').toLowerCase()}@arowin.internal`;
 
     // 1. Create Supabase Auth User with internal email to allow unlimited IDs per real email
     const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -224,6 +290,9 @@ export const supabaseService = {
       }
       if (/^ARW\d{6}$/i.test(cleanSponsorId)) {
         cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
+      }
+      if (/^ARW-\d{6}$/i.test(cleanSponsorId)) {
+        cleanSponsorId = `ARW-${cleanSponsorId.substring(4).toUpperCase()}`;
       }
       sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
     }
@@ -325,7 +394,7 @@ export const supabaseService = {
       team_size: { left: 0, right: 0 },
       matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
-      role: email === 'kethankumar130@gmail.com' ? 'admin' : 'user',
+      role: 'user',
       status: 'active', // Default to active as per user request
       created_at: new Date().toISOString(),
     };
@@ -349,6 +418,7 @@ export const supabaseService = {
         name: profileData.name,
         role: profileData.role,
         status: 'active',
+        two_factor_pin: profileData.two_factor_pin || '123456',
         wallets: profileData.wallets, // Ensure wallets exist even in minimal profile
         created_at: profileData.created_at
       };
@@ -500,11 +570,6 @@ export const supabaseService = {
     }
   },
 
-  async logout() {
-    await supabase.auth.signOut();
-    localStorage.removeItem('arowin_supabase_user');
-  },
-
   onAuthChange(callback: (user: any) => void) {
     // Combine Supabase Auth and our custom session
     const localUser = localStorage.getItem('arowin_supabase_user');
@@ -517,6 +582,8 @@ export const supabaseService = {
         // Fetch profile
         this.getUserProfile(session.user.id).then(profile => {
           callback(profile);
+        }).catch(err => {
+          console.warn("Auth change profile fetch failed:", err.message);
         });
       } else if (!localUser) {
         callback(null);
@@ -549,47 +616,12 @@ export const supabaseService = {
     };
   },
 
-  getCurrentUser() {
-    const localUser = localStorage.getItem('arowin_supabase_user');
-    return localUser ? JSON.parse(localUser) : null;
-  },
-
   // User Profiles
   async createUserProfile(uid: string, data: any) {
     const { error } = await supabase
       .from('profiles')
       .upsert({ id: uid, ...data });
     if (error) throw error;
-  },
-
-  async getUserProfile(uid: string, columns: string = '*') {
-    let queryColumns = columns;
-    if (columns !== '*' && !columns.includes('left_count')) {
-      queryColumns += ', left_count, right_count';
-    }
-
-    const { data, error } = await supabase
-      .from('profiles')
-      .select(queryColumns)
-      .eq('id', uid)
-      .single();
-    if (error) return null;
-    
-    const profile = data as any;
-    // Force admin role for the owner
-    if (profile.email === 'kethankumar130@gmail.com') {
-      profile.role = 'admin';
-    }
-    
-    // Map column-based counts to team_size for frontend compatibility
-    if (profile.left_count !== undefined && profile.right_count !== undefined) {
-      profile.team_size = {
-        left: Number(profile.left_count) || 0,
-        right: Number(profile.right_count) || 0
-      };
-    }
-    
-    return profile;
   },
 
   // Package Activation
@@ -1676,7 +1708,7 @@ export const supabaseService = {
 
     const nodes: Record<string, any> = {};
     children?.forEach(child => {
-      const childPath = `${parentPath}-${child.side.toLowerCase()}`;
+      const childPath = `${parentPath}-${(child.side || 'LEFT').toLowerCase()}`;
       nodes[childPath] = {
         id: child.operator_id,
         name: child.name,
@@ -1843,21 +1875,6 @@ export const supabaseService = {
       .single();
     if (error) return null;
     return data;
-  },
-
-  formatError(error: any): string {
-    const message = error?.message || '';
-    if (message.includes('Invalid Operator ID') || message.includes('Invalid Email')) {
-      return 'Invalid Operator ID or Email. Please check and try again.';
-    }
-    if (message.includes('Invalid Password')) return 'Invalid Password. Please check and try again.';
-    if (message.includes('Database error saving new user')) {
-      return 'Database error saving new user. This usually means a Supabase trigger or RLS policy is failing. Ensure your "profiles" table has all required columns and correct RLS policies.';
-    }
-    if (message.includes('duplicate key value violates unique constraint')) {
-      return 'This user or operator ID already exists. Please try another email or check your sponsor ID.';
-    }
-    return message || 'An unexpected error occurred.';
   },
 
   // Support Tickets

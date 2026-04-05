@@ -10,9 +10,10 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
-
 import { supabaseService } from '../services/supabaseService';
 import { supabase } from '../services/supabase';
+import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
+import { useUser } from '../src/context/UserContext';
 
 const Modal: React.FC<{ 
   title: string; 
@@ -102,9 +103,10 @@ const WalletCardRow: React.FC<{
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [userData, setUserData] = useState<any>(MOCK_USER);
-  const [userWallets, setUserWallets] = useState<any>(MOCK_USER.wallets);
-  const [loading, setLoading] = useState(true);
+  const { profile, profileLoading, refreshProfile } = useUser();
+  const [userData, setUserData] = useState<any>(profile || MOCK_USER);
+  const [userWallets, setUserWallets] = useState<any>(profile?.wallets || MOCK_USER.wallets);
+  const [loading, setLoading] = useState(false); // No longer blocks the whole page
   const [notification, setNotification] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -112,6 +114,30 @@ const Dashboard: React.FC = () => {
   const [adminFundAmount, setAdminFundAmount] = useState('');
   const [adminFoundUser, setAdminFoundUser] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+
+  // Sync with context profile when it updates in background
+  useEffect(() => {
+    if (profile) {
+      setUserData(profile);
+      const masterBalance = Number(profile.wallet_balance ?? 0);
+      const referralBalance = Number(profile.referral_income ?? 0);
+      const matchingBalance = Number(profile.matching_income ?? 0);
+      const rankBalance = Number(profile.rank_income ?? 0);
+      const incentiveBalance = Number(profile.incentive_income ?? 0);
+      const yieldBalance = Number(profile.yield_income ?? 0);
+      const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
+      
+      setUserWallets({
+        master: { balance: Number(masterBalance), currency: 'USDT' },
+        referral: { balance: Number(referralBalance), currency: 'USDT' },
+        matching: { balance: Number(matchingBalance), currency: 'USDT' },
+        yield: { balance: Number(yieldBalance), currency: 'USDT' },
+        rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+        rewards: { balance: Number(incentiveBalance), currency: 'USDT' },
+        capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
+      });
+    }
+  }, [profile]);
 
   const handleAdminSearch = async () => {
     if (!adminSearchId) return;
@@ -211,8 +237,13 @@ const Dashboard: React.FC = () => {
       
       return userId;
 
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+    } catch (error: any) {
+      // Only log as error if it's not a timeout or we don't have data
+      if (error.message?.includes('timed out') || error.message?.includes('waking up')) {
+        console.warn('Dashboard data fetch timed out, using existing data:', error.message);
+      } else {
+        console.error('Error fetching dashboard data:', error);
+      }
       return null;
     } finally {
       if (isInitial) setLoading(false);
@@ -332,8 +363,12 @@ const Dashboard: React.FC = () => {
               capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
             });
           }
-        } catch (err) {
-          console.error('Error updating profile on auth change:', err);
+        } catch (err: any) {
+          if (err.message?.includes('timed out') || err.message?.includes('waking up')) {
+            console.warn('Auth change profile update timed out, using existing data:', err.message);
+          } else {
+            console.error('Error updating profile on auth change:', err);
+          }
         }
       }
     });
@@ -457,19 +492,30 @@ const Dashboard: React.FC = () => {
     }, 1500);
   };
 
-  if (loading) {
+  if (!profile && profileLoading) {
     return (
-      <div className="min-h-screen bg-[#0b0e11] flex flex-col items-center justify-center gap-6">
-        <div className="w-20 h-20 relative">
-          <div className="absolute inset-0 border-4 border-orange-500/20 rounded-full"></div>
-          <div className="absolute inset-0 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="space-y-10 animate-in fade-in duration-700 pb-20">
+        <div className="bg-[#0c0c0d] p-12 rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden">
+          <div className="flex items-center gap-10">
+            <Skeleton width="112px" height="112px" className="rounded-[32px]" />
+            <div className="space-y-4">
+              <Skeleton width="240px" height="32px" />
+              <Skeleton width="180px" height="12px" />
+            </div>
+          </div>
         </div>
-        <p className="text-slate-500 font-black uppercase tracking-[0.3em] text-xs animate-pulse">Synchronizing Node...</p>
+        <div className="max-w-4xl mx-auto px-4">
+          <CardSkeleton />
+        </div>
+        <div className="max-w-4xl mx-auto px-4 space-y-6">
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
       </div>
     );
   }
 
-  if (!userData) return null;
+  if (!profile && !profileLoading) return null;
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 relative">

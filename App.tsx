@@ -27,18 +27,22 @@ import Help from './pages/Help';
 import { useUser } from './src/context/UserContext';
 
 const App: React.FC = () => {
-  const { profile, loading, logout } = useUser();
+  const { user, profile, loading, profileLoading, logout, refreshProfile } = useUser();
   const [showSplash, setShowSplash] = useState(true);
 
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  if (showSplash || loading) {
+  // If we have a session but no profile yet, we are "authenticated" but role is unknown
+  // We should wait for the profile if we are authenticated to avoid flickering to Landing
+  const isAuthenticated = !!user;
+  const isAdmin = profile?.role === 'admin';
+  const isUser = profile && profile.role !== 'admin';
+  const is2FAPending = isAuthenticated && profile?.two_factor_pin && sessionStorage.getItem('2fa_verified') !== 'true';
+  const isProfileLoading = isAuthenticated && !profile && profileLoading;
+
+  if (showSplash || loading || isProfileLoading) {
     return <SplashScreen onComplete={() => setShowSplash(false)} />;
   }
-
-  const is2FAPending = profile && profile.role !== 'admin' && profile.two_factor_pin && sessionStorage.getItem('2fa_verified') !== 'true';
-  const isUserAuth = profile && profile.role !== 'admin' && !is2FAPending;
-  const isAdminAuth = profile && profile.role === 'admin';
 
   return (
     <HashRouter>
@@ -52,28 +56,31 @@ const App: React.FC = () => {
         {/* Public Routes */}
         <Route path="/" element={
           is2FAPending ? <Navigate to="/two-factor" /> :
-          isUserAuth ? <Navigate to="/dashboard" /> : 
-          isAdminAuth ? <Navigate to="/admin/dashboard" /> : 
+          (isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : 
+          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : 
           <Landing />
         } />
         <Route path="/landing" element={<Landing />} />
         <Route path="/login" element={
           is2FAPending ? <Navigate to="/two-factor" /> :
-          isUserAuth ? <Navigate to="/dashboard" /> : 
-          <Login />
+          (isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : 
+          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> :
+          <Login onLogin={refreshProfile} />
         } />
         <Route path="/two-factor" element={
-          !profile ? <Navigate to="/login" /> :
-          isUserAuth ? <Navigate to="/dashboard" /> :
+          !isAuthenticated ? <Navigate to="/login" /> :
+          (isAdmin && !is2FAPending) ? <Navigate to="/admin/dashboard" /> :
+          (isUser && !is2FAPending) ? <Navigate to="/dashboard" /> :
           <TwoFactorPage />
         } />
-        <Route path="/register" element={isUserAuth ? <Navigate to="/dashboard" /> : <Register onLogin={() => {}} />} />
+        <Route path="/register" element={(isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : <Register onLogin={refreshProfile} />} />
         
         {/* Admin Public Route */}
-        <Route path="/admin/login" element={isAdminAuth ? <Navigate to="/admin/dashboard" /> : <AdminLogin onLogin={() => {}} />} />
+        <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
+        <Route path="/admin/login" element={(isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : <AdminLogin onLogin={refreshProfile} />} />
 
         {/* User Protected Routes */}
-        <Route element={isUserAuth ? <Layout role="user" onLogout={logout} /> : <Navigate to="/" />}>
+        <Route element={isAuthenticated ? (is2FAPending ? <Navigate to="/two-factor" /> : <Layout role="user" onLogout={logout} />) : <Navigate to="/" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
           <Route path="/binary-tree" element={<BinaryTree />} />
@@ -86,7 +93,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={isAdminAuth ? <AdminLayout onLogout={logout} /> : <Navigate to="/" />}>
+        <Route element={(isAuthenticated && isAdmin) ? (is2FAPending ? <Navigate to="/two-factor" /> : <AdminLayout onLogout={logout} />) : <Navigate to="/admin/login" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
@@ -79,7 +80,7 @@ const BinaryTree: React.FC = () => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     // Use HashRouter compatible URL
     const baseUrl = window.location.origin + window.location.pathname;
-    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${(side || 'LEFT').toLowerCase()}`;
     
     setInviteModal({
       parentId,
