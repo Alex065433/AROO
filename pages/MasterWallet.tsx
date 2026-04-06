@@ -133,11 +133,11 @@ const MasterWallet: React.FC = () => {
     setError(null);
 
     try {
-      console.log('Creating payment via /api/v1/tx/new...');
+      console.log('Creating payment via /api/v1/tx/create-new...');
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token || '';
 
-      const response = await fetch('/api/v1/tx/new', {
+      const response = await fetch('/api/v1/tx/create-new', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

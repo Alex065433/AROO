@@ -54,11 +54,11 @@ app.get("/api/health", (req, res) => {
 });
 
 // Renamed endpoints to avoid potential proxy filtering
-app.get("/api/v1/tx/new", (req, res) => {
+app.get("/api/v1/tx/create-new", (req, res) => {
   res.json({ message: "Transaction creation endpoint is active. Use POST." });
 });
 
-app.post("/api/v1/tx/new", async (req, res) => {
+app.post("/api/v1/tx/create-new", async (req, res) => {
   const { amount, currency, uid, orderDescription } = req.body;
   console.log('Transaction creation request:', { amount, currency, uid });
   
