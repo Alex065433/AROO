@@ -148,7 +148,8 @@ const MasterWallet: React.FC = () => {
           currency: 'usdtbsc',
           uid: userProfile.id,
           email: userProfile.email,
-          order_description: `Deposit for ${userProfile.email}`
+          order_description: `Deposit for ${userProfile.email}`,
+          orderDescription: `Deposit for ${userProfile.email}`
         }),
       });
 
