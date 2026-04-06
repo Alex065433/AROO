@@ -54,14 +54,14 @@ app.get("/api/health", (req, res) => {
 });
 
 // Renamed endpoints to avoid potential proxy filtering
-app.all("/api/deposit", (req, res, next) => {
+app.all("/api/v1/payment/create", (req, res, next) => {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
   }
   next();
 });
 
-app.post("/api/deposit", async (req, res) => {
+app.post("/api/v1/payment/create", async (req, res) => {
   const { amount, currency, uid, orderDescription } = req.body;
   console.log('Transaction creation request:', { amount, currency, uid });
   
