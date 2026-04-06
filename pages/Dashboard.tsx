@@ -5,7 +5,7 @@ import {
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
-  QrCode, Search, ShieldAlert, Package
+  QrCode, Search, ShieldAlert, Package, Users, Plus, ArrowUpRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
@@ -277,25 +277,70 @@ const Dashboard: React.FC = () => {
     if (!userData) return;
     setIsDepositing(true);
     try {
-      const response = await axios.post('/api/payments/create', {
-        amount: parseFloat(depositAmount),
-        currency: depositCurrency,
-        orderId: `DEP-${Date.now()}`,
-        orderDescription: `Wallet Deposit for ${userData.id}`,
-        uid: userData.id
+      console.log('Initiating deposit request to /api/v1/tx/new...');
+      const response = await fetch('/api/v1/tx/new', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: parseFloat(depositAmount),
+          currency: depositCurrency,
+          orderId: `DEP-${Date.now()}`,
+          orderDescription: `Wallet Deposit for ${userData.id}`,
+          uid: userData.id
+        })
       });
       
-      setPaymentData(response.data);
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('PAYMENT ERROR: Received non-JSON response from server', {
+          status: response.status,
+          statusText: response.statusText,
+          contentType,
+          body: text.substring(0, 500)
+        });
+        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
+      }
+
+      const data = await response.json();
+      console.log('Payment data received:', data);
+      setPaymentData(data);
       setNotification('Deposit request created successfully!');
       setTimeout(() => setNotification(null), 3000);
     } catch (error: any) {
-      console.error('Deposit error:', error);
-      setNotification(error.response?.data?.message || 'Failed to create deposit request');
+      console.error('PAYMENT ERROR:', error);
+      setNotification(error.message || 'Failed to create deposit request');
       setTimeout(() => setNotification(null), 3000);
     } finally {
       setIsDepositing(false);
     }
   };
+
+  // Polling for payment status
+  useEffect(() => {
+    let interval: any;
+    if (paymentData && paymentData.payment_status === 'waiting') {
+      interval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.payment_status === 'finished' || data.payment_status === 'completed') {
+              setPaymentData((prev: any) => ({ ...prev, payment_status: 'finished' }));
+              setNotification('Payment confirmed! Your balance will be updated shortly.');
+              fetchAllData();
+              clearInterval(interval);
+            }
+          }
+        } catch (err) {
+          console.error('Status check failed:', err);
+        }
+      }, 10000); // Check every 10 seconds
+    }
+    return () => clearInterval(interval);
+  }, [paymentData]);
 
   useEffect(() => {
     let profileUnsubscribe: (() => void) | undefined;
@@ -377,22 +422,25 @@ const Dashboard: React.FC = () => {
       try {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
         const response = await fetch('/api/rates/binance');
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          if (Array.isArray(errorData) && isMounted) {
-            const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
-            setBinanceRates(filtered);
-            return;
-          }
-          throw new Error(`Server responded with ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+        
         const data = await response.json();
         if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
-          setBinanceRates(filtered);
+          if (filtered.length > 0) {
+            setBinanceRates(filtered);
+          }
         }
       } catch (error) {
         console.warn('Binance rates sync issue:', error);
+        // Fallback to some default rates if it fails repeatedly
+        if (binanceRates.length === 0 && isMounted) {
+           setBinanceRates([
+             { symbol: 'BTCUSDT', price: '68450.25' },
+             { symbol: 'ETHUSDT', price: '3450.12' },
+             { symbol: 'BNBUSDT', price: '580.45' }
+           ]);
+        }
       }
     };
 
@@ -454,8 +502,23 @@ const Dashboard: React.FC = () => {
     if (!paymentData) return;
     setIsCheckingStatus(true);
     try {
-      const response = await axios.get(`/api/payments/status/${paymentData.payment_id}`);
-      const status = response.data.payment_status;
+      console.log(`Checking status for payment ${paymentData.payment_id} at /api/v1/tx/status/${paymentData.payment_id}...`);
+      const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('PAYMENT ERROR: Received non-JSON response from server during status check', {
+          status: response.status,
+          statusText: response.statusText,
+          contentType,
+          body: text.substring(0, 500)
+        });
+        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
+      }
+
+      const data = await response.json();
+      const status = data.payment_status;
       
       if (status === 'finished' || status === 'partially_paid') {
         setNotification('Deposit confirmed! Your balance will update shortly.');
@@ -468,9 +531,9 @@ const Dashboard: React.FC = () => {
       } else {
         setNotification(`Payment status: ${status}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error checking status:', error);
-      setNotification('Failed to check payment status');
+      setNotification(error.message || 'Failed to check payment status');
     } finally {
       setIsCheckingStatus(false);
       setTimeout(() => setNotification(null), 3000);
@@ -777,11 +840,20 @@ const Dashboard: React.FC = () => {
             <div className="flex items-center gap-4 mt-3">
                <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em]">OPERATOR: {userData.name}</span>
                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
+               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operator_id || userData.id}</span>
             </div>
           </div>
         </div>
 
+        <div className="flex flex-col sm:flex-row gap-4 relative z-10 w-full md:w-auto">
+           <button 
+             onClick={() => navigate('/referral')}
+             className="px-8 py-4 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-xs font-black uppercase tracking-widest text-white transition-all flex items-center justify-center gap-3 active:scale-95"
+           >
+              <Users size={16} className="text-blue-500" />
+              Share Referral
+           </button>
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4">
@@ -790,6 +862,8 @@ const Dashboard: React.FC = () => {
           isMaster={true}
           amount={userWallets?.master?.balance || 0}
           buttons={[
+            { label: 'DEPOSIT', color: 'bg-emerald-500/20 text-emerald-500', action: () => navigate('/master-wallet?action=deposit') },
+            { label: 'WITHDRAW', color: 'bg-rose-500/20 text-rose-500', action: () => navigate('/master-wallet?action=withdraw') },
             { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') }
           ]}
         />

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import AdminLayout from './components/AdminLayout';
@@ -25,6 +25,22 @@ import Profile from './pages/Profile';
 import MasterWallet from './pages/MasterWallet';
 import Help from './pages/Help';
 import { useUser } from './src/context/UserContext';
+
+const ReferralRedirect: React.FC = () => {
+  const { operatorId } = useParams<{ operatorId: string }>();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (operatorId) {
+      localStorage.setItem('arowin_ref', operatorId);
+      navigate('/register', { replace: true });
+    } else {
+      navigate('/', { replace: true });
+    }
+  }, [operatorId, navigate]);
+
+  return <SplashScreen onComplete={() => {}} />;
+};
 
 const App: React.FC = () => {
   const { user, profile, loading, profileLoading, logout, refreshProfile } = useUser();
@@ -95,6 +111,9 @@ const App: React.FC = () => {
           <TwoFactorPage />
         } />
         <Route path="/register" element={(isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : <Register onLogin={refreshProfile} />} />
+        
+        {/* Referral Redirect Route */}
+        <Route path="/ref/:operatorId" element={<ReferralRedirect />} />
         
         {/* Admin Public Route */}
         <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />

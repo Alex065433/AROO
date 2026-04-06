@@ -187,23 +187,32 @@ const BinaryTree: React.FC = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      const { data, error } = await supabase.from('payments').insert({
-        uid: userProfile?.id,
-        amount: Number(depositAmount),
-        currency: 'usdtbsc',
-        type: 'deposit',
-        status: 'pending',
-        method: 'USDT (BEP20)',
-        order_description: `Deposit for ${userProfile?.email}`
-      }).select().single();
+      const response = await fetch('/api/v1/tx/new', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: Number(depositAmount),
+          currency: 'usdtbsc',
+          uid: userProfile?.id,
+          email: userProfile?.email,
+          orderDescription: `Deposit for ${userProfile?.email}`
+        }),
+      });
 
-      if (error) throw error;
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `Server returned ${response.status}`);
+      }
+
+      const data = await response.json();
       
       setPaymentData({
-        payment_id: data.id,
-        pay_address: '0x1234567890abcdef1234567890abcdef12345678',
-        pay_amount: depositAmount,
-        pay_currency: 'usdtbsc'
+        payment_id: data.payment_id,
+        pay_address: data.pay_address,
+        pay_amount: data.pay_amount,
+        pay_currency: data.pay_currency
       });
     } catch (err: any) {
       setError(err.message);

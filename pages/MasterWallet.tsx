@@ -3,7 +3,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import GlassCard from '../components/GlassCard';
 import { PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
+import { supabase } from '../services/supabase';
 import { useUser } from '../src/context/UserContext';
+import { useLocation } from 'react-router-dom';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -14,7 +16,16 @@ import {
 
 const MasterWallet: React.FC = () => {
   const { profile: userProfile, loading, refreshProfile } = useUser();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const action = params.get('action');
+    if (action === 'deposit' || action === 'withdraw' || action === 'exchange' || action === 'package') {
+      setActiveTab(action);
+    }
+  }, [location.search]);
   const [selectedCoin, setSelectedCoin] = useState<'BTC' | 'ETH' | 'TRX'>('BTC');
   const [exchangeAmount, setExchangeAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -62,10 +73,36 @@ const MasterWallet: React.FC = () => {
 
     fetchTransactions();
 
+    // Polling for payment status
+    let statusInterval: any;
+    if (paymentData?.payment_id) {
+      statusInterval = setInterval(async () => {
+        try {
+          console.log(`Polling status for payment ${paymentData.payment_id}...`);
+          const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.payment_status === 'finished' || data.payment_status === 'partially_paid') {
+              console.log('Payment finished! Refreshing data...');
+              setSuccess(true);
+              setPaymentData(null);
+              fetchTransactions();
+              refreshProfile();
+              clearInterval(statusInterval);
+              setTimeout(() => setSuccess(false), 3000);
+            }
+          }
+        } catch (err) {
+          console.error('Error polling payment status:', err);
+        }
+      }, 10000); // Poll every 10 seconds
+    }
+
     return () => {
       isMounted = false;
+      if (statusInterval) clearInterval(statusInterval);
     };
-  }, [userProfile?.id]);
+  }, [userProfile?.id, paymentData?.payment_id, refreshProfile]);
 
   const coins = {
     USDT: { name: 'Tether USDT (BEP20)', symbol: 'USDT', color: 'text-orange-500', bg: 'bg-orange-500/10', rate: 1, change: '+0.01%' },
@@ -81,46 +118,71 @@ const MasterWallet: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   const createPayment = async () => {
-  // ✅ Validation
-  if (!depositAmount || Number(depositAmount) < 10) {
-    setError("Minimum deposit is 10 USDT");
-    return;
-  }
+    // ✅ Validation
+    if (!depositAmount || Number(depositAmount) < 10) {
+      setError("Minimum deposit is 10 USDT");
+      return;
+    }
 
-  if (!userProfile?.id) {
-    setError("User not loaded");
-    return;
-  }
+    if (!userProfile?.id) {
+      setError("User not loaded");
+      return;
+    }
 
-  setIsProcessing(true);
-  setError(null);
+    setIsProcessing(true);
+    setError(null);
 
-  try {
-    const { data, error } = await supabaseService.adminQuery('payments', 'insert', {
-      uid: userProfile.id,
-      amount: Number(depositAmount),
-      currency: 'usdtbsc',
-      type: 'deposit',
-      status: 'pending',
-      method: 'USDT (BEP20)',
-      order_description: `Deposit for ${userProfile.email}`
-    });
+    try {
+      console.log('Creating payment via /api/v1/tx/new...');
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token || '';
 
-    if (error) throw error;
-    
-    setPaymentData({
-      payment_id: data?.[0]?.id || `DEP-${Date.now()}`,
-      pay_address: '0x1234567890abcdef1234567890abcdef12345678',
-      pay_amount: depositAmount,
-      pay_currency: 'usdtbsc'
-    });
-  } catch (err: any) {
-    console.error("PAYMENT ERROR:", err);
-    setError(err.message || "Something went wrong");
-  } finally {
-    setIsProcessing(false);
-  }
-};
+      const response = await fetch('/api/v1/tx/new', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          amount: Number(depositAmount),
+          currency: 'usdtbsc',
+          uid: userProfile.id,
+          email: userProfile.email,
+          order_description: `Deposit for ${userProfile.email}`
+        }),
+      });
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await response.text();
+        console.error('PAYMENT ERROR: Received non-JSON response from server', {
+          status: response.status,
+          statusText: response.statusText,
+          contentType,
+          body: text.substring(0, 500)
+        });
+        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
+      }
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create payment');
+      }
+      console.log('Payment created successfully:', data);
+      
+      setPaymentData({
+        payment_id: data.payment_id,
+        pay_address: data.pay_address,
+        pay_amount: data.pay_amount,
+        pay_currency: data.pay_currency
+      });
+    } catch (err: any) {
+      console.error("PAYMENT ERROR:", err);
+      setError(err.message || "Something went wrong");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleAction = async (forcedAmount?: string) => {
     const amountToUse = forcedAmount || exchangeAmount;
@@ -159,7 +221,44 @@ const MasterWallet: React.FC = () => {
             return;
           }
 
-          // Create withdrawal request
+          // Create withdrawal request via API
+          console.log('Creating withdrawal via /api/v1/tx/withdraw...');
+          const { data: sessionData } = await supabase.auth.getSession();
+          const token = sessionData.session?.access_token || '';
+
+          const withdrawResponse = await fetch('/api/v1/tx/withdraw', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              amount: numericAmount,
+              address: withdrawalAddress,
+              uid: user.id,
+              email: user.email
+            }),
+          });
+
+          const withdrawContentType = withdrawResponse.headers.get('content-type');
+          if (!withdrawContentType || !withdrawContentType.includes('application/json')) {
+            const text = await withdrawResponse.text();
+            console.error('WITHDRAWAL ERROR: Received non-JSON response from server', {
+              status: withdrawResponse.status,
+              statusText: withdrawResponse.statusText,
+              contentType: withdrawContentType,
+              body: text.substring(0, 500)
+            });
+            throw new Error(`Server returned ${withdrawResponse.status} ${withdrawResponse.statusText} (${withdrawContentType || 'no content type'}). Expected JSON.`);
+          }
+
+          const withdrawData = await withdrawResponse.json();
+          if (!withdrawResponse.ok) {
+            throw new Error(withdrawData.error || 'Failed to create withdrawal');
+          }
+          console.log('Withdrawal created successfully:', withdrawData);
+          
+          // Deduct balance in Supabase (the API already created the payment record)
           await supabaseService.createWithdrawal(user.id, numericAmount, withdrawalAddress);
           
           setSuccess(true);
@@ -586,14 +685,6 @@ const MasterWallet: React.FC = () => {
         <div>
           <h2 className="text-6xl font-black uppercase tracking-tight text-white leading-none italic">Master <span className="text-orange-500">Vault</span></h2>
           <p className="text-slate-500 mt-5 text-xl font-medium max-w-2xl italic">Institutional-grade USDT liquidity management with decentralized node security.</p>
-        </div>
-        <div className="flex gap-4 w-full md:w-auto">
-          <button 
-            onClick={() => setActiveTab('deposit')}
-            className="flex-1 md:flex-none px-10 py-5 bg-orange-600 text-white font-black rounded-2xl hover:bg-orange-500 transition-all flex items-center justify-center gap-3 shadow-2xl shadow-orange-950/20 active:scale-95 text-xs uppercase tracking-widest"
-          >
-            <Plus size={20} /> DEPOSIT LIQUIDITY
-          </button>
         </div>
       </div>
 

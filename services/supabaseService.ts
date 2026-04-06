@@ -914,11 +914,11 @@ export const supabaseService = {
     const currentUser = this.getCurrentUser();
     let token = '';
     
-    if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session?.access_token) {
+      token = sessionData.session.access_token;
+    } else if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
       token = 'CORE_SECURE_999';
-    } else {
-      const { data: sessionData } = await supabase.auth.getSession();
-      token = sessionData.session?.access_token || '';
     }
 
     if (!token) {
@@ -975,13 +975,13 @@ export const supabaseService = {
 
       console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}, token length: ${token.length}`);
       
-      const response = await fetch('/api/admin/add-funds', {
+      const response = await fetch('/api/admin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ uid, amount }),
+        body: JSON.stringify({ user_id: uid, amount }),
       });
 
       const responseText = await response.text();
@@ -1278,12 +1278,44 @@ export const supabaseService = {
   // Payments
   async getPayments(uid: string) {
     try {
-      let query = supabase.from('payments').select('*');
-      
-      if (uid !== 'all') {
-        query = query.eq('uid', uid);
+      if (uid === 'all') {
+        // Try direct query first (works if RLS allows admin)
+        const { data: directData, error: directError } = await supabase
+          .from('payments')
+          .select('*')
+          .order('created_at', { ascending: false });
+          
+        if (!directError && directData && directData.length > 0) {
+          return directData;
+        }
+
+        let token = localStorage.getItem('arowin_admin_token') || 'CORE_SECURE_999';
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session?.access_token) {
+           token = sessionData.session.access_token;
+        }
+        
+        const response = await fetch('/api/admin/query', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            table: 'payments',
+            operation: 'select',
+            order: { column: 'created_at', ascending: false }
+          })
+        });
+        
+        if (!response.ok) {
+           throw new Error('Failed to fetch all payments');
+        }
+        const data = await response.json();
+        return data || [];
       }
-      
+
+      let query = supabase.from('payments').select('*').eq('uid', uid);
       const { data, error } = await query.order('created_at', { ascending: false });
       if (error) {
         if (error.code === 'PGRST204' || error.code === 'PGRST205') {
@@ -1335,8 +1367,48 @@ export const supabaseService = {
         data = updateData;
       }
 
+      // If a deposit is approved, update the user's balance
+      if (payment.type === 'deposit' && (status === 'completed' || status === 'finished') && payment.status !== 'completed' && payment.status !== 'finished') {
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('wallet_balance, wallets')
+          .eq('id', payment.uid)
+          .single();
+        
+        if (!profileError && profile) {
+          const numericAmount = Number(payment.amount);
+          const newBalance = (Number(profile.wallet_balance) || 0) + numericAmount;
+          
+          let newWallets = profile.wallets || {};
+          if (typeof newWallets === 'string') {
+            try { newWallets = JSON.parse(newWallets); } catch (e) { newWallets = {}; }
+          }
+          
+          if (!newWallets.master) newWallets.master = { balance: 0, currency: 'USDT' };
+          newWallets.master.balance = (Number(newWallets.master.balance) || 0) + numericAmount;
+
+          const updateProfileData = { 
+            wallet_balance: newBalance,
+            wallets: newWallets
+          };
+
+          if (isAdmin) {
+            try {
+              await this.adminQuery('profiles', 'update', updateProfileData, { id: payment.uid });
+            } catch (error) {
+              console.error('Failed to update user balance via admin query:', error);
+            }
+          } else {
+            await supabase
+              .from('profiles')
+              .update(updateProfileData)
+              .eq('id', payment.uid);
+          }
+        }
+      }
+
       // If a withdrawal is rejected, refund the user
-      if (payment.type === 'withdrawal' && status === 'rejected') {
+      if (payment.type === 'withdrawal' && status === 'rejected' && payment.status !== 'rejected') {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('wallet_balance, wallets')
@@ -1400,39 +1472,7 @@ export const supabaseService = {
 
       if (updateError) throw updateError;
 
-      // 2. Create a pending withdrawal record
-      const numericAmount = Number(amount);
-      if (isNaN(numericAmount) || numericAmount <= 0) {
-        throw new Error('Invalid withdrawal amount');
-      }
-
-      const { data, error } = await supabase
-        .from('payments')
-        .insert({
-          uid,
-          amount: numericAmount,
-          type: 'withdrawal',
-          status: 'pending',
-          method: 'USDT (BEP20)',
-          order_description: `Withdrawal to ${address.substring(0, 6)}...${address.substring(address.length - 4)}`,
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (error) {
-        // Refund if insertion fails
-        await supabase
-          .from('profiles')
-          .update({ 
-            wallet_balance: balance,
-            wallets: profile.wallets
-          })
-          .eq('id', uid);
-        throw error;
-      }
-
-      return data;
+      return { success: true };
     } catch (error) {
       console.error('Error creating withdrawal:', error);
       throw error;
@@ -1524,18 +1564,24 @@ export const supabaseService = {
     else if (type === 'team_collection') walletKey = 'yield'; 
     else if (type === 'incentive_accrual') walletKey = 'incentive';
 
-    newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
-    newWallets[walletKey].balance += payableAmount;
+    // ALWAYS add to master wallet so user can withdraw
+    newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+    newWallets.master.balance += payableAmount;
+
+    // ALSO update the specific wallet tally
+    if (walletKey !== 'master') {
+      newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
+      newWallets[walletKey].balance += payableAmount;
+    }
 
     const updateData: any = {
       wallets: newWallets,
-      total_income: (Number(profile.total_income) || 0) + payableAmount
+      total_income: (Number(profile.total_income) || 0) + payableAmount,
+      wallet_balance: (Number(profile.wallet_balance) || 0) + payableAmount
     };
 
     // Keep specific income columns in sync
-    if (walletKey === 'master') {
-      updateData.wallet_balance = (Number(profile.wallet_balance) || 0) + payableAmount;
-    } else if (walletKey === 'referral') {
+    if (walletKey === 'referral') {
       updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
     } else if (walletKey === 'matching') {
       updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
