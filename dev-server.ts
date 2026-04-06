@@ -54,8 +54,11 @@ app.get("/api/health", (req, res) => {
 });
 
 // Renamed endpoints to avoid potential proxy filtering
-app.get("/api/deposit", (req, res) => {
-  res.json({ message: "Transaction creation endpoint is active. Use POST." });
+app.all("/api/deposit", (req, res, next) => {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed. Use POST.' });
+  }
+  next();
 });
 
 app.post("/api/deposit", async (req, res) => {
