@@ -186,7 +186,7 @@ const BinaryTree: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          amount: depositAmount,
+          amount: Number(depositAmount),
           currency: 'usdtbsc',
           orderId: `DEP-${Date.now()}`,
           orderDescription: `Deposit for ${userProfile?.email}`,

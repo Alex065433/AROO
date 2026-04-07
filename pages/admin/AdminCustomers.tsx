@@ -94,9 +94,9 @@ const AdminCustomers: React.FC = () => {
   };
 
   const filteredUsers = users.filter(u => 
-    u.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.operator_id?.toLowerCase().includes(searchQuery.toLowerCase())
+    (u.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (u.operator_id || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const totalPages = Math.ceil(filteredUsers.length / itemsPerPage);
@@ -136,7 +136,7 @@ const AdminCustomers: React.FC = () => {
     if (!selectedUser) return;
     
     const amount = parseFloat(selectedPackage);
-    const balance = Number(selectedUser.wallet_balance ?? selectedUser.deposit_wallet ?? selectedUser.wallets?.master?.balance ?? 0);
+    const balance = Number(selectedUser.wallet_balance || 0);
     
     setConfirmDialog({
       isOpen: true,
@@ -203,7 +203,8 @@ const AdminCustomers: React.FC = () => {
     try {
       await supabaseService.updateUser(selectedUser.id, {
         name: selectedUser.name,
-        email: selectedUser.email
+        email: selectedUser.email,
+        role: selectedUser.role
       });
       toast.success('User updated successfully');
       fetchUsers();
@@ -342,7 +343,7 @@ const AdminCustomers: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">
-                    {(user.wallet_balance ?? user.deposit_wallet ?? user.wallets?.master?.balance ?? 0).toFixed(2)} USDT
+                    {(user.wallet_balance || 0).toFixed(2)} USDT
                   </td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -564,18 +565,18 @@ const AdminCustomers: React.FC = () => {
                     <div>
                       <input 
                         type="text"
-                        value={selectedUser.name}
+                        value={selectedUser.name || ''}
                         onChange={(e) => setSelectedUser({...selectedUser, name: e.target.value})}
                         className="w-full bg-transparent border-none p-0 font-bold text-slate-900 dark:text-white focus:ring-0"
                       />
                       <input 
                         type="email"
-                        value={selectedUser.email}
+                        value={selectedUser.email || ''}
                         onChange={(e) => setSelectedUser({...selectedUser, email: e.target.value})}
                         className="w-full bg-transparent border-none p-0 text-xs text-slate-500 dark:text-slate-400 focus:ring-0"
                       />
                       <p className="text-[10px] text-slate-400 font-mono mt-1">{selectedUser.id}</p>
-                      <div className="mt-2">
+                      <div className="mt-2 flex items-center gap-2">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                           selectedUser.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 
                           selectedUser.status === 'pending' ? 'bg-amber-500/10 text-amber-500' : 
@@ -583,12 +584,29 @@ const AdminCustomers: React.FC = () => {
                         }`}>
                           {selectedUser.status || 'pending'}
                         </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                          selectedUser.role === 'admin' ? 'bg-blue-500/10 text-blue-500' : 'bg-slate-500/10 text-slate-500'
+                        }`}>
+                          {selectedUser.role || 'user'}
+                        </span>
                       </div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
                     <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
+                       <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">System Role</label>
+                          <select 
+                            value={selectedUser.role || 'user'}
+                            onChange={(e) => setSelectedUser({...selectedUser, role: e.target.value})}
+                            className="w-full bg-white dark:bg-slate-800 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
+                          >
+                            <option value="user">Standard User</option>
+                            <option value="admin">Administrator</option>
+                          </select>
+                       </div>
+
                        <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
                              <ShieldAlert size={18} />

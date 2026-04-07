@@ -3,10 +3,11 @@ import React, { useState, useEffect } from 'react';
 import GlassCard from '../components/GlassCard';
 import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight, RefreshCw } from 'lucide-react';
 import { supabaseService } from '../services/supabaseService';
+import { useUser } from '../src/context/UserContext';
 
 const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
   const [copied, setCopied] = useState(false);
-  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${side.toLowerCase()}`;
+  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(link);
@@ -34,7 +35,7 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
       
       <div className="space-y-6">
         <p className="text-sm text-slate-400 leading-relaxed font-medium">
-          Share this link to enroll new partners directly into your <span className="text-white font-bold">{side.toLowerCase()} leg</span>. 
+          Share this link to enroll new partners directly into your <span className="text-white font-bold">{(side || 'LEFT').toLowerCase()} leg</span>. 
           Binary matching is calculated based on volume from this leg.
         </p>
         
@@ -66,25 +67,25 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
 };
 
 const ReferralProgram: React.FC = () => {
-  const [user, setUser] = useState<any>(null);
+  const { profile: user, loading: isProfileLoading } = useUser();
   const [referrals, setReferrals] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!user?.id) return;
       setIsLoading(true);
-      const currentUser = supabaseService.getCurrentUser();
-      if (currentUser) {
-        const profile = await supabaseService.getUserProfile(currentUser.id);
-        setUser(profile);
-        
-        const refs = await supabaseService.getReferrals(currentUser.id);
+      try {
+        const refs = await supabaseService.getReferrals(user.id);
         setReferrals(refs);
+      } catch (err) {
+        console.error('Error fetching referrals:', err);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
     fetchData();
-  }, []);
+  }, [user?.id]);
 
   const operatorId = user?.operator_id || 'ARW-XXXX';
 
@@ -93,7 +94,7 @@ const ReferralProgram: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 border-b border-white/5 pb-10">
         <div>
           <h2 className="text-5xl font-black uppercase tracking-tight text-white">Affiliate Enrollment Portals</h2>
-          <p className="text-slate-500 mt-3 text-lg font-medium max-w-2xl">Expand your network by inviting new partners. Select specific binary placement to optimize your matching dividends.</p>
+          <p className="text-slate-500 mt-3 text-lg font-medium max-w-2xl">Expand your network by inviting new partners. Select specific binary positioning to optimize your matching dividends.</p>
         </div>
         <div className="flex gap-4">
            <div className="px-6 py-4 bg-emerald-500/10 rounded-2xl border border-emerald-500/10 flex items-center gap-3">

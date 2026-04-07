@@ -6,7 +6,7 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function check() {
-  const { data, error } = await supabase.rpc('claim_wallet', { p_user_id: 'cf21264f-bd65-4228-a89c-33813b94763b', p_wallet_key: 'referral' });
-  console.log('RPC result:', data, error);
+  // We can't easily create a function without admin key, but we can try if anon key has privileges or if there's a service role key.
+  // Let's check if there's a service role key in .env
 }
 check();

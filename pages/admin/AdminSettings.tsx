@@ -101,7 +101,7 @@ const AdminSettings: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Support Email</label>
-              <input type="email" defaultValue="support@arowin.com" className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium" />
+              <input type="email" defaultValue="support@arowintrading.com" className="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white font-medium" />
             </div>
             <div className="md:col-span-2 space-y-2">
               <label className="text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Platform Logo</label>

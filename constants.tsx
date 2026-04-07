@@ -54,7 +54,7 @@ export const RANKS: Rank[] = RANK_NAMES.map((name, i) => {
 export const MOCK_USER: User = {
   id: 'ARW-XXXX',
   name: 'Operator',
-  email: 'operator@arowin.com',
+  email: 'operator@arowintrading.com',
   mobile: '+91 9876543210',
   sponsorId: 'SPN-001',
   rank: 4, // Gold in the new system

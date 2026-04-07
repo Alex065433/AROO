@@ -73,12 +73,12 @@ const WalletCardRow: React.FC<{
         </h3>
       </div>
 
-      <div className="p-10 text-center bg-[#0d0d0e]">
-        <div className="flex flex-col items-center mb-10">
-          <p className="text-4xl font-black text-slate-200 tracking-tight mb-2">
+      <div className="p-6 md:p-10 text-center bg-[#0d0d0e]">
+        <div className="flex flex-col items-center mb-6 md:mb-10">
+          <p className="text-3xl md:text-4xl font-black text-slate-200 tracking-tight mb-2">
             {(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
-          <p className="text-[#c0841a] text-[10px] font-black tracking-[0.2em] uppercase">USDT NODE ASSET</p>
+          <p className="text-[#c0841a] text-[9px] md:text-[10px] font-black tracking-[0.2em] uppercase">USDT NODE ASSET</p>
         </div>
 
         <div className="flex flex-wrap justify-center gap-4">
@@ -712,22 +712,22 @@ const Dashboard: React.FC = () => {
 
 
       {/* Top Welcome Section */}
-      <div className="bg-[#0c0c0d] p-12 rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden group">
+      <div className="bg-[#0c0c0d] p-6 md:p-12 rounded-[32px] md:rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600/5 via-transparent to-amber-600/5 pointer-events-none" />
         
-        <div className="flex items-center gap-10 relative z-10">
+        <div className="flex flex-col md:flex-row items-center gap-6 md:gap-10 relative z-10 text-center md:text-left">
           <div className="relative">
             <div className="absolute inset-0 bg-blue-500/10 blur-3xl rounded-full" />
-            <div className="w-28 h-28 rounded-[32px] bg-[#1a1a1c] border border-white/10 p-3 flex items-center justify-center relative z-10 shadow-2xl">
-               <ArowinLogo size={80} />
+            <div className="w-20 h-20 md:w-28 md:h-28 rounded-[24px] md:rounded-[32px] bg-[#1a1a1c] border border-white/10 p-3 flex items-center justify-center relative z-10 shadow-2xl">
+               <ArowinLogo size={window.innerWidth < 768 ? 60 : 80} />
             </div>
           </div>
           <div>
-            <h2 className="text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
-            <div className="flex items-center gap-4 mt-3">
-               <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em]">OPERATOR: {userData.name}</span>
-               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
+            <h2 className="text-2xl md:text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-3 md:gap-4 mt-3">
+               <span className="text-slate-500 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">OPERATOR: {userData.name}</span>
+               <div className="w-1 h-1 md:w-1.5 md:h-1.5 rounded-full bg-emerald-500" />
+               <span className="text-blue-500 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
             </div>
           </div>
         </div>

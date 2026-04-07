@@ -427,7 +427,16 @@ app.post("/api/payments/create", async (req, res) => {
 
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.get('host');
-  const baseUrl = process.env.APP_URL || `${protocol}://${host}`;
+  
+  // Robust baseUrl detection for arowintrading.com
+  let baseUrl = process.env.APP_URL;
+  if (!baseUrl) {
+    if (host?.includes('arowintrading.com')) {
+      baseUrl = `https://arowintrading.com`;
+    } else {
+      baseUrl = `${protocol}://${host}`;
+    }
+  }
 
   try {
     const payload = {

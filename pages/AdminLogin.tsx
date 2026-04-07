@@ -18,41 +18,89 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [show2FA, setShow2FA] = useState(false);
   const [showReset, setShowReset] = useState(false);
+
+  const isAuthenticatingRef = React.useRef(false);
+
+  const handleSetupAdmin = async () => {
+    const secret = prompt('Enter Setup Secret Key:');
+    if (!secret) return;
+    
+    setIsAuthenticating(true);
+    try {
+      const result = await supabaseService.setupAdmin(secret);
+      alert(result.message);
+      setError(null);
+    } catch (err: any) {
+      setError(err.message || 'Setup failed.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsAuthenticating(true);
+    isAuthenticatingRef.current = true;
+
+    // Safety timeout to prevent infinite buffering
+    const timeout = setTimeout(() => {
+      if (isAuthenticatingRef.current) {
+        setIsAuthenticating(false);
+        isAuthenticatingRef.current = false;
+        setError('Connection timeout. The database is taking longer than expected to wake up. Please try again in a moment.');
+      }
+    }, 45000);
 
     try {
-      // Unique Admin Login Protocol
-      await supabaseService.adminLogin(username, password);
+      // Unique Admin Login Protocol - using the same login service
+      const authData = await supabaseService.login(username, password);
+      
+      // For Admin, we MUST verify role before proceeding to 2FA
+      const profile = await supabaseService.getUserProfile(authData.user.id);
+      
+      if (!profile || profile.role !== 'admin') {
+        await supabaseService.logout();
+        throw new Error('Unauthorized: You do not have administrative privileges.');
+      }
+
+      clearTimeout(timeout);
       setIsAuthenticating(false);
-      setShow2FA(true);
+      isAuthenticatingRef.current = false;
+      
+      // Save for 2FA page display
+      localStorage.setItem('arowin_login_id', username);
+      
+      // Proceed to dashboard, App.tsx will handle the redirect to /two-factor if needed
+      onLogin();
+      navigate('/admin/dashboard');
     } catch (err: any) {
+      clearTimeout(timeout);
       console.error('Admin login failed:', err);
       setError(err.message || 'Authorization Failed: Invalid System Signature.');
       setIsAuthenticating(false);
+      isAuthenticatingRef.current = false;
     }
   };
 
   const handleGoogleLogin = async () => {
     setError(null);
     try {
-      await supabaseService.loginWithGoogle();
+      const user = await supabaseService.loginWithGoogle() as any;
+      const profile = await supabaseService.getUserProfile(user.id);
+      
+      if (profile?.role !== 'admin') {
+        await supabaseService.logout();
+        throw new Error('Unauthorized: Google account is not registered as an administrator.');
+      }
+
       onLogin();
       navigate('/admin/dashboard');
     } catch (err: any) {
       console.error('Google login failed:', err);
       setError(err.message || 'Google authentication failed.');
     }
-  };
-
-  const handleVerify = () => {
-    onLogin();
-    navigate('/admin/dashboard');
   };
 
   return (
@@ -81,7 +129,7 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               key="reset-form"
               onCancel={() => setShowReset(false)}
             />
-          ) : !show2FA ? (
+          ) : (
             <motion.div 
               key="login-form"
               initial={{ opacity: 0, scale: 0.98 }}
@@ -103,7 +151,7 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                       type="text" 
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      placeholder="System Identity" 
+                      placeholder="ARW-ADMIN-01" 
                       className="w-full bg-slate-950/50 border border-white/5 rounded-2xl pl-14 pr-6 py-5 text-blue-400 font-mono focus:outline-none focus:border-blue-500/30 transition-all placeholder:text-slate-900 text-sm font-bold"
                       required
                     />
@@ -190,13 +238,6 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 Google Admin Protocol
               </button>
             </motion.div>
-          ) : (
-            <TwoFactorAuth 
-              key="2fa-form"
-              emailOrId={username}
-              onVerify={handleVerify}
-              onCancel={() => setShow2FA(false)}
-            />
           )}
         </AnimatePresence>
 
@@ -205,16 +246,27 @@ const AdminLogin: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           animate={{ opacity: 1 }}
           className="mt-12 flex flex-col items-center gap-6"
         >
-          <div className="flex justify-center gap-8 text-[9px] font-black uppercase tracking-[0.3em] text-slate-700">
-            <span className="flex items-center gap-2"><Activity size={12} className="text-emerald-500" /> All Systems Nominal</span>
-            <span className="flex items-center gap-2"><Fingerprint size={12} className="text-blue-500" /> Biometric Ready</span>
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex justify-center gap-8 text-[9px] font-black uppercase tracking-[0.3em] text-slate-700">
+              <span className="flex items-center gap-2"><Activity size={12} className="text-emerald-500" /> All Systems Nominal</span>
+              <span className="flex items-center gap-2"><Fingerprint size={12} className="text-blue-500" /> Biometric Ready</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => navigate('/login')} 
+                className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all"
+              >
+                ← BACK TO TRADING PORTAL
+              </button>
+              <span className="text-slate-900">|</span>
+              <button 
+                onClick={handleSetupAdmin} 
+                className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all"
+              >
+                EMERGENCY SYSTEM INITIALIZATION
+              </button>
+            </div>
           </div>
-          <button 
-            onClick={() => navigate('/login')} 
-            className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all"
-          >
-            ← BACK TO TRADING PORTAL
-          </button>
         </motion.div>
       </div>
     </div>

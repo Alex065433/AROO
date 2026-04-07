@@ -124,8 +124,8 @@ const MasterWallet: React.FC = () => {
 
   const createPayment = async () => {
   // ✅ Validation
-  if (!depositAmount || Number(depositAmount) < 10) {
-    setError("Minimum deposit is 10 USDT");
+  if (!depositAmount || Number(depositAmount) < 50) {
+    setError("Minimum deposit is 50 USDT");
     return;
   }
 
@@ -145,7 +145,10 @@ const MasterWallet: React.FC = () => {
       },
       body: JSON.stringify({
         amount: Number(depositAmount),
-        userId: userProfile.id,
+        currency: "usdtbsc",
+        orderId: `DEP-${Date.now()}`,
+        orderDescription: `Wallet Deposit for ${userProfile.id}`,
+        uid: userProfile.id
       }),
     });
 

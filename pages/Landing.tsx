@@ -79,9 +79,9 @@ const Landing: React.FC = () => {
                 <Star size={14} />
                 Established in the United Kingdom
               </div>
-              <h1 className="text-6xl md:text-8xl font-black leading-[1.1] mb-8 tracking-tight font-display italic">
-                Master the <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500">Markets</span> with Precision.
-              </h1>
+      <h1 className="text-4xl md:text-8xl font-black leading-[1.1] mb-8 tracking-tight font-display italic">
+        Master the <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-500">Markets</span> with Precision.
+      </h1>
               <p className="text-xl text-slate-400 leading-relaxed mb-10 max-w-xl">
                 Arowin Trading provides a high-performance ecosystem for digital asset growth, combining advanced binary algorithms with institutional-grade security.
               </p>
