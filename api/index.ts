@@ -6,8 +6,8 @@ import path from "path";
 import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
-import adminQueryRouter from "../admin-query";
-import adminPackageRouter from "../admin-package";
+import adminQueryRouter from "./admin-query";
+import adminPackageRouter from "./admin-package";
 
 dotenv.config();
 
@@ -15,6 +15,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 const resend = new Resend(process.env.RESEND_API_KEY || "re_854E6gtW_NZCqaxH6gT6jwYUeSmTHettv");
 
 // Lazy-load Supabase client to prevent startup crashes if env vars are missing
@@ -37,17 +38,16 @@ const getSupabase = () => {
 // Global request logger
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  if (req.method === 'POST') {
-    console.log('Request Body:', JSON.stringify(req.body, null, 2));
-  }
   next();
 });
 
-// API Routes
-app.use("/api/admin-query", adminQueryRouter);
-app.use("/api/admin-package", adminPackageRouter);
+const router = express.Router();
 
-app.get("/api/health", (req, res) => {
+// API Routes
+router.use("/admin-query", adminQueryRouter);
+router.use("/admin-package", adminPackageRouter);
+
+router.get("/health", (req, res) => {
   res.json({ 
     status: "ok", 
     message: "Server is running",
@@ -56,11 +56,11 @@ app.get("/api/health", (req, res) => {
 });
 
 // Simple test route
-app.get("/api/test", (req, res) => {
+router.get("/test", (req, res) => {
   res.json({ message: "Test route is working" });
 });
 
-app.get("/api/v1/u-p-b", (req, res) => {
+router.get("/v1/u-p-b", (req, res) => {
   res.json({ message: "GET /api/v1/u-p-b is reachable" });
 });
 
@@ -69,7 +69,7 @@ const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY || "SVVSPG9-ARKMZP4-
 const NOWPAYMENTS_IPN_SECRET = process.env.NOWPAYMENTS_IPN_SECRET || "O9EP3CkIQkfeifulPQMwLVxsgN2JzW67";
 
 // Mock Admin Routes
-app.get("/api/v1/s-t", (req, res) => {
+router.get("/v1/s-t", (req, res) => {
   res.json({
     totalUsers: 1250,
     activeNodes: 842,
@@ -78,7 +78,7 @@ app.get("/api/v1/s-t", (req, res) => {
   });
 });
 
-app.get("/api/v1/u-l", (req, res) => {
+router.get("/v1/u-l", (req, res) => {
   res.json([
     { 
       uid: 'user1', 
@@ -99,7 +99,7 @@ app.get("/api/v1/u-l", (req, res) => {
   ]);
 });
 
-app.post("/api/user-action", async (req, res) => {
+router.post("/user-action", async (req, res) => {
   const { action, userId: uid, amount, description } = req.body;
   const authHeader = req.headers.authorization;
   
@@ -220,11 +220,11 @@ app.post("/api/user-action", async (req, res) => {
   }
 });
 
-app.get("/api/v1/d-q", (req, res) => {
+router.get("/v1/d-q", (req, res) => {
   res.json({ message: "GET /api/v1/d-q is reachable" });
 });
 
-app.post("/api/admin-query", async (req, res) => {
+router.post("/admin-query", async (req, res) => {
   const { table, operation, data, match } = req.body;
   const authHeader = req.headers.authorization;
   const customToken = req.headers['x-auth-token'];
@@ -295,11 +295,11 @@ app.post("/api/admin-query", async (req, res) => {
   }
 });
 
-app.get("/api/v1/p-a", (req, res) => {
+router.get("/v1/p-a", (req, res) => {
   res.json({ message: "GET /api/v1/p-a is reachable" });
 });
 
-app.post("/api/admin-package", async (req, res) => {
+router.post("/admin-package", async (req, res) => {
   const { uid, packageAmount, isFree } = req.body;
   
   if (!uid || packageAmount === undefined || packageAmount === null) {
@@ -371,10 +371,8 @@ app.post("/api/admin-package", async (req, res) => {
   }
 });
 
-// Welcome Email Route removed, handled by Supabase Edge Function
-
 // Proxy for Binance Rates to avoid CORS
-app.get("/api/rates/binance", async (req, res) => {
+router.get("/rates/binance", async (req, res) => {
   try {
     const mirrors = [
       'https://api1.binance.com/api/v3/ticker/price',
@@ -417,7 +415,7 @@ app.get("/api/rates/binance", async (req, res) => {
 });
 
 // Create Payment
-app.post("/api/payments/create", async (req, res) => {
+router.post("/payments/create", async (req, res) => {
   const { amount, currency, orderId, orderDescription, uid } = req.body;
   console.log(`Creating payment for UID: ${uid}, Amount: ${amount}`);
 
@@ -520,7 +518,7 @@ app.post("/api/payments/create", async (req, res) => {
 });
 
 // Get Payment Status
-app.get("/api/payments/status/:paymentId", async (req, res) => {
+router.get("/payments/status/:paymentId", async (req, res) => {
   const { paymentId } = req.params;
   
   try {
@@ -554,7 +552,7 @@ app.get("/api/payments/status/:paymentId", async (req, res) => {
 });
 
 // Handle IPN
-app.post("/api/payments/ipn", async (req, res) => {
+router.post("/payments/ipn", async (req, res) => {
   const signature = req.get("x-nowpayments-sig");
   const notificationsPayload = req.body;
 
@@ -630,7 +628,10 @@ app.post("/api/payments/ipn", async (req, res) => {
   res.status(200).send("OK");
 });
 
-// Catch-all for unknown /api routes to prevent falling back to Vite's SPA handler
+// Mount the router on both /api and /
+app.use(["/api", "/"], router);
+
+// Catch-all for unknown /api routes
 app.all("/api/*", (req, res) => {
   console.warn(`Admin: Route not found: ${req.method} ${req.path}`);
   res.status(404).json({ 
