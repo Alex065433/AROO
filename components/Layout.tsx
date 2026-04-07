@@ -5,60 +5,61 @@ import {
   LayoutDashboard, GitBranch, Trophy, 
   LogOut, Menu, Gift, Bell, Search, Wallet, Share2, User, X,
   HelpCircle, ChevronRight, AlertCircle, Info, Zap, Cpu,
-  Wallet2, ShieldCheck
+  Wallet2
 } from 'lucide-react';
-import { RANKS } from '../constants';
+import { RANKS, MOCK_NOTIFICATIONS } from '../constants';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArowinLogo } from './ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
-import { useUser } from '../src/context/UserContext';
 
 const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ role, onLogout }) => {
-  const { profile, loading } = useUser();
   const [isOpen, setIsOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [userData, setUserData] = useState<{id: string, name: string, rank: number, isActive: boolean} | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!profile?.id) return;
+    const unsubscribe = supabaseService.onAuthChange(async (user) => {
+      if (user) {
+        const uid = user.id || user.uid;
+        try {
+          const profile = await supabaseService.getUserProfile(uid) as any;
+          if (profile) {
+            setUserData({
+              id: uid,
+              name: profile.name,
+              rank: profile.rank || 1,
+              isActive: profile.active_package > 0
+            });
+          }
 
-    const uid = profile.id;
-    let isMounted = true;
+          // Fetch initial notifications
+          const initialNotifs = await supabaseService.getNotifications(uid);
+          setNotifications(initialNotifs || []);
 
-    const initNotifications = async () => {
-      try {
-        // Fetch initial notifications
-        const initialNotifs = await supabaseService.getNotifications(uid);
-        if (isMounted) setNotifications(initialNotifs || []);
+          // Subscribe to notifications
+          const notifUnsubscribe = supabaseService.onNotificationsChange(uid, async () => {
+            const updatedNotifs = await supabaseService.getNotifications(uid);
+            setNotifications(updatedNotifs || []);
+          });
 
-        // Subscribe to notifications
-        const notifUnsubscribe = supabaseService.onNotificationsChange(uid, async () => {
-          const updatedNotifs = await supabaseService.getNotifications(uid);
-          if (isMounted) setNotifications(updatedNotifs || []);
-        });
-
-        return notifUnsubscribe;
-      } catch (err) {
-        console.error('Error fetching notifications:', err);
+          return () => {
+            if (typeof notifUnsubscribe === 'function') notifUnsubscribe();
+          };
+        } catch (err) {
+          console.error('Error fetching layout data:', err);
+        }
       }
-    };
-
-    const cleanupPromise = initNotifications();
-
-    return () => {
-      isMounted = false;
-      cleanupPromise.then(unsubscribe => {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      });
-    };
-  }, [profile?.id]);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleAcknowledgeAll = async () => {
-    if (profile?.id) {
-      await supabaseService.markNotificationsAsRead(profile.id);
+    if (userData?.id) {
+      await supabaseService.markNotificationsAsRead(userData.id);
       setNotifications(prev => prev.map(n => ({ ...n, is_new: false })));
     }
   };
@@ -78,9 +79,9 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     }
   };
 
-  const currentRankName = profile 
-    ? (profile.active_package > 0 
-        ? (RANKS.find(r => r.level === (profile.rank || 1))?.name || `Rank ${profile.rank || 1}`)
+  const currentRankName = userData 
+    ? (userData.isActive 
+        ? (RANKS.find(r => r.level === userData.rank)?.name || `Rank ${userData.rank}`)
         : 'Inactive')
     : 'Partner';
   const unreadCount = notifications.filter(n => n.is_new).length;
@@ -94,7 +95,6 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     { name: 'Rank Ladder', path: '/ranks', icon: Trophy },
     { name: 'Rewards', path: '/rewards', icon: Gift },
     { name: 'Support & Help', path: '/help', icon: HelpCircle },
-    ...(profile?.role === 'admin' ? [{ name: 'Admin Panel', path: '/admin/dashboard', icon: ShieldCheck }] : []),
   ];
 
   const SidebarContent = () => (
@@ -274,14 +274,14 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
             
             <div className="flex items-center gap-4 border-l border-white/5 pl-4 lg:pl-8">
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-black text-white tracking-tight">{profile?.name || 'Loading...'}</p>
+                <p className="text-sm font-black text-white tracking-tight">{userData?.name || 'Loading...'}</p>
                 <p className="text-[9px] text-amber-500 uppercase font-black tracking-widest leading-none mt-1">OPERATOR • {currentRankName}</p>
               </div>
               <div 
                 onClick={() => navigate('/profile')}
                 className="w-10 h-10 rounded-full border-2 border-slate-700 overflow-hidden cursor-pointer hover:border-amber-500 transition-all bg-slate-800 shadow-xl"
               >
-                <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${profile?.name || 'User'}`} alt="Avatar" className="w-full h-full" />
+                <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${userData?.name || 'User'}`} alt="Avatar" className="w-full h-full" />
               </div>
             </div>
           </div>

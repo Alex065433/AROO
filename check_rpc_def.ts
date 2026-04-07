@@ -4,12 +4,9 @@ dotenv.config();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
+
 async function check() {
-  const { data, error } = await supabase.rpc('get_table_column_types', { p_table_name: 'profiles' });
-  if (error) {
-    console.log(error.message);
-  } else {
-    console.log(data);
-  }
+  const { data, error } = await supabase.rpc('claim_wallet', { p_user_id: 'cf21264f-bd65-4228-a89c-33813b94763b', p_wallet_key: 'referral' });
+  console.log('RPC result:', data, error);
 }
 check();

@@ -145,7 +145,7 @@ const MasterWallet: React.FC = () => {
       },
       body: JSON.stringify({
         amount: Number(depositAmount),
-        uid: userProfile.id,
+        userId: userProfile.id,
       }),
     });
 

@@ -6,10 +6,12 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 async function check() {
   const { data, error } = await supabase.from('profiles').select('*').limit(1);
-  if (data && data[0]) {
-    console.log(Object.keys(data[0]));
+  if (error) {
+    console.log(error.message);
+  } else if (data && data.length > 0) {
+    console.log(Object.keys(data[0]).join(', '));
   } else {
-    console.log("No data or error:", error);
+    console.log("No data found in profiles table");
   }
 }
 check();

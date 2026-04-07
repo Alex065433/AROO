@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import GlassCard from '../components/GlassCard';
+import { MOCK_USER } from '../constants';
 import { supabaseService } from '../services/supabaseService';
-import { useUser } from '../src/context/UserContext';
 import { 
   User, Mail, Phone, Lock, Camera, Save, 
   ShieldCheck, AlertCircle, Fingerprint, Globe,
@@ -11,16 +11,15 @@ import {
 import { toast } from 'sonner';
 
 const Profile: React.FC = () => {
-  const { profile, loading, refreshProfile } = useUser();
   const [userData, setUserData] = useState({
-    name: '',
-    email: '',
-    mobile: '',
+    name: MOCK_USER.name,
+    email: MOCK_USER.email,
+    mobile: MOCK_USER.mobile,
     password: '••••••••••••',
     withdrawalPassword: '',
     twoFactorPin: '',
-    operatorId: '',
-    sponsorId: ''
+    operatorId: MOCK_USER.id,
+    sponsorId: MOCK_USER.sponsorId
   });
   
   const [newPassword, setNewPassword] = useState('');
@@ -30,7 +29,7 @@ const Profile: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const [avatar, setAvatar] = useState(`https://api.dicebear.com/7.x/avataaars/svg?seed=Operator`);
+  const [avatar, setAvatar] = useState(`https://api.dicebear.com/7.x/avataaars/svg?seed=${MOCK_USER.name}`);
   const [showVerification, setShowVerification] = useState(false);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -39,34 +38,37 @@ const Profile: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (profile) {
-      setUserData({
-        name: profile.name || '',
-        email: profile.email || '',
-        mobile: profile.mobile || '',
-        password: '••••••••••••',
-        withdrawalPassword: profile.withdrawal_password || '',
-        twoFactorPin: profile.two_factor_pin || '',
-        operatorId: profile.operator_id || profile.id,
-        sponsorId: profile.sponsor_id || 'SPN-001'
-      });
-      setAvatar(`https://api.dicebear.com/7.x/avataaars/svg?seed=${profile.name}`);
-      
-      // Fetch referrals
-      const fetchReferrals = async () => {
-        setIsLoadingReferrals(true);
+    const unsubscribe = supabaseService.onAuthChange(async (user) => {
+      if (user) {
         try {
-          const refs = await supabaseService.getReferrals(profile.id);
-          setReferrals(refs);
+          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+          if (profile) {
+            setUserData({
+              name: profile.name,
+              email: profile.email,
+              mobile: profile.mobile,
+              password: '••••••••••••',
+              withdrawalPassword: profile.withdrawal_password || '',
+              twoFactorPin: profile.two_factor_pin || '',
+              operatorId: profile.operator_id || profile.id,
+              sponsorId: profile.sponsor_id || 'SPN-001'
+            });
+            setAvatar(`https://api.dicebear.com/7.x/avataaars/svg?seed=${profile.name}`);
+            
+            // Fetch referrals
+            setIsLoadingReferrals(true);
+            const refs = await supabaseService.getReferrals(profile.id);
+            setReferrals(refs);
+            setIsLoadingReferrals(false);
+          }
         } catch (err) {
-          console.error('Error fetching referrals:', err);
-        } finally {
+          console.error('Error fetching profile or referrals:', err);
           setIsLoadingReferrals(false);
         }
-      };
-      fetchReferrals();
-    }
-  }, [profile]);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,8 +105,17 @@ const Profile: React.FC = () => {
 
       setSuccessMsg('Security protocols and profile synchronized successfully.');
       
-      // Refresh global profile state
-      await refreshProfile();
+      // Refresh local data
+      const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
+      if (updatedProfile) {
+        setUserData(prev => ({
+          ...prev,
+          name: updatedProfile.name,
+          mobile: updatedProfile.mobile,
+          withdrawalPassword: updatedProfile.withdrawal_password,
+          twoFactorPin: updatedProfile.two_factor_pin
+        }));
+      }
     } catch (err: any) {
       console.error('Update Error:', err);
       setError(err.message || 'Failed to synchronize profile.');

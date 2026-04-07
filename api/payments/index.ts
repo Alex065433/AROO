@@ -1,6 +1,5 @@
 import express from "express";
 import dotenv from "dotenv";
-dotenv.config();
 import axios from "axios";
 import crypto from "crypto";
 import path from "path";
@@ -9,6 +8,8 @@ import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import adminQueryRouter from "../admin-query";
 import adminPackageRouter from "../admin-package";
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -417,19 +418,7 @@ app.get("/api/rates/binance", async (req, res) => {
 
 // Create Payment
 app.post("/api/payments/create", async (req, res) => {
-  console.log("POST /api/payments/create - Request Body:", JSON.stringify(req.body));
   const { amount, currency, orderId, orderDescription, uid } = req.body;
-  
-  if (!uid) {
-    console.error("Missing UID in deposit request");
-    return res.status(400).json({ error: "Missing user ID (uid)" });
-  }
-
-  if (!amount || isNaN(Number(amount))) {
-    console.error("Invalid amount in deposit request:", amount);
-    return res.status(400).json({ error: "Invalid deposit amount" });
-  }
-
   console.log(`Creating payment for UID: ${uid}, Amount: ${amount}`);
 
   if (!NOWPAYMENTS_API_KEY || NOWPAYMENTS_API_KEY === "SVVSPG9-ARKMZP4-N7YJ6P8-5JDE42V") {

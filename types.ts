@@ -22,24 +22,29 @@ export interface User {
   name: string;
   email: string;
   mobile: string;
-  operator_id: string;
-  sponsor_id: string;
+  sponsorId: string;
   rank: number;
-  wallet_balance: number;
-  matching_income: number;
-  referral_income: number;
-  rank_bonus_income: number;
-  yield_income: number;
-  incentive_income: number;
-  team_size: {
+  totalEarnings: number;
+  wallets: {
+    master: Wallet;
+    referral: Wallet;
+    matching: Wallet;
+    yield: Wallet;
+    rankBonus: Wallet;
+    incentive: Wallet;
+    rewards: Wallet;
+    capping_box?: Wallet;
+  };
+  teamSize: {
     left: number;
     right: number;
   };
-  matched_pairs: number;
+  matchedPairs: number;
+  daily_income?: {
+    date: string;
+    amount: number;
+  };
   role: 'user' | 'admin';
-  status: string;
-  active_package: number;
-  created_at: string;
 }
 
 export interface TeamMember {

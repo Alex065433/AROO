@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { HashRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import AdminLayout from './components/AdminLayout';
@@ -8,7 +8,6 @@ import { SplashScreen } from './components/SplashScreen';
 import Dashboard from './pages/Dashboard';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
-import TwoFactorPage from './pages/TwoFactorPage';
 import AdminLogin from './pages/AdminLogin';
 import Register from './pages/Register';
 import BinaryTree from './pages/BinaryTree';
@@ -24,63 +23,42 @@ import AdminLogs from './pages/admin/AdminLogs';
 import Profile from './pages/Profile';
 import MasterWallet from './pages/MasterWallet';
 import Help from './pages/Help';
-import { useUser } from './src/context/UserContext';
-
-const ReferralRedirect: React.FC = () => {
-  const { operatorId } = useParams<{ operatorId: string }>();
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    if (operatorId) {
-      localStorage.setItem('arowin_ref', operatorId);
-      navigate('/register', { replace: true });
-    } else {
-      navigate('/', { replace: true });
-    }
-  }, [operatorId, navigate]);
-
-  return <SplashScreen onComplete={() => {}} />;
-};
-
-const ReferralCapturer: React.FC = () => {
-  const location = useLocation();
-  useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const hashParts = location.hash.split('?');
-    const hashParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
-    
-    const ref = searchParams.get('ref') || hashParams.get('ref');
-    const parent = searchParams.get('parent') || hashParams.get('parent');
-    const side = searchParams.get('side') || hashParams.get('side');
-    
-    if (ref) localStorage.setItem('arowin_ref', ref);
-    if (parent) localStorage.setItem('arowin_parent', parent);
-    if (side) localStorage.setItem('arowin_side', side);
-  }, [location]);
-  return null;
-};
 
 const App: React.FC = () => {
-  const { user, profile, loading, profileLoading, logout, refreshProfile } = useUser();
+  // Set to false to start at the user login screen
+  const [isUserAuth, setIsUserAuth] = useState(() => {
+    const saved = localStorage.getItem('arowin_supabase_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      return user && user.role !== 'admin';
+    }
+    return false;
+  });
+  // Set to false to allow testing the new Admin Login flow
+  const [isAdminAuth, setIsAdminAuth] = useState(() => {
+    const saved = localStorage.getItem('arowin_supabase_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      return user && user.role === 'admin';
+    }
+    return false;
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem('arowin_supabase_user');
+    setIsUserAuth(false);
+    setIsAdminAuth(false);
+  };
   const [showSplash, setShowSplash] = useState(true);
 
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-  // If we have a session but no profile yet, we are "authenticated" but role is unknown
-  // We should wait for the profile if we are authenticated to avoid flickering to Landing
-  const isAuthenticated = !!user;
-  const isAdmin = profile?.role === 'admin';
-  const isUser = profile && profile.role !== 'admin';
-  const is2FAPending = isAuthenticated && profile?.two_factor_pin && localStorage.getItem(`2fa_verified_${user?.id}`) !== 'true';
-  const isProfileLoading = isAuthenticated && !profile && profileLoading;
-
-  if (showSplash || loading || isProfileLoading) {
+  if (showSplash) {
     return <SplashScreen onComplete={() => setShowSplash(false)} />;
   }
 
   return (
     <HashRouter>
-      <ReferralCapturer />
       <Toaster position="top-right" richColors />
       {!isSupabaseConfigured && (
         <div className="fixed top-0 left-0 right-0 z-[9999] bg-amber-500 text-white text-[10px] font-black uppercase tracking-widest py-2 px-4 text-center shadow-lg">
@@ -90,39 +68,19 @@ const App: React.FC = () => {
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={
-          is2FAPending ? <Navigate to="/two-factor" /> :
-          (isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : 
-          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : 
+          isUserAuth ? <Navigate to="/dashboard" /> : 
+          isAdminAuth ? <Navigate to="/admin/dashboard" /> : 
           <Landing />
         } />
         <Route path="/landing" element={<Landing />} />
-        <Route path="/login" element={
-          is2FAPending ? <Navigate to="/two-factor" /> :
-          (isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : 
-          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> :
-          <Login onLogin={refreshProfile} />
-        } />
-        <Route path="/two-factor" element={
-          !isAuthenticated ? <Navigate to="/login" /> :
-          (isAdmin && !is2FAPending) ? <Navigate to="/admin/dashboard" /> :
-          (isUser && !is2FAPending) ? <Navigate to="/dashboard" /> :
-          <TwoFactorPage />
-        } />
-        <Route path="/register" element={(isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : <Register onLogin={refreshProfile} />} />
-        
-        {/* Referral Redirect Route */}
-        <Route path="/ref/:operatorId" element={<ReferralRedirect />} />
+        <Route path="/login" element={<Login onLogin={() => setIsUserAuth(true)} />} />
+        <Route path="/register" element={<Register onLogin={() => setIsUserAuth(true)} />} />
         
         {/* Admin Public Route */}
-        <Route path="/admin" element={<Navigate to="/admin/dashboard" />} />
-        <Route path="/admin/login" element={
-          is2FAPending ? <Navigate to="/two-factor" /> :
-          (isAuthenticated && isAdmin) ? <Navigate to="/admin/dashboard" /> : 
-          <AdminLogin onLogin={refreshProfile} />
-        } />
+        <Route path="/admin/login" element={<AdminLogin onLogin={() => setIsAdminAuth(true)} />} />
 
         {/* User Protected Routes */}
-        <Route element={isAuthenticated ? (is2FAPending ? <Navigate to="/two-factor" /> : <Layout role="user" onLogout={logout} />) : <Navigate to="/" />}>
+        <Route element={isUserAuth ? <Layout role="user" onLogout={handleLogout} /> : <Navigate to="/" />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/master-wallet" element={<MasterWallet />} />
           <Route path="/binary-tree" element={<BinaryTree />} />
@@ -135,7 +93,7 @@ const App: React.FC = () => {
         </Route>
 
         {/* Admin Protected Routes */}
-        <Route element={(isAuthenticated && isAdmin) ? (is2FAPending ? <Navigate to="/two-factor" /> : <AdminLayout onLogout={logout} />) : <Navigate to="/admin/login" />}>
+        <Route element={isAdminAuth ? <AdminLayout onLogout={handleLogout} /> : <Navigate to="/" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<AdminCustomers />} />
           <Route path="/admin/transactions" element={<AdminTransactions />} />

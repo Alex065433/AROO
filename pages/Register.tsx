@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
-import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
 
 const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
@@ -31,12 +30,9 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const hashParts = window.location.hash.split('?');
-    const hashParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
-    
-    const ref = params.get('ref') || hashParams.get('ref') || localStorage.getItem('arowin_ref');
-    const parentParam = params.get('parent') || hashParams.get('parent') || localStorage.getItem('arowin_parent');
-    const sideParam = params.get('side') || hashParams.get('side') || localStorage.getItem('arowin_side');
+    const ref = params.get('ref');
+    const parentParam = params.get('parent');
+    const sideParam = params.get('side');
     
     if (ref) setSponsorId(ref);
     if (parentParam) setParentId(parentParam);
@@ -124,7 +120,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           name: name || 'New Operator',
           mobile: mobile || '',
           withdrawalPassword: withdrawalPassword,
-          twoFactorPin: twoFactorPin,
+          twoFactorPin: twoFactorPin || '123456',
           parentId: parentUUID
         }
       );
@@ -132,11 +128,6 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       setRegisteredUser(user);
       setIsSubmitting(false);
       setIsSuccess(true);
-      
-      // Clear stored referral params
-      localStorage.removeItem('arowin_ref');
-      localStorage.removeItem('arowin_parent');
-      localStorage.removeItem('arowin_side');
 
       // 5. Redirect
       setTimeout(() => {
@@ -154,13 +145,35 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const handleGoogleLogin = async () => {
     setError(null);
     try {
-      await supabase.auth.signInWithOAuth({
-        provider: 'google',
-      });
-      // The redirect will handle the rest
+      const user = await supabaseService.loginWithGoogle() as any;
+      
+      // Check if profile exists, if not create one
+      const profile = await supabaseService.getUserProfile(user.id);
+      if (!profile) {
+        await supabaseService.createUserProfile(user.id, {
+          name: user.user_metadata?.full_name || 'New Operator',
+          email: user.email || '',
+          mobile: '',
+          operator_id: `ARW-${Math.floor(100000 + Math.random() * 900000)}`,
+          rank: 1,
+          wallets: {
+            master: { balance: 0, currency: 'USDT' },
+            referral: { balance: 0, currency: 'USDT' },
+            matching: { balance: 0, currency: 'USDT' },
+            rankBonus: { balance: 0, currency: 'USDT' },
+            rewards: { balance: 0, currency: 'USDT' },
+          },
+          team_size: 0,
+          matched_pairs: 0,
+          role: 'user'
+        });
+      }
+
+      onLogin();
+      navigate('/dashboard');
     } catch (err: any) {
       console.error('Google login failed:', err);
-      setError(err.message || 'Google login failed');
+      setError(supabaseService.formatError(err));
     }
   };
 
@@ -239,7 +252,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 <input 
                   readOnly
                   type="text" 
-                  value={parentId || ''}
+                  value={parentId}
                   className="w-full bg-slate-900/60 border border-blue-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none opacity-70" 
                 />
                 {parentName && (
