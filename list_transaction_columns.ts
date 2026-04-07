@@ -4,9 +4,14 @@ dotenv.config();
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 async function check() {
-  const { data, error } = await supabase.rpc('get_function_def', { func_name: 'process_matching' });
-  console.log('RPC result:', data, error);
+  const { data, error } = await supabase.from('transactions').select('*').limit(1);
+  if (error) {
+    console.log(error.message);
+  } else if (data && data.length > 0) {
+    console.log(Object.keys(data[0]).join(', '));
+  } else {
+    console.log("No data found in transactions table");
+  }
 }
 check();

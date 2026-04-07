@@ -1,6 +1,5 @@
 import { supabase } from './supabase';
 import { PACKAGES, RANKS, MOCK_USER } from '../constants';
-import { apiFetch } from '../src/lib/api';
 
 export interface Ticket {
   id?: string;
@@ -17,260 +16,169 @@ export const supabaseService = {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   },
 
-  // Helper for timeout
-  async withTimeout<T>(promise: Promise<T>, ms: number = 25000, errorMessage: string = "Request timed out. The database might be waking up."): Promise<T> {
-    const timeout = new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error(errorMessage)), ms)
-    );
-    return Promise.race([promise, timeout]);
-  },
-
   // Auth
-  async login(identifier: string, secret: string) {
-    // Check if Supabase is configured
-    const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SUPABASE_URL) || (typeof process !== 'undefined' && process.env ? process.env.VITE_SUPABASE_URL : undefined);
-    if (!supabaseUrl || supabaseUrl.includes('placeholder')) {
-      throw new Error("Database connection not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in settings.");
-    }
+  async adminLogin(adminId: string, secretKey: string) {
+    // Unique Administration ID and Password logic
+    const ADMIN_ID = "ADMIN_AROWIN_2026";
+    const ADMIN_SECRET = "CORE_SECURE_999";
 
-    let cleanId = identifier.trim();
-    let email = cleanId;
+    if (adminId === ADMIN_ID && secretKey === ADMIN_SECRET) {
+      // Fetch admin profile by operator_id
+      const { data: adminProfile } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("operator_id", ADMIN_ID)
+        .limit(1)
+        .maybeSingle();
+      
+      console.log('adminLogin: Admin profile found:', !!adminProfile, 'Email:', adminProfile?.email);
 
-    // Administrative ID Protocol Resolution
-    const isAdminId = cleanId.toUpperCase() === 'ARW-ADMIN-01';
-    
-    if (isAdminId) {
-      email = 'admin@arowin.internal';
-    }
-
-    // Normalize Operator ID format if it's not an email
-    if (!cleanId.includes('@') && !isAdminId) {
-      if (/^\d{6}$/.test(cleanId)) {
-        cleanId = `ARW-${cleanId}`;
-      } else if (/^ARW\d{6}$/i.test(cleanId)) {
-        cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
-      } else if (/^ARW-\d{6}$/i.test(cleanId)) {
-        cleanId = `ARW-${cleanId.substring(4).toUpperCase()}`;
-      }
-
-      // Resolve email from Operator ID
-      try {
-        const { data: profile, error } = await this.withTimeout(
-          supabase.from("profiles").select("email").eq("operator_id", cleanId).single(),
-          20000,
-          "Database is waking up. Please wait a moment and try again."
-        );
-        
-        if (error) {
-          // If it's a real error (not just not found), throw it
-          if (error.code !== 'PGRST116') throw error; 
-          // PGRST116 is "JSON object requested, but no rows were returned"
-        }
-        
-        if (profile) {
-          email = profile.email;
-          console.log(`Resolved Operator ID ${cleanId} to real email: ${email}`);
-        } else {
-          // Fallback to internal email format if not found in profiles
-          email = `${cleanId.toLowerCase()}@arowin.internal`;
-          console.log(`Resolved Operator ID ${cleanId} to internal email: ${email}`);
-        }
-      } catch (e: any) {
-        // If it's a timeout, propagate it
-        if (e.message?.includes('waking up') || e.message?.includes('timed out')) {
-          throw e;
-        }
-        // Otherwise fallback to internal format
-        email = `${cleanId.toLowerCase()}@arowin.internal`;
-        console.log(`Resolved Operator ID ${cleanId} to internal email (fallback): ${email}`);
-      }
-    }
-
-    // Perform Supabase Auth login
-    try {
-      console.log(`Attempting login for: ${email}`);
-      const { data: authData, error: authError } = await this.withTimeout(
-        supabase.auth.signInWithPassword({ email, password: secret })
-      );
-
+      // Also sign in with Supabase Auth using the email from the profile
+      const adminEmail = adminProfile?.email || 'admin@arowin.internal';
+      console.log('adminLogin: Attempting Supabase signInWithPassword with email:', adminEmail);
+      
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: adminEmail,
+        password: secretKey
+      });
+      
       if (authError) {
-        console.error(`Auth error for ${email}:`, authError);
-        
-        // Fallback: try internal email if real email failed (for legacy/internal accounts)
-        // This handles cases where user enters email but Auth uses arw-XXXXXX@arowin.internal
-        const isEmailInput = cleanId.includes('@');
-        
-        if (isEmailInput || !cleanId.includes('@')) {
-          let internalEmailsToTry: string[] = [];
-          
-          if (!isEmailInput) {
-            internalEmailsToTry.push(`${cleanId.toLowerCase()}@arowin.internal`);
-          } else {
-            // It's an email input, find profiles with this email
-            try {
-              const { data: profiles, error: profileError } = await this.withTimeout(
-                supabase.from("profiles").select("operator_id").eq("email", cleanId),
-                10000
-              );
-              
-              if (profileError) throw profileError;
-              
-              if (profiles && profiles.length > 0) {
-                if (profiles.length > 1) {
-                  // Multiple profiles found for this email, tell user to use Operator ID
-                  throw new Error(`Multiple accounts found for ${cleanId}. Please use your Operator ID (e.g. ARW-XXXXXX) to log in.`);
-                }
-                internalEmailsToTry.push(`${profiles[0].operator_id.toLowerCase()}@arowin.internal`);
-              }
-            } catch (e: any) {
-              if (e.message?.includes('Multiple accounts')) throw e;
-              console.error('Error finding profiles for email:', e);
-            }
-          }
-
-          for (const internalEmail of internalEmailsToTry) {
-            console.log(`Retrying with internal email: ${internalEmail}`);
-            const { data: retryData, error: retryError } = await this.withTimeout(
-              supabase.auth.signInWithPassword({ email: internalEmail, password: secret })
-            );
-            
-            if (!retryError) {
-              // Trigger background fetch
-              this.getUserProfile(retryData.user.id).catch(console.error);
-              return retryData;
-            }
-            
-            if (retryError.message?.toLowerCase().includes('invalid login credentials')) {
-              // If it's an email input, we already tried the real email and it failed.
-              // If the internal email also fails with invalid credentials, it's a final failure.
-              throw new Error(`Authentication Failed: Invalid credentials for identity "${cleanId}". Please check your password.`);
-            }
-          }
-        }
-        
-        if (authError.message?.toLowerCase().includes('invalid login credentials')) {
-          throw new Error(`Authentication Failed: Invalid credentials for ${email}. Please verify your email and password.`);
-        }
-        throw authError;
-      }
-
-      console.log(`Login successful for: ${email}`);
-      // Trigger background fetch
-      this.getUserProfile(authData.user.id).catch(console.error);
-      
-      // Return auth data immediately
-      return authData;
-    } catch (e: any) {
-      console.error(`Login catch block for ${email}:`, e);
-      
-      // If it's already our custom error, just rethrow it
-      if (e.message?.includes('Authentication Failed')) {
-        throw e;
+        // If it's the hardcoded admin, we expect this to fail if they haven't signed up in Supabase Auth yet.
+        // We log it as a minor info instead of a warning to keep the console clean.
+        console.log('adminLogin: Supabase signInWithPassword failed (expected if admin user not in Auth):', authError.message);
+        // If sign in fails, we still proceed with the hardcoded fallback
+      } else {
+        console.log('adminLogin: Supabase signInWithPassword succeeded:', authData);
       }
       
-      if (e.message?.toLowerCase().includes('invalid login credentials')) {
-        throw new Error(`Authentication Failed: Invalid credentials or system signature for ${email}.`);
+      if (adminProfile) {
+        localStorage.setItem('arowin_supabase_user', JSON.stringify({ ...adminProfile, role: 'admin' }));
+        return { ...adminProfile, role: 'admin' };
       }
       
-      // Handle other common Supabase errors
-      if (e.message?.includes('Email not confirmed')) {
-        throw new Error(`Authentication Failed: Email not confirmed. Please check your inbox.`);
-      }
-      
-      throw e;
+      // Fallback if profile not found
+      const fallbackAdmin = {
+        id: '00000000-0000-0000-0000-000000000000',
+        email: 'admin@arowin.internal',
+        name: 'System Administrator',
+        role: 'admin',
+        operator_id: ADMIN_ID
+      };
+      localStorage.setItem('arowin_supabase_user', JSON.stringify(fallbackAdmin));
+      return fallbackAdmin;
     }
+
+    // Try regular login but check for admin role
+    try {
+      const profile = await this.login(adminId, secretKey);
+      if (profile && (profile.role === 'admin' || profile.email === 'kethankumar130@gmail.com')) {
+        const adminProfile = { ...profile, role: 'admin' };
+        localStorage.setItem('arowin_supabase_user', JSON.stringify(adminProfile));
+        return adminProfile;
+      }
+      // If not an admin, we still throw the admin error below
+    } catch (e) {
+      // Ignore regular login errors and throw the admin one
+    }
+
+    throw new Error("Invalid Administrative Credentials. Access Denied.");
   },
 
-  async getUserProfile(userId: string, retries: number = 2) {
-    let lastError: any;
+  async login(operatorId: string, password: string) {
+    let cleanId = operatorId.trim();
     
-    for (let i = 0; i <= retries; i++) {
-      try {
-        // Use a longer timeout (30s) to allow for database wake-up
-        const { data, error } = await this.withTimeout(
-          supabase.from("profiles").select("*").eq("id", userId).single(),
-          30000 
-        );
+    // Normalize Operator ID format
+    // 1. If it's just 6 digits, prepend ARW-
+    if (/^\d{6}$/.test(cleanId)) {
+      cleanId = `ARW-${cleanId}`;
+    }
+    // 2. If it's ARW followed by 6 digits (no hyphen), insert hyphen
+    if (/^ARW\d{6}$/i.test(cleanId)) {
+      cleanId = `ARW-${cleanId.substring(3).toUpperCase()}`;
+    }
+    
+    // Step 1: get profile from operator_id
+    // Try exact match first
+    let { data, error } = await supabase
+      .from("profiles")
+      .select("operator_id, email, status, role")
+      .eq("operator_id", cleanId)
+      .single();
 
-        if (error) {
-          // If profile doesn't exist in DB but user is authenticated, 
-          // check if it's the admin email to allow access
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user && user.email === 'admin@arowin.internal') {
-            return {
-              id: userId,
-              email: user.email,
-              role: 'admin',
-              full_name: 'System Administrator',
-              status: 'active',
-              operator_id: 'ARW-ADMIN-01'
-            };
-          }
-          throw error;
-        }
-        
-        const profile = data as any;
-        
-        if (profile.status === 'blocked') {
-          throw new Error("Your account has been blocked. Please contact system administration.");
-        }
-
-        // Force admin role for Administrative Protocol
-        if (profile.email === 'admin@arowin.internal') {
-          profile.role = 'admin';
-        }
-        
-        // Map column-based counts to team_size for frontend compatibility
-        if (profile.left_count !== undefined && profile.right_count !== undefined) {
-          profile.team_size = {
-            left: Number(profile.left_count) || 0,
-            right: Number(profile.right_count) || 0
-          };
-        }
-
-        // Persist to local storage for fast fallback
-        localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
-        return profile;
-      } catch (e: any) {
-        lastError = e;
-        const isTimeout = e.message?.includes('timed out') || e.message?.includes('waking up');
-        
-        if (isTimeout && i < retries) {
-          console.warn(`Profile fetch attempt ${i + 1} timed out, retrying...`);
-          // Wait a bit before retrying
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-        
-        // If it's a non-timeout error or we're out of retries, break and handle
-        break;
+    // If not found, try case-insensitive (ilike)
+    if (error || !data) {
+      const { data: retryData, error: retryError } = await supabase
+        .from("profiles")
+        .select("operator_id, email, status, role")
+        .ilike("operator_id", cleanId)
+        .single();
+      
+      if (!retryError && retryData) {
+        data = retryData;
+        error = null;
       }
     }
 
-    // If we get here, all retries failed or we hit a non-timeout error
-    console.warn("Background profile fetch failed, using cache if available:", lastError.message);
-    throw lastError;
-  },
-
-  getCurrentUser() {
-    const saved = localStorage.getItem('arowin_supabase_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return null;
+    // If still not found, maybe it's an email?
+    if (error || !data) {
+      if (cleanId.includes('@')) {
+        // Use ilike and handle potential quotes in the or filter
+        const { data: emailData, error: emailError } = await supabase
+          .from("profiles")
+          .select("operator_id, email, status, role")
+          .or(`email.ilike."${cleanId}"`)
+          .limit(1)
+          .maybeSingle();
+        
+        if (!emailError && emailData) {
+          data = emailData;
+          error = null;
+        }
       }
     }
-    return null;
-  },
 
-  async logout() {
-    const user = this.getCurrentUser();
-    if (user?.id) {
-      localStorage.removeItem(`2fa_verified_${user.id}`);
+    if (error || !data) {
+      throw new Error("Invalid Operator ID or Email");
     }
-    localStorage.removeItem('arowin_supabase_user');
-    await supabase.auth.signOut();
+
+    // Check if account is active (unless it's an admin)
+    if (data.status === 'blocked') {
+      throw new Error("Your account has been blocked by the administrator. Please contact support.");
+    }
+    
+    // Removed admin approval check as per user request
+    // if (data.status === 'pending' && data.role !== 'admin') {
+    //   throw new Error("Your account is pending activation by the administrator. Please wait for approval.");
+    // }
+
+    // Step 2: login using email (which is the internal email)
+    const internalEmail = `${data.operator_id.toLowerCase()}@arowin.internal`;
+    
+    let { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: internalEmail,
+      password: password
+    });
+
+    // If internal email fails, try the real email (for older accounts or admin)
+    if (authError) {
+      const { data: retryAuthData, error: retryAuthError } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: password
+      });
+      
+      if (retryAuthError) {
+        throw authError; // Throw original error
+      }
+      authData = retryAuthData;
+      authError = null;
+    }
+
+    if (authError) throw authError;
+
+    // Fetch full profile to store in local storage
+    const profile = await this.getUserProfile(authData.user.id);
+    localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
+    return profile;
   },
 
   async loginWithGoogle() {
@@ -281,19 +189,9 @@ export const supabaseService = {
     return data;
   },
 
-  formatError(err: any): string {
-    if (typeof err === 'string') return err;
-    if (err.message) {
-      if (err.message.includes('Invalid login credentials')) return "Invalid credentials.";
-      if (err.message.includes('Email not confirmed')) return "Please confirm your email address.";
-      return err.message;
-    }
-    return "An unexpected error occurred.";
-  },
-
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
     const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-    const internalEmail = `${(operatorId || '').toLowerCase()}@arowin.internal`;
+    const internalEmail = `${operatorId.toLowerCase()}@arowin.internal`;
 
     // 1. Create Supabase Auth User with internal email to allow unlimited IDs per real email
     const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -326,9 +224,6 @@ export const supabaseService = {
       }
       if (/^ARW\d{6}$/i.test(cleanSponsorId)) {
         cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
-      }
-      if (/^ARW-\d{6}$/i.test(cleanSponsorId)) {
-        cleanSponsorId = `ARW-${cleanSponsorId.substring(4).toUpperCase()}`;
       }
       sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
     }
@@ -411,7 +306,7 @@ export const supabaseService = {
       name: additionalData.name || email.split('@')[0],
       mobile: additionalData.mobile || '',
       withdrawal_password: additionalData.withdrawalPassword || '',
-      two_factor_pin: additionalData.twoFactorPin || '',
+      two_factor_pin: additionalData.twoFactorPin || '123456',
       sponsor_id: sponsor?.id || null,
       parent_id: parentId,
       side: finalSide,
@@ -430,7 +325,7 @@ export const supabaseService = {
       team_size: { left: 0, right: 0 },
       matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
-      role: 'user',
+      role: email === 'kethankumar130@gmail.com' ? 'admin' : 'user',
       status: 'active', // Default to active as per user request
       created_at: new Date().toISOString(),
     };
@@ -454,7 +349,6 @@ export const supabaseService = {
         name: profileData.name,
         role: profileData.role,
         status: 'active',
-        two_factor_pin: profileData.two_factor_pin || '123456',
         wallets: profileData.wallets, // Ensure wallets exist even in minimal profile
         created_at: profileData.created_at
       };
@@ -465,6 +359,12 @@ export const supabaseService = {
       
       if (!retryError) {
         console.log('Minimal profile created successfully. Please run the SQL migration to enable full features.');
+        // Auto-activate package even for minimal profile
+        try {
+          await this.activatePackage(user.id, 50, true);
+        } catch (e) {
+          console.error('Failed to auto-activate package for minimal profile:', e);
+        }
         return { ...minimalProfile, uid: user.id, schemaWarning: true };
       }
       profileError = retryError;
@@ -475,11 +375,14 @@ export const supabaseService = {
       throw new Error(`Profile Sync Error: ${profileError.message}`);
     }
 
-    // Update binary counts up the tree
+    // 5. Automatically activate the default $50 package as per user requirement
+    // "Each user joins with $50"
+    // This handles team counts, business volume, referral bonus, and matching income
     try {
-      await supabase.rpc('update_binary_count', { p_user_id: user.id });
-    } catch (err) {
-      console.warn('Failed to update binary counts:', err);
+      await this.activatePackage(user.id, 50, true);
+    } catch (activationError) {
+      console.error('Failed to auto-activate package during registration:', activationError);
+      // We don't throw here to allow the user to still log in even if auto-activation fails
     }
 
     // Send Welcome Email
@@ -534,9 +437,10 @@ export const supabaseService = {
       const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const responseData = await apiFetch(functionUrl, {
+      const response = await fetch(functionUrl, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseAnonKey}`
         },
         body: JSON.stringify({
@@ -545,6 +449,13 @@ export const supabaseService = {
         })
       });
 
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Email function error:', errorText);
+        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
+      }
+
+      const responseData = await response.json();
       console.log('Response from Edge Function:', responseData);
 
       // 8. Return success
@@ -566,9 +477,10 @@ export const supabaseService = {
       console.log("⏳ Waiting 500ms for database replication before sending email...");
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const responseData = await apiFetch(functionUrl, {
+      const response = await fetch(functionUrl, {
         method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseAnonKey}`
         },
         body: JSON.stringify({
@@ -577,11 +489,29 @@ export const supabaseService = {
         })
       });
 
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Email function error:', errorText);
+        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
+      }
+
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (e) {
+        throw new Error("Invalid JSON response from email server");
+      }
+
       return responseData;
     } catch (error) {
       console.error('Error calling send-email function:', error);
       throw error;
     }
+  },
+
+  async logout() {
+    await supabase.auth.signOut();
+    localStorage.removeItem('arowin_supabase_user');
   },
 
   onAuthChange(callback: (user: any) => void) {
@@ -596,8 +526,6 @@ export const supabaseService = {
         // Fetch profile
         this.getUserProfile(session.user.id).then(profile => {
           callback(profile);
-        }).catch(err => {
-          console.warn("Auth change profile fetch failed:", err.message);
         });
       } else if (!localUser) {
         callback(null);
@@ -630,12 +558,47 @@ export const supabaseService = {
     };
   },
 
+  getCurrentUser() {
+    const localUser = localStorage.getItem('arowin_supabase_user');
+    return localUser ? JSON.parse(localUser) : null;
+  },
+
   // User Profiles
   async createUserProfile(uid: string, data: any) {
     const { error } = await supabase
       .from('profiles')
       .upsert({ id: uid, ...data });
     if (error) throw error;
+  },
+
+  async getUserProfile(uid: string, columns: string = '*') {
+    let queryColumns = columns;
+    if (columns !== '*' && !columns.includes('left_count')) {
+      queryColumns += ', left_count, right_count';
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(queryColumns)
+      .eq('id', uid)
+      .single();
+    if (error) return null;
+    
+    const profile = data as any;
+    // Force admin role for the owner
+    if (profile.email === 'kethankumar130@gmail.com') {
+      profile.role = 'admin';
+    }
+    
+    // Map column-based counts to team_size for frontend compatibility
+    if (profile.left_count !== undefined && profile.right_count !== undefined) {
+      profile.team_size = {
+        left: Number(profile.left_count) || 0,
+        right: Number(profile.right_count) || 0
+      };
+    }
+    
+    return profile;
   },
 
   // Package Activation
@@ -648,6 +611,33 @@ export const supabaseService = {
     const finalAmount = isFree ? 0 : amount;
 
     try {
+      console.log(`Activating package for ${uid} with amount ${amount} via API`);
+      
+      // Use the API for robust activation with service_role privileges
+      const response = await fetch('/api/admin-package', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': 'CORE_SECURE_999'
+        },
+        body: JSON.stringify({ uid, packageAmount: amount, isFree: !!isFree })
+      });
+
+      if (response.ok) {
+        console.log('Package activated successfully via API');
+        // Final rank check for the user themselves
+        await this.checkAndUpdateRank(uid);
+        return await response.json();
+      } else {
+        const errorData = await response.json();
+        console.warn('API activation failed, falling back to JS logic:', errorData);
+      }
+    } catch (apiErr) {
+      console.error('Error calling admin-package API:', apiErr);
+    }
+
+    // Fallback JS Logic (if API fails or for additional client-side processing)
+    try {
       // 1. Get user profile
       const userProfile = await this.getUserProfile(uid);
       if (!userProfile) throw new Error("User not found");
@@ -655,37 +645,27 @@ export const supabaseService = {
       // 2. Check and deduct balance if not free
       const currentUser = this.getCurrentUser();
       const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
-      const shouldSkipBalanceCheck = isFree || isAdmin;
-
-      if (finalAmount > 0 && !shouldSkipBalanceCheck) {
-        // Check all possible balance sources
+      
+      if (finalAmount > 0 && !isFree) {
         const masterBalance = Number(userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0));
         
         if (masterBalance < finalAmount) {
           throw new Error(`Insufficient balance. Required: ${finalAmount} USDT, Available: ${masterBalance} USDT`);
         }
 
-        // Deduct balance from all sources to keep them in sync
+        const newBalance = Math.max(0, masterBalance - finalAmount);
         const newWallets = { ...userProfile.wallets };
         if (newWallets.master) {
-          newWallets.master.balance = Math.max(0, Number(newWallets.master.balance || 0) - finalAmount);
+          newWallets.master.balance = newBalance;
         }
 
         const updateData: any = { 
           wallets: newWallets,
-          wallet_balance: Math.max(0, Number(userProfile.wallet_balance || 0) - finalAmount)
+          wallet_balance: newBalance,
+          deposit_wallet: newBalance
         };
-        
-        if (userProfile.deposit_wallet !== undefined) {
-          updateData.deposit_wallet = Math.max(0, Number(userProfile.deposit_wallet || 0) - finalAmount);
-        }
 
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update(updateData)
-          .eq('id', uid);
-        
-        if (updateError) throw updateError;
+        await this.adminQuery('profiles', 'update', updateData, { id: uid });
       }
 
       // 3. Update active_package and total_deposit
@@ -695,202 +675,120 @@ export const supabaseService = {
         status: 'active'
       };
 
-      if (isAdmin) {
-        try {
-          await this.adminQuery('profiles', 'update', packageUpdateData, { id: uid });
-        } catch (packageError) {
-          throw packageError;
-        }
-      } else {
-        const { error: packageError } = await supabase
-          .from('profiles')
-          .update(packageUpdateData)
-          .eq('id', uid);
-
-        if (packageError) throw packageError;
-      }
+      await this.adminQuery('profiles', 'update', packageUpdateData, { id: uid });
 
       // 4. Create Team Collection Nodes if package has nodes
       const packageData = PACKAGES.find(p => p.price === amount);
-      if (packageData) {
-        // Internal Referral Bonus (5% of all sub-IDs)
-        const internalReferralBonus = ((packageData.nodes - 1) * 50) * 0.05;
-        if (internalReferralBonus > 0) {
-          await this.addIncome(uid, internalReferralBonus, 'referral_bonus');
-        }
-
-        // Internal Matching Bonus (based on internal tree structure)
-        const internalMatchingBonusMap: Record<number, number> = {
-          50: 0,
-          150: 5,
-          350: 15,
-          750: 35,
-          1550: 75,
-          3150: 155,
-          6350: 315,
-          12750: 635
-        };
-        const internalMatchingBonus = internalMatchingBonusMap[amount] || 0;
-        if (internalMatchingBonus > 0) {
-          await this.addIncome(uid, internalMatchingBonus, 'matching_bonus');
-        }
-
-        // Update user's own business counts for their internal tree (for rank qualification)
-        // Formula: (nodes - 1) / 2 gives the units on each side
-        // Starter (3 nodes) -> 1 unit left, 1 unit right (Qualifies for Starter rank)
-        // Bronze (7 nodes) -> 3 units left, 3 units right (Qualifies for Bronze rank)
-        const internalCount = (packageData.nodes - 1) / 2;
-        if (internalCount > 0) {
-          const countUpdateData = {
-            left_count: internalCount,
-            right_count: internalCount,
-            team_size: { left: internalCount, right: internalCount }
-          };
-          
-          if (isAdmin) {
-            try {
-              await this.adminQuery('profiles', 'update', countUpdateData, { id: uid });
-            } catch (error) {
-              console.error('Failed to update internal counts via admin query:', error);
-            }
-          } else {
-            await supabase.from('profiles').update(countUpdateData).eq('id', uid);
-          }
-        }
-
-        // Create IDs in Team Collection
-        // According to the image, "NO. OF IDS" is packageData.nodes
+      if (packageData && packageData.nodes > 0) {
         const numIds = packageData.nodes;
-        if (numIds > 0) {
-          const nodesToCreate = [];
-          const numRankNodes = (numIds + 1) / 2;
-          const timestamp = Date.now().toString().slice(-6);
-          
-          for (let i = 0; i < numIds; i++) {
-            // Only the first numRankNodes are "Rank Nodes"
-            // Generation calculation: floor(log2(i + 1))
-            const generation = Math.floor(Math.log2(i + 1));
-            
-            nodesToCreate.push({
-              uid: uid,
-              node_id: `${userProfile.operator_id}-ID${timestamp}-${i + 1}`,
-              name: `${userProfile.name} Node ${i + 1}`,
-              balance: 0,
-              eligible: i < numRankNodes, // First N nodes are rank nodes
-              created_at: new Date().toISOString()
-            });
-          }
-          
-          if (isAdmin) {
-            try {
-              await this.adminQuery('team_collection', 'insert', nodesToCreate);
-            } catch (nodeError) {
-              console.error('Failed to create team nodes via admin query:', nodeError);
-            }
-          } else {
-            const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
-            if (nodeError) console.error('Failed to create team nodes:', nodeError);
-          }
+        const nodesToCreate = [];
+        const numRankNodes = (numIds + 1) / 2;
+        const timestamp = Date.now().toString().slice(-6);
+        
+        for (let i = 0; i < numIds; i++) {
+          const generation = Math.floor(Math.log2(i + 1));
+          nodesToCreate.push({
+            uid: uid,
+            node_id: `${userProfile.operator_id}-ID${timestamp}-${i + 1}`,
+            name: `${userProfile.name} Node ${i + 1}`,
+            balance: 0,
+            eligible: i < numRankNodes,
+            created_at: new Date().toISOString()
+          });
         }
+        await this.adminQuery('team_collection', 'insert', nodesToCreate);
       }
 
       // 5. Referral Bonus (5% of total package price to sponsor)
-      if (userProfile.sponsor_id && amount > 0) {
+      const isFirstActivation = !userProfile.active_package || userProfile.active_package === 0;
+      if (userProfile.sponsor_id && amount > 0 && isFirstActivation) {
         const referralBonus = amount * 0.05;
         await this.addIncome(userProfile.sponsor_id, referralBonus, 'referral_bonus');
       }
 
-      // 5. Update Team Business & Team Size up the tree
-      const pkg = PACKAGES.find(p => p.price === amount);
-      // Rank Units logic:
-      // Activation (1 node) -> 1 unit
-      // Starter (3 nodes) -> 1 unit (User said "3 starters for Bronze", so 1 Starter pkg = 1 unit)
-      // Bronze (7 nodes) -> 3 units (1 Bronze pkg = 3 units = Bronze rank)
-      // Silver (15 nodes) -> 7 units (1 Silver pkg = 7 units = Silver rank)
-      const rankUnitsToAdd = pkg ? Math.max(1, (pkg.nodes - 1) / 2) : 1;
-
-      let currentId = uid;
-      let loopDepth = 0;
-      const MAX_LOOP_DEPTH = 1000;
-      while (loopDepth < MAX_LOOP_DEPTH) {
-        loopDepth++;
-        const { data: currentProfile, error } = await supabase
-          .from('profiles')
-          .select('parent_id, side')
-          .eq('id', currentId)
-          .single();
-        
-        if (error || !currentProfile || !currentProfile.parent_id) break;
-
-        const parentId = currentProfile.parent_id;
-        const side = currentProfile.side;
-
-        const { data: parentProfile } = await supabase
-          .from('profiles')
-          .select('left_business, right_business, left_count, right_count, team_size, matching_volume, matched_pairs')
-          .eq('id', parentId)
-          .single();
-
-        if (parentProfile) {
-          const updateData: any = {};
-          const newTeamSize = { 
-            left: Number(parentProfile.left_count ?? parentProfile.team_size?.left ?? 0),
-            right: Number(parentProfile.right_count ?? parentProfile.team_size?.right ?? 0)
-          };
-          const matchingVolume = parentProfile.matching_volume || { left: 0, right: 0 };
-          let newMatchedPairs = parentProfile.matched_pairs || 0;
-          let matchingIncomeToAdd = 0;
-
-          if (side === 'LEFT') {
-            updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
-            updateData.left_count = (Number(parentProfile.left_count) || 0) + rankUnitsToAdd;
-            newTeamSize.left += rankUnitsToAdd;
-            matchingVolume.left += amount;
-          } else if (side === 'RIGHT') {
-            updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
-            updateData.right_count = (Number(parentProfile.right_count) || 0) + rankUnitsToAdd;
-            newTeamSize.right += rankUnitsToAdd;
-            matchingVolume.right += amount;
-          }
-          
-          // Calculate matching income (10% of matched volume)
-          const matchedAmount = Math.min(matchingVolume.left, matchingVolume.right);
-          if (matchedAmount > 0) {
-            matchingIncomeToAdd = matchedAmount * 0.10;
-            matchingVolume.left -= matchedAmount;
-            matchingVolume.right -= matchedAmount;
-            newMatchedPairs += matchedAmount;
-          }
-
-          updateData.team_size = newTeamSize;
-          updateData.matching_volume = matchingVolume;
-          updateData.matched_pairs = newMatchedPairs;
-
-          if (isAdmin) {
-            try {
-              await this.adminQuery('profiles', 'update', updateData, { id: parentId });
-            } catch (error) {
-              console.error('Failed to update parent profile via admin query:', error);
-            }
-          } else {
-            await supabase
-              .from('profiles')
-              .update(updateData)
-              .eq('id', parentId);
-          }
-          
-          if (matchingIncomeToAdd > 0) {
-            await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
-          }
-
-          // Check for rank update for parent
-          await this.checkAndUpdateRank(parentId);
+      // 6. Update Team Business & Team Size up the tree
+      try {
+        const { error: rpcErr } = await supabase.rpc('activate_package', { 
+          p_user_id: uid, 
+          p_amount: amount 
+        });
+        if (rpcErr) {
+          console.warn('Error calling activate_package RPC:', rpcErr);
         }
-
-        currentId = parentId;
+      } catch (err) {
+        console.error('Failed to call activate_package RPC:', err);
       }
 
-      // 6. Log activation payment
+      if (isFirstActivation) {
+        let currentId = uid;
+        let loopDepth = 0;
+        const MAX_LOOP_DEPTH = 1000;
+        
+        while (loopDepth < MAX_LOOP_DEPTH) {
+          loopDepth++;
+          const { data: currentProfile, error } = await supabase
+            .from('profiles')
+            .select('parent_id, side')
+            .eq('id', currentId)
+            .single();
+          
+          if (error || !currentProfile || !currentProfile.parent_id) break;
+
+          const parentId = currentProfile.parent_id;
+          const side = currentProfile.side;
+
+          const { data: parentProfile } = await supabase
+            .from('profiles')
+            .select('left_business, right_business, left_count, right_count, team_size, matched_pairs')
+            .eq('id', parentId)
+            .single();
+
+          if (parentProfile) {
+            const updateData: any = {};
+            let leftCount = Number(parentProfile.left_count) || 0;
+            let rightCount = Number(parentProfile.right_count) || 0;
+            let paidPairs = Number(parentProfile.matched_pairs) || 0;
+            
+            const newTeamSize = { 
+              left: Number(parentProfile.team_size?.left ?? leftCount),
+              right: Number(parentProfile.team_size?.right ?? rightCount)
+            };
+
+            if (side === 'LEFT') {
+              updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
+              leftCount += 1;
+              updateData.left_count = leftCount;
+              newTeamSize.left += 1;
+            } else if (side === 'RIGHT') {
+              updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
+              rightCount += 1;
+              updateData.right_count = rightCount;
+              newTeamSize.right += 1;
+            }
+            
+            updateData.team_size = newTeamSize;
+            
+            const totalPairs = Math.min(leftCount, rightCount);
+            const newPairs = totalPairs - paidPairs;
+            
+            let matchingIncomeToAdd = 0;
+            if (newPairs > 0) {
+              matchingIncomeToAdd = newPairs * 5;
+              updateData.matched_pairs = totalPairs;
+            }
+
+            await this.adminQuery('profiles', 'update', updateData, { id: parentId });
+            
+            if (matchingIncomeToAdd > 0) {
+              await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
+            }
+            await this.checkAndUpdateRank(parentId);
+          }
+          currentId = parentId;
+        }
+      }
+
+      // 7. Log activation payment
       const paymentData = {
         uid: uid,
         amount: finalAmount,
@@ -900,95 +798,99 @@ export const supabaseService = {
         status: 'finished',
         currency: 'usdtbsc'
       };
-
-      if (isAdmin) {
-        try {
-          await this.adminQuery('payments', 'insert', paymentData);
-        } catch (error) {
-          console.error('Failed to log payment via admin query:', error);
-        }
-      } else {
-        await supabase.from('payments').insert(paymentData);
-      }
+      await this.adminQuery('payments', 'insert', paymentData);
 
       // Final rank check for the user themselves
       await this.checkAndUpdateRank(uid);
 
       return { success: true };
     } catch (error: any) {
-      console.error('Error in activatePackage:', error);
+      console.error('Error in activatePackage fallback:', error);
       throw error;
     }
   },
 
   async adminQuery(table: string, operation: 'insert' | 'update' | 'delete', data?: any, match?: Record<string, any>) {
-    const currentUser = this.getCurrentUser();
-    let token = '';
-    
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (sessionData.session?.access_token) {
-      token = sessionData.session.access_token;
-    } else if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
-      token = 'CORE_SECURE_999';
+    try {
+      console.log(`adminQuery: Executing ${operation} on ${table} via API`);
+      
+      const response = await fetch('/api/admin-query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': 'CORE_SECURE_999'
+        },
+        body: JSON.stringify({ table, operation, data, match })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API error: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error(`Error in adminQuery (${operation} on ${table}):`, error);
+      throw error;
     }
-
-    if (!token) {
-      throw new Error("No active session found. Please log in again.");
-    }
-
-    const result = await apiFetch('/api/admin/query', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ table, operation, data, match }),
-    });
-
-    return result;
   },
 
   async addFunds(uid: string, amount: number) {
     try {
-      let { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      console.log('addFunds: getSession result:', { session: !!session, error: sessionError });
+      console.log(`addFunds: Directly adding ${amount} funds to ${uid}`);
 
-      if (!session) {
-        console.log('addFunds: No active session found, attempting refresh...');
-        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError || !refreshedSession) {
-          console.error('addFunds: Failed to refresh session:', refreshError || 'Auth session missing!');
-          
-          // Fallback for hardcoded admin
-          const currentUser = this.getCurrentUser();
-          if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
-            console.log('addFunds: Using hardcoded admin secret as token');
-            session = { access_token: 'CORE_SECURE_999' } as any;
-          } else {
-            throw new Error('No active session found. Please log in again.');
-          }
-        } else {
-          session = refreshedSession;
-        }
-      }
-      
-      if (!session) {
-        throw new Error('No active session found. Please log in again.');
+      // 1. Get the user's current profile to update their balance
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('wallet_balance, deposit_wallet, wallets')
+        .eq('id', uid)
+        .single();
+
+      if (profileError || !profile) {
+        throw new Error('User profile not found');
       }
 
-      const token = session.access_token;
+      // 2. Calculate new balance
+      const currentBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
+      const newBalance = currentBalance + amount;
 
-      console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}, token length: ${token.length}`);
-      
-      const result = await apiFetch('/api/admin/query', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ user_id: uid, amount }),
-      });
+      // Update wallets object if it exists
+      const newWallets = profile.wallets || {};
+      newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+      newWallets.master.balance = newBalance;
+
+      // 3. Update the profile
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ 
+          wallet_balance: newBalance,
+          deposit_wallet: newBalance,
+          wallets: newWallets
+        })
+        .eq('id', uid);
+
+      if (updateError) {
+        throw new Error(`Failed to update balance: ${updateError.message}`);
+      }
+
+      // 4. Log the transaction in the payments table
+      const { error: paymentError } = await supabase
+        .from('payments')
+        .insert({
+          uid: uid,
+          amount: amount,
+          type: 'admin_add',
+          method: 'INTERNAL',
+          description: 'Admin added funds',
+          status: 'finished',
+          currency: 'usdtbsc'
+        });
+
+      if (paymentError) {
+        console.error('Failed to log payment transaction:', paymentError);
+        // We don't throw here because the balance was already updated
+      }
 
       console.log('addFunds: Successfully added funds');
       return true;
@@ -998,38 +900,38 @@ export const supabaseService = {
     }
   },
 
-  async setupAdmin(secret: string) {
-    try {
-      const data = await apiFetch('/api/admin/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret })
-      });
-      return data;
-    } catch (error) {
-      console.error('Error in setupAdmin:', error);
-      throw error;
-    }
-  },
-
   // Daily and Weekly Payout System
   async processDailyPayouts() {
     try {
-      // 1. Fetch all active users
-      const { data: users, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .gt('active_package', 0);
-
-      if (error) throw error;
-
-      for (const user of users) {
-        // Always check rank for active users
-        if (user.active_package > 0) {
-          await this.checkAndUpdateRank(user.id);
-        }
+      console.log('Processing daily payouts...');
+      
+      // 1. Process Daily Yield (ROI) and Direct Referral Yield
+      const { error: yieldError } = await supabase.rpc('process_daily_yield');
+      if (yieldError) {
+        console.error('Error processing daily yield:', yieldError);
+        throw yieldError;
       }
 
+      // 2. Process Binary Matching Income
+      const { error: matchingError } = await supabase.rpc('process_binary_matching');
+      if (matchingError) {
+        console.error('Error processing binary matching:', matchingError);
+        throw matchingError;
+      }
+
+      // 3. Update Ranks for all active users
+      const { data: users, error: usersError } = await supabase
+        .from('profiles')
+        .select('id')
+        .gt('active_package', 0);
+
+      if (usersError) throw usersError;
+
+      for (const user of users) {
+        await this.checkAndUpdateRank(user.id);
+      }
+
+      console.log('Daily payouts processed successfully');
       return { success: true };
     } catch (error: any) {
       console.error('Error in processDailyPayouts:', error);
@@ -1064,16 +966,56 @@ export const supabaseService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
-    const { data, error } = await supabase.rpc('claim_wallet', {
-      p_user_id: user.id,
-      p_wallet_key: walletKey
-    });
+    const profile = await this.getUserProfile(user.id);
+    if (!profile) throw new Error('Profile not found');
+
+    const wallets = profile.wallets || {};
+    const wallet = wallets[walletKey];
+    if (!wallet || wallet.balance <= 0) {
+      throw new Error('Insufficient balance to claim');
+    }
+
+    const amountToClaim = wallet.balance;
+    const newWallets = { ...wallets };
+    
+    // Reset the claimed wallet balance
+    newWallets[walletKey] = { ...wallet, balance: 0 };
+    
+    // Add to master wallet
+    newWallets['master'] = newWallets['master'] || { balance: 0, currency: 'USDT' };
+    newWallets['master'].balance += amountToClaim;
+
+    // Update the profile
+    const updateData: any = {
+      wallets: newWallets
+    };
+
+    // Also update the flat columns for master balance
+    const currentMasterBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? 0);
+    updateData.wallet_balance = currentMasterBalance + amountToClaim;
+    updateData.deposit_wallet = currentMasterBalance + amountToClaim;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', user.id);
 
     if (error) throw error;
-    if (data && !data.success) {
-      throw new Error(data.message || 'Failed to claim wallet');
-    }
-    return data;
+
+    // Log the transaction
+    const paymentData = {
+      uid: user.id,
+      amount: amountToClaim,
+      type: 'wallet_claim',
+      method: 'INTERNAL',
+      description: `Claimed ${amountToClaim} from ${walletKey} to master wallet`,
+      status: 'finished',
+      currency: 'usdtbsc'
+    };
+
+    await supabase.from('payments').insert(paymentData);
+
+    return { success: true, amount: amountToClaim };
   },
 
   async processWeeklyIncome() {
@@ -1211,13 +1153,10 @@ export const supabaseService = {
     // CRITICAL: Without ID activation (active_package), rank should not unlock
     if (!profile.active_package || profile.active_package < 50) {
       if (profile.rank > 1) {
-        if (isAdmin) {
-          try {
-            await this.adminQuery('profiles', 'update', { rank: 1 }, { id: uid });
-          } catch (error) {
-            console.error('Failed to reset rank via admin query:', error);
-          }
-        } else {
+        try {
+          await this.adminQuery('profiles', 'update', { rank: 1 }, { id: uid });
+        } catch (error) {
+          console.error('Failed to reset rank via admin query:', error);
           await supabase.from('profiles').update({ rank: 1 }).eq('id', uid);
         }
       }
@@ -1247,17 +1186,11 @@ export const supabaseService = {
         }
       }
 
-      if (isAdmin) {
-        try {
-          await this.adminQuery('profiles', 'update', { rank: newRank }, { id: uid });
-        } catch (error) {
-          console.error('Failed to update rank via admin query:', error);
-        }
-      } else {
-        await supabase
-          .from('profiles')
-          .update({ rank: newRank })
-          .eq('id', uid);
+      try {
+        await this.adminQuery('profiles', 'update', { rank: newRank }, { id: uid });
+      } catch (error) {
+        console.error('Failed to update rank via admin query:', error);
+        await supabase.from('profiles').update({ rank: newRank }).eq('id', uid);
       }
       
       console.log(`User ${uid} promoted to Rank ${newRank}`);
@@ -1267,39 +1200,12 @@ export const supabaseService = {
   // Payments
   async getPayments(uid: string) {
     try {
-      if (uid === 'all') {
-        // Try direct query first (works if RLS allows admin)
-        const { data: directData, error: directError } = await supabase
-          .from('payments')
-          .select('*')
-          .order('created_at', { ascending: false });
-          
-        if (!directError && directData && directData.length > 0) {
-          return directData;
-        }
-
-        let token = localStorage.getItem('arowin_admin_token') || 'CORE_SECURE_999';
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData.session?.access_token) {
-           token = sessionData.session.access_token;
-        }
-        
-        const data = await apiFetch('/api/admin/query', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            table: 'payments',
-            operation: 'select',
-            order: { column: 'created_at', ascending: false }
-          })
-        });
-        
-        return data || [];
+      let query = supabase.from('payments').select('*');
+      
+      if (uid !== 'all') {
+        query = query.eq('uid', uid);
       }
-
-      let query = supabase.from('payments').select('*').eq('uid', uid);
+      
       const { data, error } = await query.order('created_at', { ascending: false });
       if (error) {
         if (error.code === 'PGRST204' || error.code === 'PGRST205') {
@@ -1351,61 +1257,25 @@ export const supabaseService = {
         data = updateData;
       }
 
-      // If a deposit is approved, update the user's balance
-      if (payment.type === 'deposit' && (status === 'completed' || status === 'finished') && payment.status !== 'completed' && payment.status !== 'finished') {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('wallet_balance, wallets')
-          .eq('id', payment.uid)
-          .single();
-        
-        if (!profileError && profile) {
-          const numericAmount = Number(payment.amount);
-          const newBalance = (Number(profile.wallet_balance) || 0) + numericAmount;
-          
-          let newWallets = profile.wallets || {};
-          if (typeof newWallets === 'string') {
-            try { newWallets = JSON.parse(newWallets); } catch (e) { newWallets = {}; }
-          }
-          
-          if (!newWallets.master) newWallets.master = { balance: 0, currency: 'USDT' };
-          newWallets.master.balance = (Number(newWallets.master.balance) || 0) + numericAmount;
-
-          const updateProfileData = { 
-            wallet_balance: newBalance,
-            wallets: newWallets
-          };
-
-          if (isAdmin) {
-            try {
-              await this.adminQuery('profiles', 'update', updateProfileData, { id: payment.uid });
-            } catch (error) {
-              console.error('Failed to update user balance via admin query:', error);
-            }
-          } else {
-            await supabase
-              .from('profiles')
-              .update(updateProfileData)
-              .eq('id', payment.uid);
-          }
-        }
-      }
-
       // If a withdrawal is rejected, refund the user
-      if (payment.type === 'withdrawal' && status === 'rejected' && payment.status !== 'rejected') {
+      if (payment.type === 'withdrawal' && status === 'rejected') {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('wallet_balance, wallets')
           .eq('id', payment.uid)
-          .single();
+          .single() as any;
         
         if (!profileError && profile) {
+          const currentMasterBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
+          const newMasterBalance = currentMasterBalance + payment.amount;
+
           const newWallets = { ...profile.wallets };
           newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
-          newWallets.master.balance += payment.amount;
+          newWallets.master.balance = newMasterBalance;
 
           const updateProfileData = { 
-            wallet_balance: (Number(profile.wallet_balance) || 0) + payment.amount,
+            wallet_balance: newMasterBalance,
+            deposit_wallet: newMasterBalance,
             wallets: newWallets
           };
 
@@ -1436,27 +1306,63 @@ export const supabaseService = {
       const profile = await this.getUserProfile(uid);
       if (!profile) throw new Error('User not found');
 
-      const balance = Number(profile.wallet_balance || 0);
+      const balance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
       if (balance < amount) {
         throw new Error('Insufficient balance');
       }
 
+      const newBalance = balance - amount;
+
       // 1. Deduct balance immediately (to prevent double spending)
       const newWallets = { ...profile.wallets };
       newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
-      newWallets.master.balance -= amount;
+      newWallets.master.balance = newBalance;
 
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ 
-          wallet_balance: balance - amount,
+          wallet_balance: newBalance,
+          deposit_wallet: newBalance,
           wallets: newWallets
         })
         .eq('id', uid);
 
       if (updateError) throw updateError;
 
-      return { success: true };
+      // 2. Create a pending withdrawal record
+      const numericAmount = Number(amount);
+      if (isNaN(numericAmount) || numericAmount <= 0) {
+        throw new Error('Invalid withdrawal amount');
+      }
+
+      const { data, error } = await supabase
+        .from('payments')
+        .insert({
+          uid,
+          amount: numericAmount,
+          type: 'withdrawal',
+          status: 'pending',
+          method: 'USDT (BEP20)',
+          order_description: `Withdrawal to ${address.substring(0, 6)}...${address.substring(address.length - 4)}`,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // Refund if insertion fails
+        await supabase
+          .from('profiles')
+          .update({ 
+            wallet_balance: balance,
+            deposit_wallet: balance,
+            wallets: profile.wallets
+          })
+          .eq('id', uid);
+        throw error;
+      }
+
+      return data;
     } catch (error) {
       console.error('Error creating withdrawal:', error);
       throw error;
@@ -1507,25 +1413,34 @@ export const supabaseService = {
       const parentId = profile.parent_id;
       const side = profile.side;
       
-      // Fetch parent's current team size
+      // Fetch parent's current team size and counts
       const { data: parent, error: parentError } = await supabase
         .from('profiles')
-        .select('team_size')
+        .select('team_size, left_count, right_count')
         .eq('id', parentId)
         .single();
         
       if (parentError || !parent) break;
       
       const newTeamSize = { 
-        left: parent.team_size?.left || 0, 
-        right: parent.team_size?.right || 0 
+        left: Number(parent.team_size?.left ?? parent.left_count ?? 0), 
+        right: Number(parent.team_size?.right ?? parent.right_count ?? 0) 
       };
-      if (side === 'LEFT') newTeamSize.left += 1;
-      else newTeamSize.right += 1;
+      
+      const updateData: any = {};
+      if (side === 'LEFT') {
+        newTeamSize.left += 1;
+        updateData.left_count = newTeamSize.left;
+      } else {
+        newTeamSize.right += 1;
+        updateData.right_count = newTeamSize.right;
+      }
+      
+      updateData.team_size = newTeamSize;
       
       await supabase
         .from('profiles')
-        .update({ team_size: newTeamSize })
+        .update(updateData)
         .eq('id', parentId);
         
       currentId = parentId;
@@ -1533,7 +1448,7 @@ export const supabaseService = {
   },
 
   async addIncome(uid: string, amount: number, type: string) {
-    const profile = await this.getUserProfile(uid);
+    const profile = await this.getUserProfile(uid) as any;
     if (!profile) return;
 
     let payableAmount = amount;
@@ -1548,24 +1463,26 @@ export const supabaseService = {
     else if (type === 'team_collection') walletKey = 'yield'; 
     else if (type === 'incentive_accrual') walletKey = 'incentive';
 
-    // ALWAYS add to master wallet so user can withdraw
-    newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
-    newWallets.master.balance += payableAmount;
-
-    // ALSO update the specific wallet tally
-    if (walletKey !== 'master') {
-      newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
+    newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
+    
+    if (walletKey === 'master') {
+      const currentMasterBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
+      newWallets[walletKey].balance = currentMasterBalance + payableAmount;
+    } else {
       newWallets[walletKey].balance += payableAmount;
     }
 
     const updateData: any = {
       wallets: newWallets,
-      total_income: (Number(profile.total_income) || 0) + payableAmount,
-      wallet_balance: (Number(profile.wallet_balance) || 0) + payableAmount
+      total_income: (Number(profile.total_income) || 0) + payableAmount
     };
 
     // Keep specific income columns in sync
-    if (walletKey === 'referral') {
+    if (walletKey === 'master') {
+      const newMasterBalance = newWallets[walletKey].balance;
+      updateData.wallet_balance = newMasterBalance;
+      updateData.deposit_wallet = newMasterBalance;
+    } else if (walletKey === 'referral') {
       updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
     } else if (walletKey === 'matching') {
       updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
@@ -1583,17 +1500,14 @@ export const supabaseService = {
     const currentUser = this.getCurrentUser();
     const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
 
-    if (isAdmin) {
-      try {
-        await this.adminQuery('profiles', 'update', updateData, { id: uid });
-      } catch (updateError) {
-        console.error('Failed to update income via admin query:', updateError);
-      }
-    } else {
-      await supabase
-        .from('profiles')
-        .update(updateData)
-        .eq('id', uid);
+    try {
+      // Use adminQuery (which now calls the backend API) for all income updates
+      // This ensures we bypass client-side RLS restrictions
+      await this.adminQuery('profiles', 'update', updateData, { id: uid });
+    } catch (updateError) {
+      console.error('Failed to update income via admin query:', updateError);
+      // Fallback to standard update as last resort
+      await supabase.from('profiles').update(updateData).eq('id', uid);
     }
 
     // Log transaction via payments table
@@ -1742,9 +1656,121 @@ export const supabaseService = {
   },
 
   async rebuildNetwork() {
-    const { error } = await supabase.rpc('rebuild_network');
-    if (error) throw error;
-    return true;
+    try {
+      console.log('Starting network rebuild...');
+      
+      // 1. Fetch all profiles
+      const { data: allProfiles, error: fetchError } = await supabase
+        .from('profiles')
+        .select('id, parent_id, side, active_package, matched_pairs');
+      
+      if (fetchError || !allProfiles) throw fetchError || new Error('No profiles found');
+
+      // 2. Reset all counts and business volumes
+      const resetData = {
+        left_count: 0,
+        right_count: 0,
+        left_business: 0,
+        right_business: 0,
+        team_size: { left: 0, right: 0 },
+        matching_volume: { left: 0, right: 0 }
+      };
+
+      // Perform reset in batches to avoid timeout
+      const batchSize = 50;
+      for (let i = 0; i < allProfiles.length; i += batchSize) {
+        const batch = allProfiles.slice(i, i + batchSize);
+        await Promise.all(batch.map(p => 
+          supabase.from('profiles').update(resetData).eq('id', p.id)
+        ));
+      }
+
+      // 3. Recalculate everything by iterating through all active users
+      // We only count users with an active package for business/income
+      // But we count ALL users for team size
+      for (const user of allProfiles) {
+        let currentId = user.id;
+        let loopDepth = 0;
+        const MAX_LOOP_DEPTH = 1000;
+
+        while (loopDepth < MAX_LOOP_DEPTH) {
+          loopDepth++;
+          const currentProfile = allProfiles.find(p => p.id === currentId);
+          if (!currentProfile || !currentProfile.parent_id) break;
+
+          const parentId = currentProfile.parent_id;
+          const side = currentProfile.side;
+          const parent = allProfiles.find(p => p.id === parentId);
+
+          if (parent) {
+            // Update parent's counts in our local tracking (or just update DB directly)
+            const updateData: any = {};
+            
+            // Fetch current parent state from DB to ensure we have latest increments
+            const { data: latestParent } = await supabase
+              .from('profiles')
+              .select('left_count, right_count, left_business, right_business, team_size, matching_volume')
+              .eq('id', parentId)
+              .single();
+
+            if (latestParent) {
+              const newTeamSize = { 
+                left: Number(latestParent.team_size?.left || 0), 
+                right: Number(latestParent.team_size?.right || 0) 
+              };
+              const newMatchingVolume = {
+                left: Number(latestParent.matching_volume?.left || 0),
+                right: Number(latestParent.matching_volume?.right || 0)
+              };
+              let leftCount = Number(latestParent.left_count) || 0;
+              let rightCount = Number(latestParent.right_count) || 0;
+              let leftBusiness = Number(latestParent.left_business) || 0;
+              let rightBusiness = Number(latestParent.right_business) || 0;
+
+              // Increment counts (ALL users)
+              if (side === 'LEFT') {
+                leftCount += 1;
+                newTeamSize.left += 1;
+              } else {
+                rightCount += 1;
+                newTeamSize.right += 1;
+              }
+
+              // Increment business (ONLY active users)
+              if (user.active_package && user.active_package > 0) {
+                if (side === 'LEFT') {
+                  leftBusiness += user.active_package;
+                  newMatchingVolume.left += 1;
+                } else {
+                  rightBusiness += user.active_package;
+                  newMatchingVolume.right += 1;
+                }
+              }
+
+              await supabase
+                .from('profiles')
+                .update({
+                  left_count: leftCount,
+                  right_count: rightCount,
+                  left_business: leftBusiness,
+                  right_business: rightBusiness,
+                  team_size: newTeamSize,
+                  matching_volume: newMatchingVolume
+                })
+                .eq('id', parentId);
+            }
+          }
+
+          currentId = parentId;
+        }
+      }
+
+      console.log('Network rebuild completed successfully');
+      return true;
+    } catch (err) {
+      console.error('Error rebuilding network:', err);
+      throw err;
+    }
   },
 
   async getBinaryChildren(parentId: string, parentPath: string) {
@@ -1757,7 +1783,7 @@ export const supabaseService = {
 
     const nodes: Record<string, any> = {};
     children?.forEach(child => {
-      const childPath = `${parentPath}-${(child.side || 'LEFT').toLowerCase()}`;
+      const childPath = `${parentPath}-${child.side.toLowerCase()}`;
       nodes[childPath] = {
         id: child.operator_id,
         name: child.name,
@@ -1924,6 +1950,21 @@ export const supabaseService = {
       .single();
     if (error) return null;
     return data;
+  },
+
+  formatError(error: any): string {
+    const message = error?.message || '';
+    if (message.includes('Invalid Operator ID') || message.includes('Invalid Email')) {
+      return 'Invalid Operator ID or Email. Please check and try again.';
+    }
+    if (message.includes('Invalid Password')) return 'Invalid Password. Please check and try again.';
+    if (message.includes('Database error saving new user')) {
+      return 'Database error saving new user. This usually means a Supabase trigger or RLS policy is failing. Ensure your "profiles" table has all required columns and correct RLS policies.';
+    }
+    if (message.includes('duplicate key value violates unique constraint')) {
+      return 'This user or operator ID already exists. Please try another email or check your sponsor ID.';
+    }
+    return message || 'An unexpected error occurred.';
   },
 
   // Support Tickets

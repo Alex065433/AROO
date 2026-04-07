@@ -6,7 +6,7 @@ const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function check() {
-  const { data, error } = await supabase.rpc('get_rpc_definition', { func_name: 'process_matching' });
+  const { data, error } = await supabase.rpc('get_rpc_definition', { func_name: 'claim_wallet' });
   console.log('RPC result:', data, error);
 }
 check();

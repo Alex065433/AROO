@@ -20,7 +20,6 @@ const AdminLayout: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     { name: 'Transactions', path: '/admin/transactions', icon: Activity },
     { name: 'Settings', path: '/admin/settings', icon: Settings },
     { name: 'Admin Logs', path: '/admin/logs', icon: Terminal },
-    { name: 'User Portal', path: '/dashboard', icon: Database },
   ];
 
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -76,20 +75,13 @@ const AdminLayout: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
               <Menu size={20} />
             </button>
             
-            <div className="flex items-center gap-3">
-              <div className="px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-full hidden sm:flex items-center gap-2">
-                <ShieldCheck size={12} className="text-blue-500" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">Admin Portal</span>
-              </div>
-              <div className="h-4 w-px bg-slate-200 dark:bg-white/10 hidden sm:block" />
-              <div className="relative max-w-md w-full hidden lg:block">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input 
-                  type="text" 
-                  placeholder="Search transactions, users, logs..." 
-                  className="w-full bg-slate-100 dark:bg-white/5 border-none rounded-xl pl-12 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white placeholder:text-slate-500"
-                />
-              </div>
+            <div className="relative max-w-md w-full hidden lg:block">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Search transactions, users, logs..." 
+                className="w-full bg-slate-100 dark:bg-white/5 border-none rounded-xl pl-12 pr-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white placeholder:text-slate-500"
+              />
             </div>
           </div>
 

@@ -2,7 +2,7 @@
 import React from 'react';
 import { 
   Terminal, Shield, User, Globe, 
-  Clock, AlertCircle, CheckCircle2
+  Clock, AlertCircle, Info, CheckCircle2
 } from 'lucide-react';
 
 const AdminLogs: React.FC = () => {
