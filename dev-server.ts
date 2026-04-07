@@ -30,7 +30,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Debug Endpoints
-app.get("/ping", (req, res) => res.status(200).send("pong"));
+app.get("/ping", (req, res) => res.status(200).json({ message: "pong" }));
 app.get("/api/ping", (req, res) => res.status(200).json({ message: "pong", env: process.env.NODE_ENV }));
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
@@ -68,7 +68,7 @@ apiRouter.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), env: process.env.NODE_ENV });
 });
 
-apiRouter.post("/v1/payment/create", async (req, res) => {
+const createPaymentHandler = async (req: any, res: any) => {
   const { amount, currency, uid, order_description, orderDescription } = req.body;
   const finalDescription = order_description || orderDescription || 'Deposit';
   
@@ -103,7 +103,7 @@ apiRouter.post("/v1/payment/create", async (req, res) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('[API] NowPayments API error:', errorText);
-        throw new Error(`NowPayments API error: ${response.status} ${response.statusText}`);
+        return res.status(response.status).json({ error: `NowPayments API error: ${response.status}`, details: errorText });
       }
 
       const data = await response.json();
@@ -159,7 +159,12 @@ apiRouter.post("/v1/payment/create", async (req, res) => {
     console.error('[API CRITICAL] Transaction creation error:', error.message);
     return res.status(500).json({ error: 'Internal server error during transaction creation', details: error.message });
   }
-});
+};
+
+apiRouter.post("/v1/payment/create", createPaymentHandler);
+
+// Alias for /v1/tx/new to /v1/payment/create for backward compatibility
+apiRouter.post("/v1/tx/new", createPaymentHandler);
 
 apiRouter.post("/v1/tx/ipn", async (req, res) => {
   console.log('[API] Received IPN from NowPayments:', req.body);
@@ -389,6 +394,19 @@ apiRouter.all("*", (req, res) => {
 
 // Mount API Router
 app.use("/api", apiRouter);
+
+// Global 404 handler for the entire app - ensures JSON for /api/ routes
+app.use((req, res, next) => {
+  if (req.url.startsWith('/api/')) {
+    console.log(`[APP 404] ${req.method} ${req.url}`);
+    return res.status(404).json({ 
+      error: "Not Found", 
+      message: `The requested API route ${req.method} ${req.url} was not found on this server.`,
+      path: req.url
+    });
+  }
+  next();
+});
 
 async function startServer() {
   const isProd = process.env.NODE_ENV === "production";

@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { PACKAGES, RANKS, MOCK_USER } from '../constants';
+import { apiFetch } from '../src/lib/api';
 
 export interface Ticket {
   id?: string;
@@ -96,23 +97,55 @@ export const supabaseService = {
         console.error(`Auth error for ${email}:`, authError);
         
         // Fallback: try internal email if real email failed (for legacy/internal accounts)
-        // BUT ONLY if it's not already an email
-        if (!cleanId.includes('@')) {
-          const internalEmail = `${cleanId.toLowerCase()}@arowin.internal`;
-          console.log(`Retrying with internal email: ${internalEmail}`);
-          const { data: retryData, error: retryError } = await this.withTimeout(
-            supabase.auth.signInWithPassword({ email: internalEmail, password: secret })
-          );
-          if (retryError) {
+        // This handles cases where user enters email but Auth uses arw-XXXXXX@arowin.internal
+        const isEmailInput = cleanId.includes('@');
+        
+        if (isEmailInput || !cleanId.includes('@')) {
+          let internalEmailsToTry: string[] = [];
+          
+          if (!isEmailInput) {
+            internalEmailsToTry.push(`${cleanId.toLowerCase()}@arowin.internal`);
+          } else {
+            // It's an email input, find profiles with this email
+            try {
+              const { data: profiles, error: profileError } = await this.withTimeout(
+                supabase.from("profiles").select("operator_id").eq("email", cleanId),
+                10000
+              );
+              
+              if (profileError) throw profileError;
+              
+              if (profiles && profiles.length > 0) {
+                if (profiles.length > 1) {
+                  // Multiple profiles found for this email, tell user to use Operator ID
+                  throw new Error(`Multiple accounts found for ${cleanId}. Please use your Operator ID (e.g. ARW-XXXXXX) to log in.`);
+                }
+                internalEmailsToTry.push(`${profiles[0].operator_id.toLowerCase()}@arowin.internal`);
+              }
+            } catch (e: any) {
+              if (e.message?.includes('Multiple accounts')) throw e;
+              console.error('Error finding profiles for email:', e);
+            }
+          }
+
+          for (const internalEmail of internalEmailsToTry) {
+            console.log(`Retrying with internal email: ${internalEmail}`);
+            const { data: retryData, error: retryError } = await this.withTimeout(
+              supabase.auth.signInWithPassword({ email: internalEmail, password: secret })
+            );
+            
+            if (!retryError) {
+              // Trigger background fetch
+              this.getUserProfile(retryData.user.id).catch(console.error);
+              return retryData;
+            }
+            
             if (retryError.message?.toLowerCase().includes('invalid login credentials')) {
+              // If it's an email input, we already tried the real email and it failed.
+              // If the internal email also fails with invalid credentials, it's a final failure.
               throw new Error(`Authentication Failed: Invalid credentials for identity "${cleanId}". Please check your password.`);
             }
-            throw retryError;
           }
-          
-          // Trigger background fetch
-          this.getUserProfile(retryData.user.id).catch(console.error);
-          return retryData;
         }
         
         if (authError.message?.toLowerCase().includes('invalid login credentials')) {
@@ -925,7 +958,7 @@ export const supabaseService = {
       throw new Error("No active session found. Please log in again.");
     }
 
-    const response = await fetch('/api/admin/query', {
+    const result = await apiFetch('/api/admin/query', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -933,11 +966,6 @@ export const supabaseService = {
       },
       body: JSON.stringify({ table, operation, data, match }),
     });
-
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || `Failed to execute admin query on ${table}`);
-    }
 
     return result;
   },
@@ -975,7 +1003,7 @@ export const supabaseService = {
 
       console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}, token length: ${token.length}`);
       
-      const response = await fetch('/api/admin/query', {
+      const result = await apiFetch('/api/admin/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -984,21 +1012,6 @@ export const supabaseService = {
         body: JSON.stringify({ user_id: uid, amount }),
       });
 
-      const responseText = await response.text();
-      let result;
-      
-      try {
-        result = JSON.parse(responseText);
-      } catch (e) {
-        console.error('addFunds: Server returned non-JSON response:', responseText);
-        throw new Error(`Server returned an invalid response (Status: ${response.status}). This usually means the API route was not found or the server crashed. Check console for details.`);
-      }
-
-      if (!response.ok) {
-        console.error('addFunds: API returned error:', result);
-        throw new Error(result.error || `Failed to add funds (Status: ${response.status})`);
-      }
-      
       console.log('addFunds: Successfully added funds');
       return true;
     } catch (error) {
@@ -1009,13 +1022,11 @@ export const supabaseService = {
 
   async setupAdmin(secret: string) {
     try {
-      const response = await fetch('/api/admin/setup', {
+      const data = await apiFetch('/api/admin/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secret })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to setup admin');
       return data;
     } catch (error) {
       console.error('Error in setupAdmin:', error);

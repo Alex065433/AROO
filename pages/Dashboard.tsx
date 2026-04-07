@@ -12,6 +12,7 @@ import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
 import { supabase } from '../services/supabase';
+import { apiFetch } from '../src/lib/api';
 import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
 import { useUser } from '../src/context/UserContext';
 
@@ -278,7 +279,7 @@ const Dashboard: React.FC = () => {
     setIsDepositing(true);
     try {
       console.log('Initiating deposit request to /api/v1/tx/new...');
-      const response = await fetch('/api/v1/tx/new', {
+      const data = await apiFetch('/api/v1/tx/new', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -292,19 +293,6 @@ const Dashboard: React.FC = () => {
         })
       });
       
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('PAYMENT ERROR: Received non-JSON response from server', {
-          status: response.status,
-          statusText: response.statusText,
-          contentType,
-          body: text.substring(0, 500)
-        });
-        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
-      }
-
-      const data = await response.json();
       console.log('Payment data received:', data);
       setPaymentData(data);
       setNotification('Deposit request created successfully!');
@@ -324,15 +312,12 @@ const Dashboard: React.FC = () => {
     if (paymentData && paymentData.payment_status === 'waiting') {
       interval = setInterval(async () => {
         try {
-          const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.payment_status === 'finished' || data.payment_status === 'completed') {
-              setPaymentData((prev: any) => ({ ...prev, payment_status: 'finished' }));
-              setNotification('Payment confirmed! Your balance will be updated shortly.');
-              fetchAllData();
-              clearInterval(interval);
-            }
+          const data = await apiFetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+          if (data.payment_status === 'finished' || data.payment_status === 'completed') {
+            setPaymentData((prev: any) => ({ ...prev, payment_status: 'finished' }));
+            setNotification('Payment confirmed! Your balance will be updated shortly.');
+            fetchAllData();
+            clearInterval(interval);
           }
         } catch (err) {
           console.error('Status check failed:', err);
@@ -381,9 +366,8 @@ const Dashboard: React.FC = () => {
 
     const checkAdminStatus = async () => {
       try {
-        const response = await fetch('/api/health');
-        if (response.ok && isMounted) {
-          const data = await response.json();
+        const data = await apiFetch('/api/health');
+        if (data && isMounted) {
           setAdminStatus(data);
         }
       } catch (err) {
@@ -421,10 +405,8 @@ const Dashboard: React.FC = () => {
     const fetchRates = async () => {
       try {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
-        const response = await fetch('/api/rates/binance');
-        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+        const data = await apiFetch('/api/rates/binance');
         
-        const data = await response.json();
         if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
           if (filtered.length > 0) {

@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
+import { apiFetch } from '../src/lib/api';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
 
@@ -187,7 +188,7 @@ const BinaryTree: React.FC = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch('/api/v1/tx/new', {
+      const data = await apiFetch('/api/v1/tx/new', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -201,13 +202,6 @@ const BinaryTree: React.FC = () => {
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || `Server returned ${response.status}`);
-      }
-
-      const data = await response.json();
-      
       setPaymentData({
         payment_id: data.payment_id,
         pay_address: data.pay_address,

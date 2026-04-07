@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import GlassCard from '../components/GlassCard';
 import { PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
+import { apiFetch } from '../src/lib/api';
 import { supabase } from '../services/supabase';
 import { useUser } from '../src/context/UserContext';
 import { useLocation } from 'react-router-dom';
@@ -79,18 +80,15 @@ const MasterWallet: React.FC = () => {
       statusInterval = setInterval(async () => {
         try {
           console.log(`Polling status for payment ${paymentData.payment_id}...`);
-          const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
-          if (response.ok) {
-            const data = await response.json();
-            if (data.payment_status === 'finished' || data.payment_status === 'partially_paid') {
-              console.log('Payment finished! Refreshing data...');
-              setSuccess(true);
-              setPaymentData(null);
-              fetchTransactions();
-              refreshProfile();
-              clearInterval(statusInterval);
-              setTimeout(() => setSuccess(false), 3000);
-            }
+          const data = await apiFetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+          if (data.payment_status === 'finished' || data.payment_status === 'partially_paid') {
+            console.log('Payment finished! Refreshing data...');
+            setSuccess(true);
+            setPaymentData(null);
+            fetchTransactions();
+            refreshProfile();
+            clearInterval(statusInterval);
+            setTimeout(() => setSuccess(false), 3000);
           }
         } catch (err) {
           console.error('Error polling payment status:', err);
@@ -137,7 +135,7 @@ const MasterWallet: React.FC = () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token || '';
 
-      const response = await fetch('/api/v1/payment/create', {
+      const data = await apiFetch('/api/v1/payment/create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -153,22 +151,6 @@ const MasterWallet: React.FC = () => {
         }),
       });
 
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('PAYMENT ERROR: Received non-JSON response from server', {
-          status: response.status,
-          statusText: response.statusText,
-          contentType,
-          body: text.substring(0, 500)
-        });
-        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
-      }
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create payment');
-      }
       console.log('Payment created successfully:', data);
       
       setPaymentData({
@@ -227,7 +209,7 @@ const MasterWallet: React.FC = () => {
           const { data: sessionData } = await supabase.auth.getSession();
           const token = sessionData.session?.access_token || '';
 
-          const withdrawResponse = await fetch('/api/v1/tx/withdraw', {
+          const withdrawData = await apiFetch('/api/v1/tx/withdraw', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -241,22 +223,6 @@ const MasterWallet: React.FC = () => {
             }),
           });
 
-          const withdrawContentType = withdrawResponse.headers.get('content-type');
-          if (!withdrawContentType || !withdrawContentType.includes('application/json')) {
-            const text = await withdrawResponse.text();
-            console.error('WITHDRAWAL ERROR: Received non-JSON response from server', {
-              status: withdrawResponse.status,
-              statusText: withdrawResponse.statusText,
-              contentType: withdrawContentType,
-              body: text.substring(0, 500)
-            });
-            throw new Error(`Server returned ${withdrawResponse.status} ${withdrawResponse.statusText} (${withdrawContentType || 'no content type'}). Expected JSON.`);
-          }
-
-          const withdrawData = await withdrawResponse.json();
-          if (!withdrawResponse.ok) {
-            throw new Error(withdrawData.error || 'Failed to create withdrawal');
-          }
           console.log('Withdrawal created successfully:', withdrawData);
           
           // Deduct balance in Supabase (the API already created the payment record)
