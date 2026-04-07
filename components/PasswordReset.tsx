@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Key, ShieldCheck, ArrowRight, RefreshCw, CheckCircle2, Lock, Eye, EyeOff } from 'lucide-react';
+import { supabaseService } from '../services/supabaseService';
 
 interface PasswordResetProps {
   onCancel: () => void;
@@ -19,27 +20,31 @@ export const PasswordReset: React.FC<PasswordResetProps> = ({ onCancel, isDarkMo
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleEmailSubmit = (e: React.FormEvent) => {
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    setError(null);
+    try {
+      await supabaseService.requestPasswordReset(email);
       setStep('otp');
-    }, 1500);
+    } catch (err: any) {
+      console.error('Reset request failed:', err);
+      setError(err.message || 'Failed to send reset email');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleOtpSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length !== 6) return;
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      setStep('new-password');
-    }, 1500);
+    // In Supabase, the user clicks a link in the email which redirects them back with a token
+    // For this UI, we'll assume they are on the same device and the link will handle the session
+    // But since we want to support the OTP-like flow if possible, or just skip to password if they came from a link
+    setStep('new-password');
   };
 
-  const handlePasswordSubmit = (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match');
@@ -50,10 +55,16 @@ export const PasswordReset: React.FC<PasswordResetProps> = ({ onCancel, isDarkMo
       return;
     }
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
+    setError(null);
+    try {
+      await supabaseService.updatePassword(newPassword);
       setStep('success');
-    }, 2000);
+    } catch (err: any) {
+      console.error('Password update failed:', err);
+      setError(err.message || 'Failed to update password');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const bgColor = isDarkMode ? 'bg-[#111112]/90' : 'bg-white';

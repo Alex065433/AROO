@@ -52,12 +52,14 @@ export const RANKS: Rank[] = RANK_NAMES.map((name, i) => {
 });
 
 export const MOCK_USER: User = {
-  id: 'ARW-XXXX',
+  id: 'mock-id',
   name: 'Operator',
   email: 'operator@arowintrading.com',
   mobile: '+91 9876543210',
-  sponsorId: 'SPN-001',
-  rank: 4, // Gold in the new system
+  operator_id: 'ARW-XXXX',
+  sponsor_id: 'SPN-001',
+  rank: 4,
+  wallet_balance: 0,
   totalEarnings: 12540.50,
   wallets: {
     master: { balance: 0, currency: 'USDT' },
@@ -69,10 +71,17 @@ export const MOCK_USER: User = {
     rewards: { balance: 0, currency: 'USDT' },
     capping_box: { balance: 0, currency: 'USDT' },
   },
-  teamSize: { left: 22, right: 18 },
-  matchedPairs: 18,
-  daily_income: { date: '2026-03-22', amount: 45.00 },
-  role: 'user' as const
+  team_size: { left: 22, right: 18 },
+  matched_pairs: 18,
+  role: 'user' as const,
+  status: 'active',
+  active_package: 0,
+  created_at: new Date().toISOString(),
+  matching_income: 0,
+  referral_income: 0,
+  rank_bonus_income: 0,
+  yield_income: 0,
+  incentive_income: 0,
 };
 
 export const MOCK_NOTIFICATIONS: Notification[] = [

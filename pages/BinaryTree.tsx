@@ -13,6 +13,7 @@ import {
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
+import { apiFetch } from '../src/lib/api';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
 
@@ -182,19 +183,14 @@ const BinaryTree: React.FC = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch('/api/payments/create', {
+      const data = await apiFetch('create-payment', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount: Number(depositAmount),
-          currency: 'usdtbsc',
-          orderId: `DEP-${Date.now()}`,
-          orderDescription: `Deposit for ${userProfile?.email}`,
-          uid: userProfile?.id
+          user_id: userProfile?.id,
+          currency: 'usdtbsc'
         })
       });
-      if (!response.ok) throw new Error('Failed to create payment');
-      const data = await response.json();
       setPaymentData(data);
     } catch (err: any) {
       setError(err.message);

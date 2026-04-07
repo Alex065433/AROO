@@ -3,6 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import GlassCard from '../components/GlassCard';
 import { MOCK_USER, PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
+import { apiFetch } from '../src/lib/api';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -138,38 +139,16 @@ const MasterWallet: React.FC = () => {
   setError(null);
 
   try {
-    const response = await fetch("/api/payments/create", {
+    const data = await apiFetch("create-payment", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify({
         amount: Number(depositAmount),
-        currency: "usdtbsc",
-        orderId: `DEP-${Date.now()}`,
-        orderDescription: `Wallet Deposit for ${userProfile.id}`,
-        uid: userProfile.id
+        user_id: userProfile.id,
+        currency: "usdtbsc"
       }),
     });
 
-    const contentType = response.headers.get("content-type");
-
-    let data: any;
-
-    // ✅ Safe response parsing
-    if (contentType && contentType.includes("application/json")) {
-      data = await response.json();
-    } else {
-      const text = await response.text();
-      throw new Error(text || "Invalid server response");
-    }
-
     console.log("PAYMENT RESPONSE:", data);
-
-    // ❌ Handle API error
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to create payment");
-    }
 
     // ✅ Display QR and Address instead of redirecting
     if (data.pay_address) {

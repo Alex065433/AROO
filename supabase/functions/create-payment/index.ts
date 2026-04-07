@@ -7,24 +7,24 @@ const nowPaymentsApiKey = Deno.env.get("NOWPAYMENTS_API_KEY");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Max-Age": "86400",
+  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 200, headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
     const supabase = createClient(supabaseUrl!, supabaseServiceRoleKey!);
     const body = await req.json();
-    const { amount, currency, uid, order_description, orderDescription } = body;
-    const finalDescription = order_description || orderDescription || 'Deposit';
+    const { amount, user_id, currency } = body;
+    const uid = user_id || body.uid; // Support both for compatibility
+    const payCurrency = currency || "usdtbsc";
 
-    if (!amount || !currency || !uid) {
-      throw new Error('Missing required fields: amount, currency, or uid');
+    if (!amount || !uid) {
+      throw new Error('Missing required fields: amount or user_id');
     }
 
     let paymentData: any;
@@ -38,11 +38,11 @@ serve(async (req) => {
         },
         body: JSON.stringify({
           price_amount: amount,
-          price_currency: 'usd',
-          pay_currency: currency,
-          order_id: `DEP-${Date.now()}`,
-          order_description: finalDescription,
-          ipn_callback_url: `${Deno.env.get("APP_URL") || 'https://www.arowintrading.com'}/api/v1/tx/ipn`
+          price_currency: payCurrency,
+          pay_currency: payCurrency,
+          order_id: uid,
+          order_description: `Deposit for ${uid}`,
+          ipn_callback_url: `https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/payment-webhook`
         }),
       });
 
@@ -59,12 +59,12 @@ serve(async (req) => {
         pay_currency: data.pay_currency,
         payment_status: data.payment_status,
         uid: uid,
-        description: finalDescription
+        description: `Deposit for ${uid}`
       };
     } else {
       // Mock payment
       const paymentId = `PAY-${Math.random().toString(36).substring(2, 11).toUpperCase()}`;
-      const mockAddress = currency === 'usdttrc20' 
+      const mockAddress = payCurrency === 'usdttrc20' 
         ? 'TX' + Math.random().toString(36).substring(2, 34).toUpperCase()
         : '0x' + Math.random().toString(16).substring(2, 42);
 
@@ -72,10 +72,10 @@ serve(async (req) => {
         payment_id: paymentId,
         pay_address: mockAddress,
         pay_amount: amount,
-        pay_currency: currency,
+        pay_currency: payCurrency,
         payment_status: 'waiting',
         uid: uid,
-        description: finalDescription
+        description: `Deposit for ${uid}`
       };
     }
 
@@ -85,8 +85,8 @@ serve(async (req) => {
       amount,
       type: 'deposit',
       status: 'waiting',
-      method: currency,
-      description: `Payment ID: ${paymentData.payment_id} - ${finalDescription}`,
+      method: payCurrency,
+      description: `Payment ID: ${paymentData.payment_id} - Deposit for ${uid}`,
       external_id: paymentData.payment_id.toString()
     });
 

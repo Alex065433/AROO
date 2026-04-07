@@ -13,6 +13,7 @@ import { ArowinLogo } from '../components/ArowinLogo';
 
 import { supabaseService } from '../services/supabaseService';
 import { supabase } from '../services/supabase';
+import { apiFetch } from '../src/lib/api';
 
 const Modal: React.FC<{ 
   title: string; 
@@ -246,20 +247,21 @@ const Dashboard: React.FC = () => {
     if (!userData) return;
     setIsDepositing(true);
     try {
-      const response = await axios.post('/api/payments/create', {
-        amount: parseFloat(depositAmount),
-        currency: depositCurrency,
-        orderId: `DEP-${Date.now()}`,
-        orderDescription: `Wallet Deposit for ${userData.id}`,
-        uid: userData.id
+      const data = await apiFetch('create-payment', {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: parseFloat(depositAmount),
+          user_id: userData.id,
+          currency: "usdtbsc"
+        })
       });
       
-      setPaymentData(response.data);
+      setPaymentData(data);
       setNotification('Deposit request created successfully!');
       setTimeout(() => setNotification(null), 3000);
     } catch (error: any) {
       console.error('Deposit error:', error);
-      setNotification(error.response?.data?.message || 'Failed to create deposit request');
+      setNotification(error.message || 'Failed to create deposit request');
       setTimeout(() => setNotification(null), 3000);
     } finally {
       setIsDepositing(false);
@@ -305,9 +307,8 @@ const Dashboard: React.FC = () => {
 
     const checkAdminStatus = async () => {
       try {
-        const response = await fetch('/api/health');
-        if (response.ok && isMounted) {
-          const data = await response.json();
+        const data = await apiFetch('health');
+        if (isMounted) {
           setAdminStatus(data);
         }
       } catch (err) {
@@ -341,23 +342,13 @@ const Dashboard: React.FC = () => {
     const fetchRates = async () => {
       try {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
-        const response = await fetch('/api/rates/binance');
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          if (Array.isArray(errorData) && isMounted) {
-            const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
-            setBinanceRates(filtered);
-            return;
-          }
-          throw new Error(`Server responded with ${response.status}`);
-        }
-        const data = await response.json();
+        const data = await apiFetch('binance-rates');
         if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
           setBinanceRates(filtered);
         }
       } catch (error) {
-        console.warn('Binance rates sync issue:', error);
+        console.error('Error fetching rates:', error);
       }
     };
 
@@ -415,8 +406,8 @@ const Dashboard: React.FC = () => {
     if (!paymentData) return;
     setIsCheckingStatus(true);
     try {
-      const response = await axios.get(`/api/payments/status/${paymentData.payment_id}`);
-      const status = response.data.payment_status;
+      const data = await apiFetch(`tx-status?id=${paymentData.payment_id}`);
+      const status = data.payment_status;
       
       if (status === 'finished' || status === 'partially_paid') {
         setNotification('Deposit confirmed! Your balance will update shortly.');

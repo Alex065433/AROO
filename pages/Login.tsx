@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Lock, Mail, ArrowRight, ShieldCheck, RefreshCw } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { TwoFactorAuth } from '../components/TwoFactorAuth';
@@ -10,12 +10,20 @@ import { supabaseService } from '../services/supabaseService';
 
 const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [operatorId, setOperatorId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('reset') === 'true') {
+      setShowReset(true);
+    }
+  }, [location]);
 
   const isAuthorizingRef = React.useRef(false);
 

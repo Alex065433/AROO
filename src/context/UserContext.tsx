@@ -37,6 +37,11 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const currentUserRef = React.useRef<any>(null);
+
+  useEffect(() => {
+    currentUserRef.current = user;
+  }, [user]);
 
   const fetchProfile = async (userId: string, silent: boolean = false) => {
     if (!silent) setProfileLoading(true);
@@ -78,8 +83,20 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const initializeAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
+        if (sessionError) {
+          console.warn('Session error during initialization:', sessionError.message);
+          if (sessionError.message?.includes('Refresh Token Not Found') || sessionError.message?.includes('invalid_grant')) {
+            // Clear everything if refresh token is invalid
+            setUser(null);
+            setProfile(null);
+            localStorage.removeItem('arowin_supabase_user');
+            await supabase.auth.signOut();
+          }
+          throw sessionError;
+        }
+
         if (session?.user) {
           if (mounted) {
             setUser(session.user);
@@ -93,8 +110,15 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             localStorage.removeItem('arowin_supabase_user');
           }
         }
-      } catch (err) {
-        console.error('Auth initialization failed:', err);
+      } catch (err: any) {
+        console.error('Auth initialization failed:', err.message);
+        if (err.message?.includes('Refresh Token Not Found') || err.message?.includes('invalid_grant')) {
+          if (mounted) {
+            setUser(null);
+            setProfile(null);
+            localStorage.removeItem('arowin_supabase_user');
+          }
+        }
       } finally {
         if (mounted) setLoading(false);
       }
@@ -111,8 +135,9 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             fetchProfile(session.user.id, true);
           }
         } else {
-          if (session?.user) {
-            localStorage.removeItem(`2fa_verified_${session.user.id}`);
+          // If we were signed in before, clear 2FA
+          if (currentUserRef.current?.id) {
+            localStorage.removeItem(`2fa_verified_${currentUserRef.current.id}`);
           }
           setUser(null);
           setProfile(null);

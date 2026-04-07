@@ -56,7 +56,7 @@ export const supabaseService = {
       // Resolve email from Operator ID
       try {
         const { data: profile, error } = await this.withTimeout(
-          supabase.from("profiles").select("email").eq("operator_id", cleanId).single(),
+          supabase.from("profiles").select("email").ilike("operator_id", cleanId).single(),
           20000,
           "Database is waking up. Please wait a moment and try again."
         );
@@ -106,10 +106,10 @@ export const supabaseService = {
           if (!isEmailInput) {
             internalEmailsToTry.push(`${cleanId.toLowerCase()}@arowin.internal`);
           } else {
-            // It's an email input, find profiles with this email
+            // It's an email input, find profiles with this email (case-insensitive)
             try {
               const { data: profiles, error: profileError } = await this.withTimeout(
-                supabase.from("profiles").select("operator_id").eq("email", cleanId),
+                supabase.from("profiles").select("operator_id").ilike("email", cleanId),
                 10000
               );
               
@@ -121,11 +121,19 @@ export const supabaseService = {
                   throw new Error(`Multiple accounts found for ${cleanId}. Please use your Operator ID (e.g. ARW-XXXXXX) to log in.`);
                 }
                 internalEmailsToTry.push(`${profiles[0].operator_id.toLowerCase()}@arowin.internal`);
+              } else {
+                // No profile found for this email
+                console.warn(`No profile found for email: ${cleanId}`);
+                // We don't throw yet, we'll let the original authError handle it or throw a custom one below
               }
             } catch (e: any) {
               if (e.message?.includes('Multiple accounts')) throw e;
               console.error('Error finding profiles for email:', e);
             }
+          }
+
+          if (internalEmailsToTry.length === 0 && isEmailInput) {
+             throw new Error(`Authentication Failed: No account found for "${cleanId}". Please ensure you have registered.`);
           }
 
           for (const internalEmail of internalEmailsToTry) {
@@ -181,14 +189,14 @@ export const supabaseService = {
     }
   },
 
-  async getUserProfile(userId: string, retries: number = 2) {
+  async getUserProfile(userId: string, columns: string = "*", retries: number = 2) {
     let lastError: any;
     
     for (let i = 0; i <= retries; i++) {
       try {
         // Use a longer timeout (30s) to allow for database wake-up
         const { data, error } = await this.withTimeout(
-          supabase.from("profiles").select("*").eq("id", userId).single(),
+          supabase.from("profiles").select(columns).eq("id", userId).single(),
           30000 
         );
 
@@ -406,7 +414,7 @@ export const supabaseService = {
     // We use snake_case for database columns
     const profileData = {
       id: user.id,
-      email: email,
+      email: email.toLowerCase(),
       operator_id: operatorId,
       name: additionalData.name || email.split('@')[0],
       mobile: additionalData.mobile || '',
@@ -580,8 +588,18 @@ export const supabaseService = {
       return responseData;
     } catch (error) {
       console.error('Error calling send-email function:', error);
-      throw error;
+      // Don't throw here to prevent registration failure if email fails
+      return { error: 'Email delivery failed' };
     }
+  },
+
+  // Password Reset
+  async requestPasswordReset(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/login?reset=true`,
+    });
+    if (error) throw error;
+    return true;
   },
 
   onAuthChange(callback: (user: any) => void) {
@@ -936,7 +954,7 @@ export const supabaseService = {
       throw new Error("No active session found. Please log in again.");
     }
 
-    const result = await apiFetch('/api/admin/query', {
+    const result = await apiFetch('admin-query', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -981,7 +999,7 @@ export const supabaseService = {
 
       console.log(`addFunds: Requesting funds addition for ${uid}, amount: ${amount}, token length: ${token.length}`);
       
-      const result = await apiFetch('/api/admin/query', {
+      const result = await apiFetch('admin-query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1000,7 +1018,7 @@ export const supabaseService = {
 
   async setupAdmin(secret: string) {
     try {
-      const data = await apiFetch('/api/admin/setup', {
+      const data = await apiFetch('admin-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secret })
@@ -1284,7 +1302,7 @@ export const supabaseService = {
            token = sessionData.session.access_token;
         }
         
-        const data = await apiFetch('/api/admin/query', {
+        const data = await apiFetch('admin-query', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`

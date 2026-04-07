@@ -24,8 +24,19 @@ export interface User {
   mobile: string;
   operator_id: string;
   sponsor_id: string;
+  sponsorId?: string; // Legacy support
   rank: number;
   wallet_balance: number;
+  wallets?: {
+    master: Wallet;
+    referral: Wallet;
+    matching: Wallet;
+    yield: Wallet;
+    rankBonus: Wallet;
+    incentive: Wallet;
+    rewards: Wallet;
+    capping_box?: Wallet;
+  };
   matching_income: number;
   referral_income: number;
   rank_bonus_income: number;
@@ -39,6 +50,7 @@ export interface User {
   role: 'user' | 'admin';
   status: string;
   active_package: number;
+  totalEarnings?: number;
   created_at: string;
 }
 
