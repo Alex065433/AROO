@@ -15,7 +15,8 @@ export const getApiBaseUrl = () => {
     (window.location.hostname === 'arowintrading.com' || window.location.hostname === 'www.arowintrading.com');
 
   if (isProduction && supabaseUrl && !supabaseUrl.includes('placeholder')) {
-    return `${supabaseUrl}/functions/v1`;
+    const cleanUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
+    return `${cleanUrl}/functions/v1`;
   }
 
   if (typeof window !== 'undefined') {
@@ -57,6 +58,17 @@ export const apiFetch = async (endpoint: string, options: any = {}) => {
       const token = sessionData.session?.access_token || localStorage.getItem('arowin_admin_token');
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    // Add Supabase Anon Key if calling Edge Functions (required by Supabase infrastructure)
+    if (url.includes('.supabase.co/functions/v1')) {
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if (anonKey && !headers['apikey']) {
+        headers['apikey'] = anonKey;
+      }
+      if (!headers['x-client-info']) {
+        headers['x-client-info'] = 'arowin-web-client';
       }
     }
     

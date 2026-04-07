@@ -534,10 +534,9 @@ export const supabaseService = {
       const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      const response = await fetch(functionUrl, {
+      const responseData = await apiFetch(functionUrl, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseAnonKey}`
         },
         body: JSON.stringify({
@@ -546,13 +545,6 @@ export const supabaseService = {
         })
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Email function error:', errorText);
-        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
-      }
-
-      const responseData = await response.json();
       console.log('Response from Edge Function:', responseData);
 
       // 8. Return success
@@ -574,10 +566,9 @@ export const supabaseService = {
       console.log("⏳ Waiting 500ms for database replication before sending email...");
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const response = await fetch(functionUrl, {
+      const responseData = await apiFetch(functionUrl, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${supabaseAnonKey}`
         },
         body: JSON.stringify({
@@ -585,19 +576,6 @@ export const supabaseService = {
           type: "welcome"
         })
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Email function error:', errorText);
-        throw new Error(`Failed to send email: ${response.status} ${errorText}`);
-      }
-
-      let responseData;
-      try {
-        responseData = await response.json();
-      } catch (e) {
-        throw new Error("Invalid JSON response from email server");
-      }
 
       return responseData;
     } catch (error) {
@@ -1306,10 +1284,9 @@ export const supabaseService = {
            token = sessionData.session.access_token;
         }
         
-        const response = await fetch('/api/admin/query', {
+        const data = await apiFetch('/api/admin/query', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
@@ -1319,10 +1296,6 @@ export const supabaseService = {
           })
         });
         
-        if (!response.ok) {
-           throw new Error('Failed to fetch all payments');
-        }
-        const data = await response.json();
         return data || [];
       }
 

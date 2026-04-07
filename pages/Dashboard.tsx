@@ -485,21 +485,7 @@ const Dashboard: React.FC = () => {
     setIsCheckingStatus(true);
     try {
       console.log(`Checking status for payment ${paymentData.payment_id} at /api/v1/tx/status/${paymentData.payment_id}...`);
-      const response = await fetch(`/api/v1/tx/status/${paymentData.payment_id}`);
-      
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await response.text();
-        console.error('PAYMENT ERROR: Received non-JSON response from server during status check', {
-          status: response.status,
-          statusText: response.statusText,
-          contentType,
-          body: text.substring(0, 500)
-        });
-        throw new Error(`Server returned ${response.status} ${response.statusText} (${contentType || 'no content type'}). Expected JSON.`);
-      }
-
-      const data = await response.json();
+      const data = await apiFetch(`/api/v1/tx/status/${paymentData.payment_id}`);
       const status = data.payment_status;
       
       if (status === 'finished' || status === 'partially_paid') {
