@@ -3,10 +3,22 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
-// Initialize Supabase with service_role key to bypass RLS
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || '';
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+// Lazy-load Supabase client to prevent startup crashes if env vars are missing
+let supabaseAdmin: any = null;
+const getSupabaseAdmin = () => {
+  if (supabaseAdmin) return supabaseAdmin;
+  
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY || '';
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.warn("Supabase environment variables are missing in admin-package.");
+    return null;
+  }
+  
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+  return supabaseAdmin;
+};
 
 router.post('/', async (req, res) => {
   const { uid, packageAmount, isFree } = req.body;
@@ -16,9 +28,12 @@ router.post('/', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return res.status(500).json({ error: "Supabase client not initialized" });
+
   try {
     // 1. Get user profile
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', uid)
@@ -39,7 +54,7 @@ router.post('/', async (req, res) => {
         newWallets.master.balance = newBalance;
       }
 
-      const { error: balanceError } = await supabaseAdmin
+      const { error: balanceError } = await supabase
         .from('profiles')
         .update({ 
           wallets: newWallets,
@@ -53,7 +68,7 @@ router.post('/', async (req, res) => {
 
     // 3. Update active_package and total_deposit
     const isFirstActivation = !profile.active_package || profile.active_package === 0;
-    const { error: packageUpdateError } = await supabaseAdmin
+    const { error: packageUpdateError } = await supabase
       .from('profiles')
       .update({ 
         active_package: packageAmount, 
@@ -69,7 +84,7 @@ router.post('/', async (req, res) => {
       const referralBonus = packageAmount * 0.05;
       
       // Get sponsor profile
-      const { data: sponsor, error: sponsorError } = await supabaseAdmin
+      const { data: sponsor, error: sponsorError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', profile.sponsor_id)
@@ -80,7 +95,7 @@ router.post('/', async (req, res) => {
         newSponsorWallets.referral = newSponsorWallets.referral || { balance: 0, currency: 'USDT' };
         newSponsorWallets.referral.balance += referralBonus;
 
-        await supabaseAdmin
+        await supabase
           .from('profiles')
           .update({
             wallets: newSponsorWallets,
@@ -90,7 +105,7 @@ router.post('/', async (req, res) => {
           .eq('id', profile.sponsor_id);
           
         // Log referral bonus transaction
-        await supabaseAdmin.from('transactions').insert({
+        await supabase.from('transactions').insert({
           uid: profile.sponsor_id,
           amount: referralBonus,
           type: 'referral_bonus',
@@ -101,7 +116,7 @@ router.post('/', async (req, res) => {
     }
 
     // 5. Update Team Business & Team Size up the tree via RPC
-    const { error: rpcError } = await supabaseAdmin.rpc('activate_package', { 
+    const { error: rpcError } = await supabase.rpc('activate_package', { 
       p_user_id: uid, 
       p_amount: packageAmount 
     });
@@ -111,7 +126,7 @@ router.post('/', async (req, res) => {
     }
 
     // 6. Log activation payment
-    await supabaseAdmin.from('payments').insert({
+    await supabase.from('payments').insert({
       uid: uid,
       amount: isFree ? 0 : packageAmount,
       type: 'package_activation',

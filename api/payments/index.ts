@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+dotenv.config();
 import axios from "axios";
 import crypto from "crypto";
 import path from "path";
@@ -8,8 +9,6 @@ import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import adminQueryRouter from "../admin-query";
 import adminPackageRouter from "../admin-package";
-
-dotenv.config();
 
 const app = express();
 app.use(cors());

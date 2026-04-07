@@ -3,10 +3,22 @@ import { createClient } from '@supabase/supabase-js';
 
 const router = express.Router();
 
-// Initialize Supabase with service_role key to bypass RLS
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || '';
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+// Lazy-load Supabase client to prevent startup crashes if env vars are missing
+let supabaseAdmin: any = null;
+const getSupabaseAdmin = () => {
+  if (supabaseAdmin) return supabaseAdmin;
+  
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_KEY || '';
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    console.warn("Supabase environment variables are missing in admin-query.");
+    return null;
+  }
+  
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+  return supabaseAdmin;
+};
 
 router.post('/', async (req, res) => {
   const { table, operation, data, match } = req.body;
@@ -16,14 +28,17 @@ router.post('/', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return res.status(500).json({ error: "Supabase client not initialized" });
+
   try {
     let query;
     if (operation === 'insert') {
-      query = supabaseAdmin.from(table).insert(data);
+      query = supabase.from(table).insert(data);
     } else if (operation === 'update') {
-      query = supabaseAdmin.from(table).update(data).match(match);
+      query = supabase.from(table).update(data).match(match);
     } else if (operation === 'delete') {
-      query = supabaseAdmin.from(table).delete().match(match);
+      query = supabase.from(table).delete().match(match);
     } else {
       return res.status(400).json({ error: 'Invalid operation' });
     }

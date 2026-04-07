@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, RefreshCw, ArrowRight, Lock, Smartphone } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
 
 interface TwoFactorAuthProps {
@@ -22,32 +23,31 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
   const [error, setError] = useState<string | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const [realPin, setRealPin] = useState<string | null>(null);
+    const verify2FA = async (enteredCode: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user || supabaseService.getCurrentUser();
 
-  useEffect(() => {
-    const fetchPin = async () => {
-      // Use supabaseService to get the current mock user
-      const currentUser = supabaseService.getCurrentUser();
-      if (currentUser) {
-        try {
-          const profile = await supabaseService.getUserProfile(currentUser.id || currentUser.uid) as any;
-          if (profile && profile.two_factor_pin) {
-            setRealPin(profile.two_factor_pin);
-          } else {
-            setRealPin('123456'); // Fallback
-          }
-        } catch (err) {
-          console.error('Error fetching 2FA PIN:', err);
-          setRealPin('123456');
-        }
-      } else {
-        // If no user, maybe it's an admin login with username/password
-        // For now, default to 123456 for mock
-        setRealPin('123456');
+    if (!user) {
+      console.error("2FA Verification Error: User not authenticated.");
+      return false;
+    }
+
+    try {
+      const profile = await supabaseService.getUserProfile(user.id);
+      // Use two_factor_pin if set, otherwise fallback to withdrawal_password (if it's 6 digits)
+      const dbPin = profile?.two_factor_pin || profile?.withdrawal_password;
+
+      if (!dbPin) {
+        // If no pin is set in DB, return false for security
+        return false;
       }
-    };
-    fetchPin();
-  }, []);
+
+      return String(dbPin || '').trim() === String(enteredCode || '').trim();
+    } catch (err: any) {
+      console.error("2FA Verification Error:", err);
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (resendTimer > 0) {
@@ -75,7 +75,7 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
     }
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     const fullCode = code.join('');
     if (fullCode.length !== 6) {
       setError('Please enter the full 6-digit code.');
@@ -85,17 +85,16 @@ export const TwoFactorAuth: React.FC<TwoFactorAuthProps> = ({
     setIsVerifying(true);
     setError(null);
 
-    // Simulate verification
-    setTimeout(() => {
-      if (fullCode === realPin) { 
-        onVerify();
-      } else {
-        setIsVerifying(false);
-        setError('Invalid verification code. Please try again.');
-        setCode(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
-      }
-    }, 1500);
+    const isValid = await verify2FA(fullCode);
+
+    if (isValid) {
+      onVerify();
+    } else {
+      setIsVerifying(false);
+      setError('Invalid verification code. Please try again.');
+      setCode(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+    }
   };
 
   const handleResend = () => {

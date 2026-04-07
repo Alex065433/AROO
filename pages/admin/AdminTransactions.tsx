@@ -93,8 +93,8 @@ const AdminTransactions: React.FC = () => {
   };
 
   const filteredTransactions = transactions.filter(tx => {
-    const matchesType = filterType === 'All' || tx.type.toLowerCase().includes(filterType.toLowerCase());
-    const matchesSearch = tx.uid?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const matchesType = filterType === 'All' || (tx.type || '').toLowerCase().includes(filterType.toLowerCase());
+    const matchesSearch = (tx.uid || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
                          tx.id?.toString().includes(searchQuery);
     return matchesType && matchesSearch;
   });

@@ -11,27 +11,49 @@ import { supabaseService } from '../services/supabaseService';
 const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const navigate = useNavigate();
   const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [show2FA, setShow2FA] = useState(false);
   const [showReset, setShowReset] = useState(false);
   const [operatorId, setOperatorId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isAuthorizingRef = React.useRef(false);
+
   const handleAuth = async () => {
     if (!operatorId || !password) return;
     setIsAuthorizing(true);
+    isAuthorizingRef.current = true;
     setError(null);
     
+    // Safety timeout to prevent infinite buffering
+    const timeout = setTimeout(() => {
+      if (isAuthorizingRef.current) {
+        setIsAuthorizing(false);
+        isAuthorizingRef.current = false;
+        setError('Connection timeout. The database is taking longer than expected to wake up. Please try again in a moment.');
+      }
+    }, 45000);
+
     try {
-      // Supabase Login with Operator ID
-      await supabaseService.login(operatorId, password);
+      // Supabase Login with Operator ID or Email
+      const authData = await supabaseService.login(operatorId, password);
+      clearTimeout(timeout);
       setIsAuthorizing(false);
-      setShow2FA(true);
+      isAuthorizingRef.current = false;
+      
+      // Save for 2FA page display
+      localStorage.setItem('arowin_login_id', operatorId);
+      
+      // The profile will be fetched in background by UserContext
+      // App.tsx will handle the redirect to /two-factor if needed
+      onLogin();
+      navigate('/dashboard');
     } catch (err: any) {
+      clearTimeout(timeout);
       console.error('Login failed:', err);
       setError(supabaseService.formatError(err));
       setIsAuthorizing(false);
+      isAuthorizingRef.current = false;
     }
   };
 
@@ -70,11 +92,6 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     }
   };
 
-  const handleVerify = () => {
-    onLogin();
-    navigate('/dashboard');
-  };
-
   return (
     <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center p-6 relative overflow-hidden font-inter text-slate-100">
       {/* Background Atmosphere - Large Dark Blue Glow as seen in screenshot */}
@@ -109,7 +126,7 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
               key="reset-form"
               onCancel={() => setShowReset(false)}
             />
-          ) : !show2FA ? (
+          ) : (
             <motion.div 
               key="login-form"
               initial={{ opacity: 0, x: -20 }}
@@ -212,13 +229,6 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                  <button onClick={() => navigate('/register')} className="text-blue-600 hover:text-blue-400 transition-all">Initialize Node</button>
               </div>
             </motion.div>
-          ) : (
-            <TwoFactorAuth 
-              key="2fa-form"
-              emailOrId={operatorId}
-              onVerify={handleVerify}
-              onCancel={() => setShow2FA(false)}
-            />
           )}
         </AnimatePresence>
 
@@ -227,11 +237,16 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           animate={{ opacity: 1 }}
           className="mt-12 text-center"
         >
-           <div className="flex items-center justify-center gap-4 opacity-20 mb-6">
-              <ShieldCheck size={16} />
-              <span className="text-[10px] font-black uppercase tracking-widest">Protocol Secured</span>
+           <div className="flex items-center justify-center gap-4 opacity-40 mb-6">
+              <ShieldCheck size={16} className="text-blue-500" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Protocol Secured</span>
            </div>
-           <button onClick={() => navigate('/admin/login')} className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-800 hover:text-blue-500 transition-all duration-500">ADMIN GATEWAY</button>
+           <button 
+             onClick={() => navigate('/admin/login')} 
+             className="px-6 py-2 border border-white/5 hover:border-blue-500/30 bg-white/5 hover:bg-blue-500/5 text-[9px] font-black uppercase tracking-[0.4em] text-slate-600 hover:text-blue-400 rounded-full transition-all duration-500"
+           >
+             ADMIN GATEWAY
+           </button>
         </motion.div>
       </div>
     </div>
@@ -239,4 +254,3 @@ const Login: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 };
 
 export default Login;
-

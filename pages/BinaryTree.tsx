@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import GlassCard from '../components/GlassCard';
+import { useUser } from '../src/context/UserContext';
 import { 
   UserPlus, 
   X, ShieldCheck, Globe, TrendingUp, 
@@ -12,7 +13,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
+import { apiFetch } from '../src/lib/api';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
 
@@ -43,11 +46,11 @@ const TREE_DATA: Record<string, NodeData> = {
 };
 
 const BinaryTree: React.FC = () => {
+  const { profile: userProfile, loading, refreshProfile } = useUser();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [treeData, setTreeData] = useState<Record<string, NodeData>>({});
   const [isTreeLoading, setIsTreeLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | 'ledger' | null>(null);
   const [totalReferrals, setTotalReferrals] = useState(0);
   const [notification, setNotification] = useState<string | null>(null);
@@ -59,7 +62,7 @@ const BinaryTree: React.FC = () => {
       setTotalReferrals(referrals.length);
     };
     fetchReferrals();
-  }, [userProfile]);
+  }, [userProfile?.id]);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [depositAmount, setDepositAmount] = useState('50');
@@ -78,7 +81,7 @@ const BinaryTree: React.FC = () => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     // Use HashRouter compatible URL
     const baseUrl = window.location.origin + window.location.pathname;
-    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${(side || 'LEFT').toLowerCase()}`;
     
     setInviteModal({
       parentId,
@@ -100,34 +103,38 @@ const BinaryTree: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   useEffect(() => {
-    const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user) {
-        try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid, 'id, name, rank, team_size, parent_id, role, operator_id, email') as any;
-          console.log('BinaryTree userProfile:', profile);
-          if (profile) {
-            setUserProfile(profile);
-            
-            let rootId = user.id || user.uid;
-            if (profile.role === 'admin') {
-              const absRoot = await supabaseService.getAbsoluteRoot() as any;
-              if (absRoot) rootId = absRoot.id;
-            }
-            
-            setViewRootId(rootId);
-          }
-          // Fetch real transactions
-          const payments = await supabaseService.getTransactions(user.id || user.uid);
+    let isMounted = true;
+
+    const initView = async () => {
+      if (!userProfile) return;
+      
+      try {
+        let rootId = userProfile.id;
+        if (userProfile.role === 'admin') {
+          const absRoot = await supabaseService.getAbsoluteRoot() as any;
+          if (absRoot) rootId = absRoot.id;
+        }
+        
+        if (isMounted) setViewRootId(rootId);
+
+        // Fetch real transactions
+        const payments = await supabaseService.getTransactions(userProfile.id);
+        if (isMounted) {
           setTransactions(payments);
           setIsLoadingTransactions(false);
-        } catch (err) {
-          console.error('Error fetching tree or profile:', err);
-          setIsLoadingTransactions(false);
         }
+      } catch (err) {
+        console.error('Error initializing BinaryTree view:', err);
+        if (isMounted) setIsLoadingTransactions(false);
       }
-    });
-    return () => unsubscribe();
-  }, []);
+    };
+
+    initView();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userProfile]);
 
   const refreshTree = async () => {
     if (viewRootId) {
@@ -140,8 +147,7 @@ const BinaryTree: React.FC = () => {
         setTreeData(dynamicTree);
         
         // Refetch profile to update leg counts
-        const updatedProfile = await supabaseService.getUserProfile(userProfile.id, 'id, name, rank, team_size, parent_id, role, operator_id, email');
-        setUserProfile(updatedProfile);
+        await refreshProfile();
       } catch (err) {
         console.error('Error refreshing tree:', err);
       } finally {
@@ -182,20 +188,26 @@ const BinaryTree: React.FC = () => {
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch('/api/payments/create', {
+      const data = await apiFetch('/api/v1/tx/new', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          amount: depositAmount,
+          amount: Number(depositAmount),
           currency: 'usdtbsc',
-          orderId: `DEP-${Date.now()}`,
-          orderDescription: `Deposit for ${userProfile?.email}`,
-          uid: userProfile?.id
-        })
+          uid: userProfile?.id,
+          email: userProfile?.email,
+          orderDescription: `Deposit for ${userProfile?.email}`
+        }),
       });
-      if (!response.ok) throw new Error('Failed to create payment');
-      const data = await response.json();
-      setPaymentData(data);
+
+      setPaymentData({
+        payment_id: data.payment_id,
+        pay_address: data.pay_address,
+        pay_amount: data.pay_amount,
+        pay_currency: data.pay_currency
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -226,10 +238,10 @@ const BinaryTree: React.FC = () => {
   };
 
   const handleGoUp = async () => {
-    if (!viewRootId) return;
-    const { data: currentProfile } = await supabaseService.getUserProfile(viewRootId) as any;
-    if (currentProfile && currentProfile.parent_id) {
-      setViewRootId(currentProfile.parent_id);
+    if (!viewRootId || !treeData['root']) return;
+    const parentId = treeData['root'].parentId;
+    if (parentId) {
+      setViewRootId(parentId);
     }
   };
 
@@ -350,7 +362,7 @@ const BinaryTree: React.FC = () => {
                       Open Registration <ArrowUpRight size={14} />
                     </button>
                     <p className="text-[8px] text-slate-600 font-bold uppercase tracking-widest">
-                      Share this link with your new partner for direct placement.
+                      Share this link with your new partner for direct positioning.
                     </p>
                   </div>
                 </div>
@@ -878,9 +890,9 @@ const BinaryTree: React.FC = () => {
            <TrendingUp size={32} />
         </div>
         <div className="flex-1 text-center md:text-left">
-          <h4 className="text-lg font-black uppercase tracking-widest text-slate-200">Binary Placement Protocol</h4>
+          <h4 className="text-lg font-black uppercase tracking-widest text-slate-200">Binary Positioning Protocol</h4>
           <p className="text-sm text-slate-500 mt-2 leading-relaxed">
-            Selecting an active node activates the <b>Primary Connection Chain</b>. Clicking an empty node initializes the <b>Registration Invite Protocol</b>, providing side-specific placement links for new organizational expansion.
+            Selecting an active node activates the <b>Primary Connection Chain</b>. Clicking an empty node initializes the <b>Registration Invite Protocol</b>, providing side-specific positioning links for new organizational expansion.
           </p>
         </div>
         </div>

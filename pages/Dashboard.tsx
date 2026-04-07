@@ -5,14 +5,16 @@ import {
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
-  QrCode, Search, ShieldAlert, Package
+  QrCode, Search, ShieldAlert, Package, Users, Plus, ArrowUpRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
-
 import { supabaseService } from '../services/supabaseService';
 import { supabase } from '../services/supabase';
+import { apiFetch } from '../src/lib/api';
+import { Skeleton, CardSkeleton } from '../components/ui/Skeleton';
+import { useUser } from '../src/context/UserContext';
 
 const Modal: React.FC<{ 
   title: string; 
@@ -102,9 +104,10 @@ const WalletCardRow: React.FC<{
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [userData, setUserData] = useState<any>(MOCK_USER);
-  const [userWallets, setUserWallets] = useState<any>(MOCK_USER.wallets);
-  const [loading, setLoading] = useState(true);
+  const { profile, profileLoading, refreshProfile } = useUser();
+  const [userData, setUserData] = useState<any>(profile || MOCK_USER);
+  const [userWallets, setUserWallets] = useState<any>(profile?.wallets || MOCK_USER.wallets);
+  const [loading, setLoading] = useState(false); // No longer blocks the whole page
   const [notification, setNotification] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -112,6 +115,30 @@ const Dashboard: React.FC = () => {
   const [adminFundAmount, setAdminFundAmount] = useState('');
   const [adminFoundUser, setAdminFoundUser] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+
+  // Sync with context profile when it updates in background
+  useEffect(() => {
+    if (profile) {
+      setUserData(profile);
+      const masterBalance = Number(profile.wallet_balance ?? 0);
+      const referralBalance = Number(profile.referral_income ?? 0);
+      const matchingBalance = Number(profile.matching_income ?? 0);
+      const rankBalance = Number(profile.rank_income ?? 0);
+      const incentiveBalance = Number(profile.incentive_income ?? 0);
+      const yieldBalance = Number(profile.yield_income ?? 0);
+      const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
+      
+      setUserWallets({
+        master: { balance: Number(masterBalance), currency: 'USDT' },
+        referral: { balance: Number(referralBalance), currency: 'USDT' },
+        matching: { balance: Number(matchingBalance), currency: 'USDT' },
+        yield: { balance: Number(yieldBalance), currency: 'USDT' },
+        rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+        rewards: { balance: Number(incentiveBalance), currency: 'USDT' },
+        capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
+      });
+    }
+  }, [profile]);
 
   const handleAdminSearch = async () => {
     if (!adminSearchId) return;
@@ -187,12 +214,12 @@ const Dashboard: React.FC = () => {
         console.log('profileResponse:', profile);
         setUserData(profile);
 
-        const masterBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
-        const referralBalance = Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0);
-        const matchingBalance = Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0);
-        const rankBalance = Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0);
-        const incentiveBalance = Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0);
-        const yieldBalance = Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0);
+        const masterBalance = Number(profile.wallet_balance ?? 0);
+        const referralBalance = Number(profile.referral_income ?? 0);
+        const matchingBalance = Number(profile.matching_income ?? 0);
+        const rankBalance = Number(profile.rank_income ?? 0);
+        const incentiveBalance = Number(profile.incentive_income ?? 0);
+        const yieldBalance = Number(profile.yield_income ?? 0);
         const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
         
         setUserWallets({
@@ -211,8 +238,13 @@ const Dashboard: React.FC = () => {
       
       return userId;
 
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+    } catch (error: any) {
+      // Only log as error if it's not a timeout or we don't have data
+      if (error.message?.includes('timed out') || error.message?.includes('waking up')) {
+        console.warn('Dashboard data fetch timed out, using existing data:', error.message);
+      } else {
+        console.error('Error fetching dashboard data:', error);
+      }
       return null;
     } finally {
       if (isInitial) setLoading(false);
@@ -246,25 +278,54 @@ const Dashboard: React.FC = () => {
     if (!userData) return;
     setIsDepositing(true);
     try {
-      const response = await axios.post('/api/payments/create', {
-        amount: parseFloat(depositAmount),
-        currency: depositCurrency,
-        orderId: `DEP-${Date.now()}`,
-        orderDescription: `Wallet Deposit for ${userData.id}`,
-        uid: userData.id
+      console.log('Initiating deposit request to /api/v1/tx/new...');
+      const data = await apiFetch('/api/v1/tx/new', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: parseFloat(depositAmount),
+          currency: depositCurrency,
+          orderId: `DEP-${Date.now()}`,
+          orderDescription: `Wallet Deposit for ${userData.id}`,
+          uid: userData.id
+        })
       });
       
-      setPaymentData(response.data);
+      console.log('Payment data received:', data);
+      setPaymentData(data);
       setNotification('Deposit request created successfully!');
       setTimeout(() => setNotification(null), 3000);
     } catch (error: any) {
-      console.error('Deposit error:', error);
-      setNotification(error.response?.data?.message || 'Failed to create deposit request');
+      console.error('PAYMENT ERROR:', error);
+      setNotification(error.message || 'Failed to create deposit request');
       setTimeout(() => setNotification(null), 3000);
     } finally {
       setIsDepositing(false);
     }
   };
+
+  // Polling for payment status
+  useEffect(() => {
+    let interval: any;
+    if (paymentData && paymentData.payment_status === 'waiting') {
+      interval = setInterval(async () => {
+        try {
+          const data = await apiFetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+          if (data.payment_status === 'finished' || data.payment_status === 'completed') {
+            setPaymentData((prev: any) => ({ ...prev, payment_status: 'finished' }));
+            setNotification('Payment confirmed! Your balance will be updated shortly.');
+            fetchAllData();
+            clearInterval(interval);
+          }
+        } catch (err) {
+          console.error('Status check failed:', err);
+        }
+      }, 10000); // Check every 10 seconds
+    }
+    return () => clearInterval(interval);
+  }, [paymentData]);
 
   useEffect(() => {
     let profileUnsubscribe: (() => void) | undefined;
@@ -279,12 +340,12 @@ const Dashboard: React.FC = () => {
           if (updatedProfile && isMounted) {
             setUserData(updatedProfile);
             // Use nullish coalescing for better robustness
-            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? updatedProfile.wallets?.master?.balance ?? 0;
-            const referralBalance = updatedProfile.wallets?.referral?.balance ?? updatedProfile.referral_income ?? 0;
-            const matchingBalance = updatedProfile.wallets?.matching?.balance ?? updatedProfile.matching_income ?? 0;
-            const rankBonusBalance = updatedProfile.wallets?.rankBonus?.balance ?? updatedProfile.rank_income ?? 0;
-            const rewardsBalance = updatedProfile.wallets?.rewards?.balance ?? updatedProfile.incentive_income ?? 0;
-            const yieldBalance = updatedProfile.wallets?.yield?.balance ?? updatedProfile.yield_income ?? 0;
+            const masterBalance = updatedProfile.wallet_balance || 0;
+            const referralBalance = updatedProfile.referral_income || 0;
+            const matchingBalance = updatedProfile.matching_income || 0;
+            const rankBonusBalance = updatedProfile.rank_income || 0;
+            const rewardsBalance = updatedProfile.incentive_income || 0;
+            const yieldBalance = updatedProfile.yield_income || 0;
             const cappingBoxBalance = updatedProfile.wallets?.capping_box?.balance || 0;
             
             setUserWallets({ 
@@ -305,9 +366,8 @@ const Dashboard: React.FC = () => {
 
     const checkAdminStatus = async () => {
       try {
-        const response = await fetch('/api/health');
-        if (response.ok && isMounted) {
-          const data = await response.json();
+        const data = await apiFetch('/api/health');
+        if (data && isMounted) {
           setAdminStatus(data);
         }
       } catch (err) {
@@ -323,17 +383,21 @@ const Dashboard: React.FC = () => {
           if (profile && isMounted) {
             setUserData(profile);
             setUserWallets({
-              master: { balance: Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
-              referral: { balance: Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
-              matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
-              rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
-              rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
-              yield: { balance: Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0), currency: 'USDT' },
+              master: { balance: Number(profile.wallet_balance || 0), currency: 'USDT' },
+              referral: { balance: Number(profile.referral_income || 0), currency: 'USDT' },
+              matching: { balance: Number(profile.matching_income || 0), currency: 'USDT' },
+              rankBonus: { balance: Number(profile.rank_income || 0), currency: 'USDT' },
+              rewards: { balance: Number(profile.incentive_income || 0), currency: 'USDT' },
+              yield: { balance: Number(profile.yield_income || 0), currency: 'USDT' },
               capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
             });
           }
-        } catch (err) {
-          console.error('Error updating profile on auth change:', err);
+        } catch (err: any) {
+          if (err.message?.includes('timed out') || err.message?.includes('waking up')) {
+            console.warn('Auth change profile update timed out, using existing data:', err.message);
+          } else {
+            console.error('Error updating profile on auth change:', err);
+          }
         }
       }
     });
@@ -341,23 +405,24 @@ const Dashboard: React.FC = () => {
     const fetchRates = async () => {
       try {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
-        const response = await fetch('/api/rates/binance');
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          if (Array.isArray(errorData) && isMounted) {
-            const filtered = errorData.filter((item: any) => symbols.includes(item.symbol));
-            setBinanceRates(filtered);
-            return;
-          }
-          throw new Error(`Server responded with ${response.status}`);
-        }
-        const data = await response.json();
+        const data = await apiFetch('/api/rates/binance');
+        
         if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
-          setBinanceRates(filtered);
+          if (filtered.length > 0) {
+            setBinanceRates(filtered);
+          }
         }
       } catch (error) {
         console.warn('Binance rates sync issue:', error);
+        // Fallback to some default rates if it fails repeatedly
+        if (binanceRates.length === 0 && isMounted) {
+           setBinanceRates([
+             { symbol: 'BTCUSDT', price: '68450.25' },
+             { symbol: 'ETHUSDT', price: '3450.12' },
+             { symbol: 'BNBUSDT', price: '580.45' }
+           ]);
+        }
       }
     };
 
@@ -399,7 +464,11 @@ const Dashboard: React.FC = () => {
       setNotification(`Successfully claimed to Vault`);
       
       // Refresh user data
-      await fetchAllData(false);
+      const user = supabaseService.getCurrentUser();
+      if (user) {
+        const profile = await supabaseService.getUserProfile(user.id || user.uid);
+        if (profile) setUserData(profile);
+      }
     } catch (err) {
       console.error('Claim Failed:', err);
       setNotification("Claim Failed: " + (err as Error).message);
@@ -415,8 +484,9 @@ const Dashboard: React.FC = () => {
     if (!paymentData) return;
     setIsCheckingStatus(true);
     try {
-      const response = await axios.get(`/api/payments/status/${paymentData.payment_id}`);
-      const status = response.data.payment_status;
+      console.log(`Checking status for payment ${paymentData.payment_id} at /api/v1/tx/status/${paymentData.payment_id}...`);
+      const data = await apiFetch(`/api/v1/tx/status/${paymentData.payment_id}`);
+      const status = data.payment_status;
       
       if (status === 'finished' || status === 'partially_paid') {
         setNotification('Deposit confirmed! Your balance will update shortly.');
@@ -429,9 +499,9 @@ const Dashboard: React.FC = () => {
       } else {
         setNotification(`Payment status: ${status}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error checking status:', error);
-      setNotification('Failed to check payment status');
+      setNotification(error.message || 'Failed to check payment status');
     } finally {
       setIsCheckingStatus(false);
       setTimeout(() => setNotification(null), 3000);
@@ -453,19 +523,30 @@ const Dashboard: React.FC = () => {
     }, 1500);
   };
 
-  if (loading) {
+  if (!profile && profileLoading) {
     return (
-      <div className="min-h-screen bg-[#0b0e11] flex flex-col items-center justify-center gap-6">
-        <div className="w-20 h-20 relative">
-          <div className="absolute inset-0 border-4 border-orange-500/20 rounded-full"></div>
-          <div className="absolute inset-0 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="space-y-10 animate-in fade-in duration-700 pb-20">
+        <div className="bg-[#0c0c0d] p-12 rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden">
+          <div className="flex items-center gap-10">
+            <Skeleton width="112px" height="112px" className="rounded-[32px]" />
+            <div className="space-y-4">
+              <Skeleton width="240px" height="32px" />
+              <Skeleton width="180px" height="12px" />
+            </div>
+          </div>
         </div>
-        <p className="text-slate-500 font-black uppercase tracking-[0.3em] text-xs animate-pulse">Synchronizing Node...</p>
+        <div className="max-w-4xl mx-auto px-4">
+          <CardSkeleton />
+        </div>
+        <div className="max-w-4xl mx-auto px-4 space-y-6">
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
       </div>
     );
   }
 
-  if (!userData) return null;
+  if (!profile && !profileLoading) return null;
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 pb-20 relative">
@@ -727,11 +808,20 @@ const Dashboard: React.FC = () => {
             <div className="flex items-center gap-4 mt-3">
                <span className="text-slate-500 text-[10px] font-black uppercase tracking-[0.4em]">OPERATOR: {userData.name}</span>
                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
+               <span className="text-blue-500 text-[10px] font-black uppercase tracking-[0.4em]">NODE: {userData.operator_id || userData.id}</span>
             </div>
           </div>
         </div>
 
+        <div className="flex flex-col sm:flex-row gap-4 relative z-10 w-full md:w-auto">
+           <button 
+             onClick={() => navigate('/referral')}
+             className="px-8 py-4 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-xs font-black uppercase tracking-widest text-white transition-all flex items-center justify-center gap-3 active:scale-95"
+           >
+              <Users size={16} className="text-blue-500" />
+              Share Referral
+           </button>
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4">
@@ -740,6 +830,8 @@ const Dashboard: React.FC = () => {
           isMaster={true}
           amount={userWallets?.master?.balance || 0}
           buttons={[
+            { label: 'DEPOSIT', color: 'bg-emerald-500/20 text-emerald-500', action: () => navigate('/master-wallet?action=deposit') },
+            { label: 'WITHDRAW', color: 'bg-rose-500/20 text-rose-500', action: () => navigate('/master-wallet?action=withdraw') },
             { label: 'LEDGER', color: 'bg-white/5 text-slate-400', action: () => navigate('/master-wallet') }
           ]}
         />

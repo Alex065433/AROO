@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
+import { useUser } from '../src/context/UserContext';
 import { toast } from 'sonner';
 import GlassCard from '../components/GlassCard';
 
@@ -25,7 +26,7 @@ interface TeamNode {
 }
 
 const TeamCollection: React.FC = () => {
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const { profile: userProfile, loading: isProfileLoading, refreshProfile } = useUser();
   const [nodes, setNodes] = useState<TeamNode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCollecting, setIsCollecting] = useState(false);
@@ -33,28 +34,31 @@ const TeamCollection: React.FC = () => {
   const [transactionPassword, setTransactionPassword] = useState('');
 
   useEffect(() => {
-    const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user) {
-        const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-        if (profile) {
-          setUserProfile(profile);
-          fetchNodes(profile.id);
-        }
-      }
-    });
-    return () => unsubscribe();
+    if (userProfile?.id) {
+      fetchNodes(userProfile.id);
+    }
   }, []);
 
   const fetchNodes = async (userId: string) => {
+    console.log("SYNC START");
     setIsLoading(true);
+    
+    const timeout = setTimeout(() => {
+      setIsLoading(false);
+      console.log("SYNC TIMEOUT");
+    }, 5000);
+
     try {
       const data = await supabaseService.getTeamCollection(userId);
       setNodes(data);
     } catch (error) {
       console.error('Error fetching team nodes:', error);
       toast.error('Failed to load team nodes');
+      setNodes([]);
     } finally {
+      clearTimeout(timeout);
       setIsLoading(false);
+      console.log("SYNC END");
     }
   };
 
@@ -99,6 +103,8 @@ const TeamCollection: React.FC = () => {
         setSelectedNodes(new Set());
         setTransactionPassword('');
         fetchNodes(userProfile.id);
+        // Refresh global wallet state
+        await refreshProfile();
       } else {
         toast.info('No yield available to collect from selected nodes');
       }
