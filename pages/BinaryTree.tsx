@@ -13,6 +13,7 @@ import {
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabaseService } from '../services/supabaseService';
+import { copyToClipboard } from '../src/lib/clipboard';
 import { apiFetch } from '../src/lib/api';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
@@ -326,10 +327,12 @@ const BinaryTree: React.FC = () => {
                         className="flex-1 bg-transparent border-none text-xs font-mono text-slate-300 focus:ring-0 truncate"
                       />
                       <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(inviteModal.url);
-                          setCopied(true);
-                          setTimeout(() => setCopied(false), 2000);
+                        onClick={async () => {
+                          const success = await copyToClipboard(inviteModal.url);
+                          if (success) {
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          }
                         }}
                         className="p-3 bg-orange-600 rounded-xl text-white hover:bg-orange-500 transition-all shadow-lg shadow-orange-950/20"
                       >
@@ -339,12 +342,14 @@ const BinaryTree: React.FC = () => {
                   </div>
 
                   <div className="flex flex-col gap-3">
-                    <button 
-                      onClick={() => window.open(inviteModal.url, '_blank')}
+                    <a 
+                      href={inviteModal.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2"
                     >
                       Open Registration <ArrowUpRight size={14} />
-                    </button>
+                    </a>
                     <p className="text-[8px] text-slate-600 font-bold uppercase tracking-widest">
                       Share this link with your new partner for direct placement.
                     </p>
@@ -422,7 +427,7 @@ const BinaryTree: React.FC = () => {
                               <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Destination Address (BEP20)</p>
                               <div className="flex items-center gap-4">
                                  <p className="flex-1 font-mono text-xs text-white break-all">{paymentData.pay_address}</p>
-                                 <button onClick={() => { navigator.clipboard.writeText(paymentData.pay_address); toast.success('Address copied to clipboard'); }} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all">
+                                 <button onClick={async () => { await copyToClipboard(paymentData.pay_address); toast.success('Address copied to clipboard'); }} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all">
                                     <Copy size={16} />
                                  </button>
                               </div>

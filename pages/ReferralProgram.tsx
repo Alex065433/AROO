@@ -4,15 +4,18 @@ import GlassCard from '../components/GlassCard';
 import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight, RefreshCw } from 'lucide-react';
 import { supabaseService } from '../services/supabaseService';
 import { useUser } from '../src/context/UserContext';
+import { copyToClipboard } from '../src/lib/clipboard';
 
 const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
   const [copied, setCopied] = useState(false);
   const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    const success = await copyToClipboard(link);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (

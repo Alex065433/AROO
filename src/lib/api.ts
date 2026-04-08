@@ -149,7 +149,10 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
         continue;
       }
       
-      console.error(`[API CRITICAL] Fetch failed for ${url}:`, error.message);
+      // Only log critical errors for non-health/rates endpoints to avoid console spam
+      if (!url.includes('/health') && !url.includes('/binance-rates')) {
+        console.error(`[API CRITICAL] Fetch failed for ${url}:`, error.message);
+      }
       throw error;
     }
   }

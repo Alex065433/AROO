@@ -4,6 +4,7 @@ import GlassCard from '../components/GlassCard';
 import { MOCK_USER, PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
 import { apiFetch } from '../src/lib/api';
+import { copyToClipboard as copyUtil } from '../src/lib/clipboard';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -290,10 +291,12 @@ const MasterWallet: React.FC = () => {
     }, 2000);
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async (text: string) => {
+    const success = await copyUtil(text);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const generateNewAddress = () => {

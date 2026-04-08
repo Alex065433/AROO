@@ -94,7 +94,10 @@ export const supabaseService = {
       );
 
       if (authError) {
-        console.error(`Auth error for ${email}:`, authError);
+        // Only log non-credential errors as errors, credential errors are normal user behavior
+        if (!authError.message?.toLowerCase().includes('invalid login credentials')) {
+          console.error(`Auth error for ${email}:`, authError);
+        }
         
         // Fallback: try internal email if real email failed (for legacy/internal accounts)
         // This handles cases where user enters email but Auth uses arw-XXXXXX@arowin.internal

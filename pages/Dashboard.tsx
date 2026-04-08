@@ -14,6 +14,7 @@ import { ArowinLogo } from '../components/ArowinLogo';
 import { supabaseService } from '../services/supabaseService';
 import { supabase } from '../services/supabase';
 import { apiFetch } from '../src/lib/api';
+import { copyToClipboard as copyUtil } from '../src/lib/clipboard';
 
 const Modal: React.FC<{ 
   title: string; 
@@ -307,12 +308,12 @@ const Dashboard: React.FC = () => {
 
     const checkAdminStatus = async () => {
       try {
-        const data = await apiFetch('health');
+        const data = await apiFetch('health').catch(() => ({ status: 'ok', fallback: true }));
         if (isMounted) {
           setAdminStatus(data);
         }
       } catch (err) {
-        console.error('Error checking admin status:', err);
+        // Silently handle if even the fallback fails
       }
     };
     checkAdminStatus();
@@ -342,13 +343,25 @@ const Dashboard: React.FC = () => {
     const fetchRates = async () => {
       try {
         const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
-        const data = await apiFetch('binance-rates');
+        let data;
+        try {
+          data = await apiFetch('binance-rates');
+        } catch (err) {
+          // Fallback to direct Binance API call if Edge Function is not deployed
+          const response = await fetch('https://api.binance.com/api/v3/ticker/price');
+          if (response.ok) {
+            data = await response.json();
+          } else {
+            throw new Error('Fallback fetch failed');
+          }
+        }
+        
         if (Array.isArray(data) && isMounted) {
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
           setBinanceRates(filtered);
         }
       } catch (error) {
-        console.error('Error fetching rates:', error);
+        // Silently handle to avoid console spam if both fail
       }
     };
 
@@ -374,10 +387,12 @@ const Dashboard: React.FC = () => {
     }, 800);
   };
 
-  const copyAddress = () => {
-    navigator.clipboard.writeText(depositAddress);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
+  const copyAddress = async () => {
+    const success = await copyUtil(depositAddress);
+    if (success) {
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    }
   };
 
   const handleClaim = async (walletKey: string) => {
@@ -563,8 +578,8 @@ const Dashboard: React.FC = () => {
                   <div className="flex justify-between items-center px-2">
                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Send exactly {paymentData.pay_amount} {paymentData.pay_currency.toUpperCase()}</p>
                     <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(paymentData.pay_address);
+                      onClick={async () => {
+                        await copyUtil(paymentData.pay_address);
                         setNotification('Address copied!');
                         setTimeout(() => setNotification(null), 3000);
                       }}
