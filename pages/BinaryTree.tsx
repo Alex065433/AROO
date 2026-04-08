@@ -78,9 +78,16 @@ const BinaryTree: React.FC = () => {
 
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT') => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
-    // Use HashRouter compatible URL
-    const baseUrl = window.location.origin + window.location.pathname;
-    const inviteUrl = `${baseUrl}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    
+    // Get base URL robustly for both local and real domains
+    const getBaseUrl = () => {
+      const href = window.location.href;
+      const hashIndex = href.indexOf('#');
+      const base = hashIndex !== -1 ? href.substring(0, hashIndex) : href;
+      return base.endsWith('/') ? base : base + '/';
+    };
+
+    const inviteUrl = `${getBaseUrl()}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
     
     setInviteModal({
       parentId,

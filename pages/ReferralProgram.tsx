@@ -1,14 +1,23 @@
 
 import React, { useState, useEffect } from 'react';
 import GlassCard from '../components/GlassCard';
-import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight, RefreshCw } from 'lucide-react';
+import { Share2, Link as LinkIcon, Copy, Check, Info, Users, ArrowRight, RefreshCw, ArrowUpRight } from 'lucide-react';
 import { supabaseService } from '../services/supabaseService';
 import { useUser } from '../src/context/UserContext';
 import { copyToClipboard } from '../src/lib/clipboard';
 
 const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }> = ({ side, operatorId }) => {
   const [copied, setCopied] = useState(false);
-  const link = `${window.location.origin}/#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
+  
+  // Get base URL robustly for both local and real domains
+  const getBaseUrl = () => {
+    const href = window.location.href;
+    const hashIndex = href.indexOf('#');
+    const base = hashIndex !== -1 ? href.substring(0, hashIndex) : href;
+    return base.endsWith('/') ? base : base + '/';
+  };
+
+  const link = `${getBaseUrl()}#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
 
   const handleCopy = async () => {
     const success = await copyToClipboard(link);
@@ -54,16 +63,27 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
           </button>
         </div>
 
-        <button 
-          onClick={handleCopy}
-          className={`w-full py-5 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl active:scale-95 ${
-            side === 'LEFT' 
-              ? 'bg-orange-600 text-white hover:bg-orange-500 shadow-orange-950/20' 
-              : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-950/20'
-          }`}
-        >
-          {copied ? 'Link Copied Successfully' : `Copy ${side} Referral Link`}
-        </button>
+        <div className="flex flex-col gap-3">
+          <button 
+            onClick={handleCopy}
+            className={`w-full py-5 rounded-2xl text-sm font-black uppercase tracking-widest transition-all shadow-xl active:scale-95 ${
+              side === 'LEFT' 
+                ? 'bg-orange-600 text-white hover:bg-orange-500 shadow-orange-950/20' 
+                : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-950/20'
+            }`}
+          >
+            {copied ? 'Link Copied Successfully' : `Copy ${side} Referral Link`}
+          </button>
+          
+          <a 
+            href={link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2"
+          >
+            Open Registration Portal <ArrowUpRight size={14} />
+          </a>
+        </div>
       </div>
     </div>
   );

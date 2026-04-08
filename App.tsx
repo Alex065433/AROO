@@ -29,15 +29,25 @@ import { useUser } from './src/context/UserContext';
 const ReferralRedirect: React.FC = () => {
   const { operatorId } = useParams<{ operatorId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (operatorId) {
       localStorage.setItem('arowin_ref', operatorId);
+      
+      // Capture other params if present (side, parent)
+      const searchParams = new URLSearchParams(location.search);
+      const side = searchParams.get('side');
+      const parent = searchParams.get('parent');
+      
+      if (side) localStorage.setItem('arowin_side', side);
+      if (parent) localStorage.setItem('arowin_parent', parent);
+      
       navigate('/register', { replace: true });
     } else {
       navigate('/', { replace: true });
     }
-  }, [operatorId, navigate]);
+  }, [operatorId, navigate, location]);
 
   return <SplashScreen onComplete={() => {}} />;
 };
