@@ -118,7 +118,7 @@ const App: React.FC = () => {
           (isUser && !is2FAPending) ? <Navigate to="/dashboard" /> :
           <TwoFactorPage />
         } />
-        <Route path="/register" element={(isAuthenticated && isUser) ? <Navigate to="/dashboard" /> : <Register onLogin={refreshProfile} />} />
+        <Route path="/register" element={<Register onLogin={refreshProfile} />} />
         
         {/* Referral Redirect Route */}
         <Route path="/ref/:operatorId" element={<ReferralRedirect />} />

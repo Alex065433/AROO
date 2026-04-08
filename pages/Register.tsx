@@ -1,14 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { UserPlus, ShieldCheck, Mail, Phone, Lock, ChevronDown, ArrowRight, RefreshCw, CheckCircle2, Eye, EyeOff, AlertCircle, LogOut } from 'lucide-react';
 import { ArowinLogo } from '../components/ArowinLogo';
 import { supabase } from '../services/supabase';
 import { supabaseService } from '../services/supabaseService';
+import { useUser } from '../src/context/UserContext';
 
 const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { profile: currentUser, logout } = useUser();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [registeredUser, setRegisteredUser] = useState<any>(null);
@@ -38,12 +40,18 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     const parentParam = params.get('parent') || hashParams.get('parent') || localStorage.getItem('arowin_parent');
     const sideParam = params.get('side') || hashParams.get('side') || localStorage.getItem('arowin_side');
     
-    if (ref) setSponsorId(ref);
+    if (ref) {
+      setSponsorId(ref);
+    } else if (currentUser?.operator_id) {
+      // If logged in and no ref in URL, default to current user
+      setSponsorId(currentUser.operator_id);
+    }
+
     if (parentParam) setParentId(parentParam);
     if (sideParam === 'left' || sideParam === 'right') {
       setSide(sideParam.toUpperCase() as 'LEFT' | 'RIGHT');
     }
-  }, [location]);
+  }, [location, currentUser]);
 
   useEffect(() => {
     const fetchSponsor = async () => {
@@ -213,6 +221,27 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           </div>
           <h1 className="text-5xl font-bold tracking-tight mb-4">Node Enrollment</h1>
           <p className="text-slate-400 text-lg uppercase tracking-[0.1em] font-black">get your free AROWIN TRADING account now</p>
+          
+          {currentUser && (
+            <div className="mt-8 p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-between gap-4 max-w-lg mx-auto">
+              <div className="flex items-center gap-3 text-left">
+                <div className="w-10 h-10 bg-blue-500/20 rounded-xl flex items-center justify-center text-blue-400">
+                  <AlertCircle size={20} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Active Session Detected</p>
+                  <p className="text-xs text-slate-300">You are registering a new partner under <strong>{currentUser.operator_id}</strong></p>
+                </div>
+              </div>
+              <button 
+                onClick={() => logout()}
+                className="p-2 text-slate-400 hover:text-white transition-colors"
+                title="Logout to register yourself"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="bg-[#121214]/80 backdrop-blur-3xl border border-white/10 p-12 rounded-[50px] shadow-2xl">
@@ -223,8 +252,11 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 type="text" 
                 value={sponsorId}
                 onChange={(e) => setSponsorId(e.target.value)}
+                readOnly={!!(new URLSearchParams(location.search).get('ref') || window.location.hash.includes('ref='))}
                 placeholder="ARW-XXXXXX"
-                className="w-full bg-slate-900/60 border border-orange-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none focus:border-orange-500/50" 
+                className={`w-full bg-slate-900/60 border border-orange-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none focus:border-orange-500/50 ${
+                  (new URLSearchParams(location.search).get('ref') || window.location.hash.includes('ref=')) ? 'opacity-70 cursor-not-allowed' : ''
+                }`} 
               />
               {sponsorName && (
                 <p className="text-[10px] text-emerald-500 font-bold uppercase tracking-widest ml-1">
