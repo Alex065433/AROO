@@ -611,7 +611,7 @@ export const supabaseService = {
   async activatePackage(uid: string, amount: number, options: { isFree?: boolean } = {}) {
     try {
       // Call the backend RPC to handle the entire package purchase process
-      const { data, error } = await supabase.rpc('buy_package', { 
+      const { data, error } = await supabase.rpc('process_purchase', { 
         p_user_id: uid, 
         p_package_id: amount.toString() 
       });
