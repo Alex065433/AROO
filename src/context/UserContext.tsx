@@ -87,12 +87,18 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         if (sessionError) {
           console.warn('Session error during initialization:', sessionError.message);
-          if (sessionError.message?.includes('Refresh Token Not Found') || sessionError.message?.includes('invalid_grant')) {
+          if (sessionError.message?.toLowerCase().includes('refresh token not found') || 
+              sessionError.message?.toLowerCase().includes('invalid_grant') ||
+              sessionError.message?.toLowerCase().includes('refresh_token_not_found')) {
             // Clear everything if refresh token is invalid
             setUser(null);
             setProfile(null);
             localStorage.removeItem('arowin_supabase_user');
-            await supabase.auth.signOut();
+            try {
+              await supabase.auth.signOut();
+            } catch (e) {
+              // Ignore sign out errors when session is already invalid
+            }
           }
           throw sessionError;
         }
@@ -112,7 +118,10 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } catch (err: any) {
         console.error('Auth initialization failed:', err.message);
-        if (err.message?.includes('Refresh Token Not Found') || err.message?.includes('invalid_grant')) {
+        const msg = err.message?.toLowerCase() || '';
+        if (msg.includes('refresh token not found') || 
+            msg.includes('invalid_grant') || 
+            msg.includes('refresh_token_not_found')) {
           if (mounted) {
             setUser(null);
             setProfile(null);
