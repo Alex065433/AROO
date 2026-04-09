@@ -394,8 +394,13 @@ export const supabaseService = {
         // to prevent duplicate side assignments
         try {
           const binaryResult = await this.findBinaryParent(explicitParent.id, side);
-          parentId = binaryResult.parentId;
-          finalSide = binaryResult.side;
+          if (binaryResult) {
+            parentId = binaryResult.parentId;
+            finalSide = binaryResult.side;
+          } else {
+            parentId = explicitParent.id;
+            finalSide = side;
+          }
         } catch (err) {
           console.warn('Binary parent search failed for explicit parent, defaulting to explicit parent:', err);
           parentId = explicitParent.id;
@@ -405,8 +410,10 @@ export const supabaseService = {
         // Fallback to spillover from sponsor if explicit parent not found
         try {
           const binaryResult = await this.findBinaryParent(sponsor.id, side);
-          parentId = binaryResult.parentId;
-          finalSide = binaryResult.side;
+          if (binaryResult) {
+            parentId = binaryResult.parentId;
+            finalSide = binaryResult.side;
+          }
         } catch (err) {
           console.warn('Binary parent search failed, defaulting to sponsor:', err);
         }
@@ -415,8 +422,10 @@ export const supabaseService = {
       // Standard spillover logic from sponsor
       try {
         const binaryResult = await this.findBinaryParent(sponsor.id, side);
-        parentId = binaryResult.parentId;
-        finalSide = binaryResult.side;
+        if (binaryResult) {
+          parentId = binaryResult.parentId;
+          finalSide = binaryResult.side;
+        }
       } catch (err) {
         console.warn('Binary parent search failed, defaulting to sponsor:', err);
       }
@@ -806,7 +815,7 @@ export const supabaseService = {
             
             nodesToCreate.push({
               uid: uid,
-              node_id: `${userProfile.operator_id}-ID${timestamp}-${i + 1}`,
+              node_id: `${userProfile.operator_id}-${String(i + 1).padStart(2, '0')}`,
               name: `${userProfile.name} Node ${i + 1}`,
               balance: 0,
               eligible: i < numRankNodes, // First N nodes are rank nodes
@@ -836,11 +845,11 @@ export const supabaseService = {
       // 5. Update Team Business & Team Size up the tree
       const pkg = PACKAGES.find(p => p.price === amount);
       // Rank Units logic:
-      // Activation (1 node) -> 1 unit
-      // Starter (3 nodes) -> 1 unit (User said "3 starters for Bronze", so 1 Starter pkg = 1 unit)
-      // Bronze (7 nodes) -> 3 units (1 Bronze pkg = 3 units = Bronze rank)
-      // Silver (15 nodes) -> 7 units (1 Silver pkg = 7 units = Silver rank)
-      const rankUnitsToAdd = pkg ? Math.max(1, (pkg.nodes - 1) / 2) : 1;
+      // Each package contributes its total node count to the rank eligibility of ancestors.
+      // 1 node package = 1 unit
+      // 3 node package = 3 units
+      // 7 node package = 7 units
+      const rankUnitsToAdd = pkg ? pkg.nodes : 1;
 
       let currentId = uid;
       let loopDepth = 0;
@@ -1594,25 +1603,35 @@ export const supabaseService = {
       const parentId = profile.parent_id;
       const side = profile.side;
       
-      // Fetch parent's current team size
+      // Fetch parent's current team size and counts
       const { data: parent, error: parentError } = await supabase
         .from('profiles')
-        .select('team_size')
+        .select('team_size, left_count, right_count')
         .eq('id', parentId)
         .single();
         
       if (parentError || !parent) break;
       
       const newTeamSize = { 
-        left: parent.team_size?.left || 0, 
-        right: parent.team_size?.right || 0 
+        left: Number(parent.team_size?.left || parent.left_count || 0), 
+        right: Number(parent.team_size?.right || parent.right_count || 0) 
       };
-      if (side === 'LEFT') newTeamSize.left += 1;
-      else newTeamSize.right += 1;
+      
+      const updateData: any = {};
+      
+      if (side === 'LEFT') {
+        newTeamSize.left += 1;
+        updateData.left_count = newTeamSize.left;
+      } else {
+        newTeamSize.right += 1;
+        updateData.right_count = newTeamSize.right;
+      }
+      
+      updateData.team_size = newTeamSize;
       
       await supabase
         .from('profiles')
-        .update({ team_size: newTeamSize })
+        .update(updateData)
         .eq('id', parentId);
         
       currentId = parentId;

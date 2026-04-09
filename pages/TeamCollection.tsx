@@ -32,22 +32,16 @@ const TeamCollection: React.FC = () => {
   const [isCollecting, setIsCollecting] = useState(false);
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
   const [transactionPassword, setTransactionPassword] = useState('');
+  const [amountToCollect, setAmountToCollect] = useState('0.00');
 
   useEffect(() => {
     if (userProfile?.id) {
       fetchNodes(userProfile.id);
     }
-  }, []);
+  }, [userProfile?.id]);
 
   const fetchNodes = async (userId: string) => {
-    console.log("SYNC START");
     setIsLoading(true);
-    
-    const timeout = setTimeout(() => {
-      setIsLoading(false);
-      console.log("SYNC TIMEOUT");
-    }, 5000);
-
     try {
       const data = await supabaseService.getTeamCollection(userId);
       setNodes(data);
@@ -56,9 +50,7 @@ const TeamCollection: React.FC = () => {
       toast.error('Failed to load team nodes');
       setNodes([]);
     } finally {
-      clearTimeout(timeout);
       setIsLoading(false);
-      console.log("SYNC END");
     }
   };
 
@@ -90,7 +82,7 @@ const TeamCollection: React.FC = () => {
     try {
       const isPasswordValid = await supabaseService.verifyWithdrawalPassword(userProfile.id, transactionPassword);
       if (!isPasswordValid) {
-        toast.error('Incorrect withdrawal password');
+        toast.error('Incorrect transaction password');
         setIsCollecting(false);
         return;
       }
@@ -103,14 +95,13 @@ const TeamCollection: React.FC = () => {
         setSelectedNodes(new Set());
         setTransactionPassword('');
         fetchNodes(userProfile.id);
-        // Refresh global wallet state
         await refreshProfile();
       } else {
-        toast.info('No yield available to collect from selected nodes');
+        toast.info('No balance available to collect from selected nodes');
       }
     } catch (error) {
-      console.error('Error collecting yield:', error);
-      toast.error('Failed to collect yield');
+      console.error('Error collecting:', error);
+      toast.error('Failed to collect');
     } finally {
       setIsCollecting(false);
     }
@@ -120,163 +111,133 @@ const TeamCollection: React.FC = () => {
     .filter(n => selectedNodes.has(n.id))
     .reduce((sum, node) => sum + (node.balance || 0), 0);
 
+  useEffect(() => {
+    setAmountToCollect(selectedAccrued.toFixed(2));
+  }, [selectedAccrued]);
+
   return (
-    <div className="min-h-screen bg-[#0a0a0b] text-white p-8 space-y-12 animate-in fade-in duration-500">
-      
-      {/* Header Section */}
-      <div className="flex justify-between items-start max-w-7xl mx-auto">
-        <div className="space-y-2">
-          <h1 className="text-5xl font-serif font-black uppercase tracking-tight text-white">
-            TEAM COLLECTION <span className="text-4xl">USDT</span>
-          </h1>
-          <p className="text-slate-500 font-medium text-lg">
-            Gather and consolidate USDT from your organizational hierarchy nodes.
-          </p>
-        </div>
-        <button 
-          onClick={() => userProfile && fetchNodes(userProfile.id)}
-          className="p-4 bg-white/5 hover:bg-white/10 rounded-2xl transition-all border border-white/5 group"
-        >
-          <RefreshCw size={24} className={`text-slate-400 group-hover:text-white transition-colors ${isLoading ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
-
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="min-h-screen bg-[#0a0a0b] text-white p-4 md:p-8 space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         
-        {/* Main Collection Card */}
-        <div className="bg-[#111112] border border-white/5 rounded-[40px] p-12 shadow-2xl relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-orange-600/5 blur-[120px] -mr-48 -mt-48 rounded-full" />
-          
-          <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-end gap-8">
-            <div className="space-y-4">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">TOTAL AVAILABLE IN SELECTED NODES</p>
-              <h2 className="text-6xl font-black text-orange-500 italic tracking-tighter">
-                {selectedAccrued.toFixed(2)} <span className="text-4xl ml-2">USDT</span>
-              </h2>
-            </div>
+        {/* Page Header */}
+        <div className="bg-[#f08a1d] px-4 py-2 rounded-sm mb-6">
+          <h1 className="text-xl font-bold text-black uppercase tracking-tight">
+            Team Collection USDT
+          </h1>
+        </div>
 
-            <div className="w-full md:w-64 space-y-3">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] text-right">TARGET AMOUNT</p>
-              <div className="bg-[#0b0e11] border border-white/5 rounded-2xl p-6 text-center">
-                <span className="text-2xl font-black text-white">{selectedAccrued.toFixed(2)}</span>
-              </div>
-            </div>
+        {/* Master Wallet Balance Section */}
+        <div className="bg-[#111112] border border-white/10 rounded-lg p-6 space-y-6">
+          <div className="flex justify-between items-center">
+            <p className="text-slate-400 font-medium">Total Master Wallet Balance</p>
+            <p className="text-xl font-bold text-[#f08a1d]">
+              {(userProfile?.wallet_balance || 0).toFixed(2)} USDT
+            </p>
           </div>
 
-          <div className="mt-12 flex flex-col md:flex-row gap-4 items-center relative z-10">
-            <div className="flex-1 w-full relative">
+          <div className="space-y-4">
+            <input 
+              type="text"
+              readOnly
+              value={amountToCollect}
+              className="w-full bg-[#0b0e11] border border-white/20 rounded-md px-4 py-3 text-white font-mono focus:border-[#f08a1d] outline-none transition-all"
+            />
+            
+            <div className="flex gap-4">
               <input 
                 type="password"
                 value={transactionPassword}
                 onChange={(e) => setTransactionPassword(e.target.value)}
                 placeholder="Enter your transaction password"
-                className="w-full bg-[#0b0e11] border border-white/5 rounded-2xl px-8 py-6 text-white font-medium focus:ring-2 focus:ring-orange-500/20 transition-all placeholder:text-slate-700"
+                className="flex-1 bg-[#0b0e11] border border-white/20 rounded-md px-4 py-3 text-white focus:border-[#f08a1d] outline-none transition-all placeholder:text-slate-600"
               />
+              <button 
+                onClick={handleCollect}
+                disabled={selectedNodes.size === 0 || isCollecting}
+                className="bg-[#f08a1d] hover:bg-[#d97a1a] text-black font-bold px-8 py-3 rounded-md transition-all disabled:opacity-50 uppercase"
+              >
+                {isCollecting ? '...' : 'SUBMIT'}
+              </button>
             </div>
-            <button 
-              onClick={handleCollect}
-              disabled={selectedNodes.size === 0 || isCollecting}
-              className="w-full md:w-auto px-12 py-6 bg-orange-600 hover:bg-orange-500 text-white font-black text-sm uppercase tracking-widest rounded-2xl transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed group"
-            >
-              {isCollecting ? <RefreshCw className="animate-spin" size={20} /> : <Send size={20} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />}
-              SUBMIT
-            </button>
           </div>
         </div>
 
         {/* Team List Section */}
-        <div className="bg-[#111112] border border-white/5 rounded-[40px] overflow-hidden shadow-2xl">
-          <div className="bg-orange-600 px-10 py-6 flex justify-between items-center">
-            <h3 className="text-xs font-black text-white uppercase tracking-[0.3em]">SELECT TEAM LIST</h3>
-            <button 
-              onClick={selectAll}
-              className="flex items-center gap-3 text-white group"
-            >
-              <span className="text-[10px] font-black uppercase tracking-widest">SELECT ALL</span>
-              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${selectedNodes.size === nodes.length && nodes.length > 0 ? 'bg-white border-white' : 'border-white/50 group-hover:border-white'}`}>
-                {selectedNodes.size === nodes.length && nodes.length > 0 && <CheckCircle2 size={14} className="text-orange-600" />}
-              </div>
-            </button>
+        <div className="bg-[#111112] border border-white/10 rounded-lg overflow-hidden">
+          <div className="bg-[#f08a1d] px-4 py-2">
+            <h3 className="text-sm font-bold text-black uppercase">Select Team List</h3>
           </div>
 
-          <div className="p-12 min-h-[400px] flex flex-col items-center justify-center text-center">
-            {isLoading ? (
-              <div className="flex flex-col items-center gap-4">
-                <RefreshCw className="text-orange-500 animate-spin" size={48} />
-                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">SYNCHRONIZING NODES...</p>
-              </div>
-            ) : nodes.length === 0 ? (
-              <div className="space-y-6">
-                <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center text-slate-700 mx-auto border border-white/5">
-                  <AlertCircle size={48} />
-                </div>
-                <div className="space-y-2">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">NO ACTIVE NODES FOUND. ACTIVATE A PACKAGE TO GENERATE NODES.</p>
-                </div>
-              </div>
-            ) : (
-              <div className="w-full grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {nodes.map((node) => (
-                  <motion.div
-                    key={node.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    whileHover={{ y: -5 }}
-                    onClick={() => toggleNodeSelection(node.id)}
-                    className={`group relative p-8 rounded-[32px] border transition-all cursor-pointer text-left ${
-                      selectedNodes.has(node.id) 
-                        ? 'bg-orange-600/10 border-orange-500/50' 
-                        : 'bg-[#0b0e11] border-white/5 hover:border-white/10'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start mb-8">
-                      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
-                        selectedNodes.has(node.id) ? 'bg-orange-600 text-white' : 'bg-white/5 text-slate-500 group-hover:text-orange-500'
-                      }`}>
-                        <Cpu size={28} />
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">NODE ID {node.generation !== undefined && `(GEN ${node.generation})`}</p>
-                        <p className="text-xs font-mono text-white tracking-tighter">{node.node_id}</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-6">
-                      <div>
-                        <h4 className="text-xl font-black text-white italic uppercase tracking-tight">{node.package_name}</h4>
-                        <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest mt-1">
-                          VALUE: {node.package_amount} USDT
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-6 pt-6 border-t border-white/5">
-                        <div>
-                          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">DAILY YIELD</p>
-                          <p className="text-base font-black text-white">{node.daily_yield.toFixed(2)} <span className="text-[10px] opacity-50">USDT</span></p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400 font-black tracking-wider">
+                  <th className="px-4 py-4 text-center">Select</th>
+                  <th className="px-4 py-4">S.No</th>
+                  <th className="px-4 py-4">Username</th>
+                  <th className="px-4 py-4">Name</th>
+                  <th className="px-4 py-4">Master Wallet (USDT)</th>
+                  <th className="px-4 py-4 text-center">E</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-20 text-center">
+                      <RefreshCw className="animate-spin mx-auto text-[#f08a1d] mb-4" size={32} />
+                      <p className="text-xs text-slate-500 uppercase font-bold">Loading Team Data...</p>
+                    </td>
+                  </tr>
+                ) : nodes.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-20 text-center">
+                      <p className="text-xs text-slate-500 uppercase font-bold tracking-widest">No team members found</p>
+                    </td>
+                  </tr>
+                ) : (
+                  nodes.map((node, index) => (
+                    <tr 
+                      key={node.id}
+                      className={`hover:bg-white/5 transition-colors cursor-pointer ${selectedNodes.has(node.id) ? 'bg-[#f08a1d]/5' : ''}`}
+                      onClick={() => toggleNodeSelection(node.id)}
+                    >
+                      <td className="px-4 py-4 text-center">
+                        <div className={`w-5 h-5 mx-auto rounded border flex items-center justify-center transition-all ${
+                          selectedNodes.has(node.id) ? 'bg-[#f08a1d] border-[#f08a1d]' : 'border-white/20'
+                        }`}>
+                          {selectedNodes.has(node.id) && <CheckCircle2 size={12} className="text-black" />}
                         </div>
-                        <div>
-                          <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest mb-1">ACCRUED</p>
-                          <p className={`text-base font-black ${node.balance > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
-                            {node.balance.toFixed(2)} <span className="text-[10px] opacity-50">USDT</span>
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Selection Indicator */}
-                    <div className={`absolute top-8 right-8 w-6 h-6 rounded-lg border-2 transition-all flex items-center justify-center ${
-                      selectedNodes.has(node.id) ? 'bg-orange-600 border-orange-600' : 'border-white/10'
-                    }`}>
-                      {selectedNodes.has(node.id) && <CheckCircle2 size={14} className="text-white" />}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+                      </td>
+                      <td className="px-4 py-4 text-xs font-mono text-slate-400">{index + 1}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-white uppercase tracking-tight">{node.node_id}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-white uppercase tracking-tight">{userProfile?.name || 'MEMBER'}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-[#f08a1d]">{node.balance.toFixed(2)} USDT</td>
+                      <td className="px-4 py-4 text-center">
+                        <span className={`text-[10px] font-black px-2 py-1 rounded ${node.status === 'active' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                          {node.status === 'active' ? 'N' : 'I'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
 
+        {/* Footer Info */}
+        <div className="flex justify-between items-center px-2">
+          <button 
+            onClick={selectAll}
+            className="text-[10px] font-black text-[#f08a1d] uppercase tracking-widest hover:underline"
+          >
+            {selectedNodes.size === nodes.length && nodes.length > 0 ? 'Deselect All' : 'Select All'}
+          </button>
+          <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">
+            Showing {nodes.length} members
+          </p>
+        </div>
+      </div>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,900;1,900&display=swap');
         .font-serif {

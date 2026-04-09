@@ -8,7 +8,8 @@ import {
   ArrowUpRight, ArrowDownLeft,
   History, RefreshCw,
   ArrowLeft, AlertCircle,
-  CheckCircle2, Users, Search, ArrowUpCircle
+  CheckCircle2, Users, Search, ArrowUpCircle,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -17,6 +18,7 @@ import { copyToClipboard } from '../src/lib/clipboard';
 import { apiFetch } from '../src/lib/api';
 import { User as UserProfile } from '../types';
 import { LiveRatesTicker } from '../components/LiveRatesTicker';
+import { RANK_NAMES } from '../constants';
 
 import { D3BinaryTree } from '../components/D3BinaryTree';
 import { RecursiveBinaryTree } from '../components/RecursiveBinaryTree';
@@ -53,6 +55,9 @@ const BinaryTree: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | 'ledger' | null>(null);
   const [totalReferrals, setTotalReferrals] = useState(0);
   const [notification, setNotification] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [showRankBreakdown, setShowRankBreakdown] = useState<'left' | 'right' | null>(null);
 
   useEffect(() => {
     const fetchReferrals = async () => {
@@ -79,15 +84,7 @@ const BinaryTree: React.FC = () => {
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT') => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     
-    // Get base URL robustly for both local and real domains
-    const getBaseUrl = () => {
-      const href = window.location.href;
-      const hashIndex = href.indexOf('#');
-      const base = hashIndex !== -1 ? href.substring(0, hashIndex) : href;
-      return base.endsWith('/') ? base : base + '/';
-    };
-
-    const inviteUrl = `${getBaseUrl()}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
     
     setInviteModal({
       parentId,
@@ -108,11 +105,35 @@ const BinaryTree: React.FC = () => {
     return ((Number(exchangeAmount) || 0) * (coins[selectedCoin]?.rate || 0)).toFixed(selectedCoin === 'TRX' ? 2 : 6);
   }, [exchangeAmount, selectedCoin]);
 
+  const rankCounts = useMemo(() => {
+    const left: Record<string, number> = {};
+    const right: Record<string, number> = {};
+    
+    RANK_NAMES.forEach(name => {
+      left[name] = 0;
+      right[name] = 0;
+    });
+
+    (Object.entries(treeData) as [string, NodeData][]).forEach(([path, node]) => {
+      if (path.startsWith('root.left')) {
+        if (node.rank && left[node.rank] !== undefined) {
+          left[node.rank]++;
+        }
+      } else if (path.startsWith('root.right')) {
+        if (node.rank && right[node.rank] !== undefined) {
+          right[node.rank]++;
+        }
+      }
+    });
+
+    return { left, right };
+  }, [treeData]);
+
   useEffect(() => {
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
       if (user) {
         try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid, 'id, name, rank, team_size, parent_id, role, operator_id, email') as any;
+          const profile = await supabaseService.getUserProfile(user.id || user.uid, 'id, name, rank, team_size, parent_id, role, operator_id, email, left_count, right_count') as any;
           console.log('BinaryTree userProfile:', profile);
           if (profile) {
             setUserProfile(profile);
@@ -139,17 +160,15 @@ const BinaryTree: React.FC = () => {
   }, []);
 
   const refreshTree = async () => {
-    if (viewRootId) {
+    if (viewRootId && !isTreeLoading) {
       setIsTreeLoading(true);
       try {
-        // First rebuild the network stats in the database
-        await supabaseService.rebuildNetwork();
-        // Then fetch the updated tree data
+        // Fetch the updated tree data
         const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
         setTreeData(dynamicTree);
         
         // Refetch profile to update leg counts
-        const updatedProfile = await supabaseService.getUserProfile(userProfile.id, 'id, name, rank, team_size, parent_id, role, operator_id, email');
+        const updatedProfile = await supabaseService.getUserProfile(userProfile.id, 'id, name, rank, team_size, parent_id, role, operator_id, email, left_count, right_count');
         setUserProfile(updatedProfile);
       } catch (err) {
         console.error('Error refreshing tree:', err);
@@ -162,24 +181,32 @@ const BinaryTree: React.FC = () => {
   // Fetch tree when viewRootId changes
   useEffect(() => {
     if (viewRootId) {
+      let isMounted = true;
       const fetchTree = async () => {
+        if (!isMounted) return;
         setIsTreeLoading(true);
         try {
           const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
-          console.log('BinaryTree treeData:', dynamicTree);
-          setTreeData(dynamicTree);
+          if (isMounted) {
+            setTreeData(dynamicTree);
+          }
         } catch (err) {
           console.error('Error fetching tree:', err);
         } finally {
-          setIsTreeLoading(false);
+          if (isMounted) {
+            setIsTreeLoading(false);
+          }
         }
       };
       
       fetchTree();
       
-      // Refresh tree every 10 seconds to ensure leg counts are updated
-      const interval = setInterval(fetchTree, 10000);
-      return () => clearInterval(interval);
+      // Refresh tree every 30 seconds instead of 10 to reduce buffering/glitching
+      const interval = setInterval(fetchTree, 30000);
+      return () => {
+        isMounted = false;
+        clearInterval(interval);
+      };
     }
   }, [viewRootId]);
 
@@ -231,20 +258,30 @@ const BinaryTree: React.FC = () => {
 
   const handleGoUp = async () => {
     if (!viewRootId) return;
-    const { data: currentProfile } = await supabaseService.getUserProfile(viewRootId) as any;
+    const currentProfile = await supabaseService.getUserProfile(viewRootId) as any;
     if (currentProfile && currentProfile.parent_id) {
       setViewRootId(currentProfile.parent_id);
     }
   };
 
-  const handleResetView = async () => {
-    if (userProfile) {
-      let rootId = userProfile.id;
-      if (userProfile.role === 'admin') {
-        const absRoot = await supabaseService.getAbsoluteRoot() as any;
-        if (absRoot) rootId = absRoot.id;
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    
+    setIsSearching(true);
+    try {
+      const user = await supabaseService.findUserByOperatorId(searchQuery.trim());
+      if (user) {
+        setViewRootId(user.id);
+        setSearchQuery('');
+        toast.success(`Found user: ${user.name}`);
+      } else {
+        toast.error('User not found in network');
       }
-      setViewRootId(rootId);
+    } catch (err) {
+      console.error('Search error:', err);
+      toast.error('Error searching for user');
+    } finally {
+      setIsSearching(false);
     }
   };
 
@@ -287,335 +324,119 @@ const BinaryTree: React.FC = () => {
       )}
       <LiveRatesTicker />
       
-      <div className="p-8 space-y-8">
+      <div className="p-3 md:p-8 space-y-4 md:space-y-6">
+        {/* Header Controls */}
+        <div className="flex flex-col gap-4 md:gap-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl md:text-2xl font-black text-white uppercase tracking-tight italic">My Tree</h2>
+            <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden">
+               <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${userProfile?.name}`} alt="User" className="w-full h-full object-cover" />
+            </div>
+          </div>
 
-        {/* Invite Modal */}
-      <AnimatePresence>
-        {inviteModal && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setInviteModal(null)}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="relative w-full max-w-md bg-[#111112] border border-white/10 rounded-[40px] p-8 shadow-2xl overflow-hidden"
+          <div className="flex items-center justify-between gap-2 md:gap-4">
+            <button 
+              onClick={handleGoUp}
+              className="flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 bg-[#c0841a] text-black font-black text-[10px] md:text-xs uppercase tracking-widest rounded-full transition-all hover:bg-[#d49a2d] flex items-center justify-center gap-2"
             >
-              <div className="absolute top-0 right-0 p-6">
-                <button onClick={() => setInviteModal(null)} className="text-slate-500 hover:text-white transition-colors">
-                  <X size={24} />
-                </button>
-              </div>
+              Back &lt;&lt;
+            </button>
+            <button 
+              onClick={() => setActiveTab('ledger')}
+              className="flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 bg-[#c0841a] text-black font-black text-[10px] md:text-xs uppercase tracking-widest rounded-full transition-all hover:bg-[#d49a2d]"
+            >
+              Downline List
+            </button>
+          </div>
 
-              <div className="flex flex-col items-center text-center space-y-6">
-                <div className="w-20 h-20 bg-orange-600/20 rounded-[24px] flex items-center justify-center text-orange-500">
-                  <Share2 size={32} />
-                </div>
-                
-                <div>
-                  <h3 className="text-2xl font-black text-white uppercase tracking-tight italic">Referral Protocol</h3>
-                  <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mt-2">
-                    Placement: {inviteModal.parentId} ({inviteModal.side} Side)
-                  </p>
-                </div>
+          <div className="relative group">
+            <input 
+              type="text" 
+              placeholder="Username or Operator ID"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              className="w-full bg-[#121214] border border-white/10 rounded-xl px-4 md:px-6 py-3 md:py-4 text-white font-bold text-xs md:text-sm focus:outline-none focus:border-[#c0841a]/50 transition-all"
+            />
+            <button 
+              onClick={handleSearch}
+              disabled={isSearching}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-2 md:p-3 bg-[#c0841a] rounded-lg text-black hover:bg-[#d49a2d] transition-all disabled:opacity-50"
+            >
+              {isSearching ? <RefreshCw size={16} className="animate-spin" /> : <Search size={16} />}
+            </button>
+          </div>
 
-                <div className="w-full space-y-4">
-                  <div className="p-6 bg-slate-900/50 rounded-3xl border border-white/5 space-y-3">
-                    <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest text-left">Your Referral Link</p>
-                    <div className="flex items-center gap-3">
-                      <input 
-                        readOnly 
-                        value={inviteModal.url}
-                        className="flex-1 bg-transparent border-none text-xs font-mono text-slate-300 focus:ring-0 truncate"
-                      />
-                      <button 
-                        onClick={async () => {
-                          const success = await copyToClipboard(inviteModal.url);
-                          if (success) {
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 2000);
-                          }
-                        }}
-                        className="p-3 bg-orange-600 rounded-xl text-white hover:bg-orange-500 transition-all shadow-lg shadow-orange-950/20"
-                      >
-                        {copied ? <Check size={18} /> : <Copy size={18} />}
-                      </button>
+          <div className="grid grid-cols-2 gap-3 md:gap-4">
+            <div className="space-y-1 md:space-y-2 relative">
+              <p className="text-[9px] md:text-xs font-bold text-white uppercase tracking-widest">Left Affiliates:</p>
+              <p className="text-sm md:text-lg font-black text-white italic">{userProfile?.team_size?.left || 0} | {userProfile?.left_count || 0}</p>
+              <button 
+                onClick={() => setShowRankBreakdown(showRankBreakdown === 'left' ? null : 'left')}
+                className="inline-block px-3 md:px-4 py-1 md:py-1.5 bg-gradient-to-r from-[#c0841a] to-[#d49a2d] rounded-full transition-transform active:scale-95"
+              >
+                <span className="text-[7px] md:text-[8px] font-black text-black uppercase tracking-widest">TOTAL OF ALL RANKS</span>
+              </button>
+
+              <AnimatePresence>
+                {showRankBreakdown === 'left' && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute left-0 top-full mt-2 w-64 bg-[#f2a93b] rounded-2xl p-4 z-[200] shadow-2xl"
+                  >
+                    <div className="space-y-1">
+                      {RANK_NAMES.map((name) => (
+                        <div key={name} className="flex justify-between items-center bg-white/20 rounded-lg px-3 py-1.5">
+                          <span className="text-[10px] font-black text-black uppercase">{name}</span>
+                          <span className="text-sm font-black text-black">{rankCounts.left[name]}</span>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-
-                  <div className="flex flex-col gap-3">
-                    <a 
-                      href={inviteModal.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-black text-[10px] uppercase tracking-widest rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-2"
-                    >
-                      Open Registration <ArrowUpRight size={14} />
-                    </a>
-                    <p className="text-[8px] text-slate-600 font-bold uppercase tracking-widest">
-                      Share this link with your new partner for direct placement.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Wallet Modals (Same as MasterWallet) */}
-      <AnimatePresence>
-        {activeTab && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center">
-            <div className="absolute inset-0 bg-[#0b0e11]/98 backdrop-blur-md" onClick={() => !isProcessing && setActiveTab(null)} />
-            
-            <div className={`relative w-full max-w-[480px] h-full md:h-[90vh] bg-[#0b0e11] md:rounded-[32px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in duration-300 border border-white/5`}>
-              
-              <div className="px-8 py-6 flex justify-between items-center bg-[#0b0e11] border-b border-white/5">
-                <button onClick={() => setActiveTab(null)} className="p-2 text-slate-400 hover:text-white transition-colors">
-                  <ArrowLeft size={24} />
-                </button>
-                <div className="flex flex-col items-center">
-                  <h3 className="text-xl font-black text-white uppercase tracking-tighter">
-                    {activeTab === 'withdraw' ? 'Send USDT' : activeTab === 'deposit' ? 'Deposit USDT' : activeTab === 'package' ? 'Activate Package' : activeTab === 'ledger' ? 'Liquidity Ledger' : 'Exchange Node'}
-                  </h3>
-                </div>
-                <div className="w-10" />
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-32">
-                {activeTab === 'deposit' ? (
-                  <div className="space-y-10 mt-10">
-                    {!paymentData ? (
-                      <div className="space-y-8">
-                        <div className="space-y-4">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Deposit Amount (USDT)</label>
-                          <div className="relative">
-                            <input 
-                              type="number" 
-                              value={depositAmount}
-                              onChange={(e) => setDepositAmount(e.target.value)}
-                              placeholder="50" 
-                              className="w-full bg-[#1e2329] border-none rounded-2xl px-6 py-6 text-white font-black text-3xl pr-32 focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-800"
-                            />
-                            <span className="absolute right-6 top-1/2 -translate-y-1/2 text-white font-black text-sm">USDT</span>
-                          </div>
-                          <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest px-1">Minimum Deposit: 50 USDT</p>
-                        </div>
-
-                        <button 
-                          onClick={createPayment}
-                          disabled={isProcessing}
-                          className="w-full py-6 bg-orange-600 text-white font-black rounded-2xl hover:bg-orange-500 transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center gap-3 disabled:opacity-50"
-                        >
-                          {isProcessing ? <RefreshCw className="animate-spin" size={20} /> : <Zap size={20} />}
-                          INITIALIZE PAYMENT
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-10 animate-in fade-in zoom-in duration-500">
-                        <div className="p-8 bg-emerald-500/10 border border-emerald-500/20 rounded-[32px] flex flex-col items-center text-center space-y-4">
-                           <div className="w-16 h-16 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-500">
-                              <CheckCircle2 size={32} />
-                           </div>
-                           <div>
-                              <p className="text-xs font-black text-white uppercase tracking-widest">Payment Node Generated</p>
-                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Send exactly {paymentData.pay_amount} {paymentData.pay_currency.toUpperCase()}</p>
-                           </div>
-                        </div>
-
-                        <div className="space-y-6">
-                           <div className="p-6 bg-[#1e2329] rounded-2xl border border-white/5 space-y-4">
-                              <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Destination Address (BEP20)</p>
-                              <div className="flex items-center gap-4">
-                                 <p className="flex-1 font-mono text-xs text-white break-all">{paymentData.pay_address}</p>
-                                 <button onClick={async () => { await copyToClipboard(paymentData.pay_address); toast.success('Address copied to clipboard'); }} className="p-3 bg-white/5 rounded-xl text-slate-400 hover:text-white transition-all">
-                                    <Copy size={16} />
-                                 </button>
-                              </div>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : activeTab === 'ledger' ? (
-                  <div className="mt-10 space-y-8">
-                    {isLoadingTransactions ? (
-                      <div className="flex flex-col items-center justify-center py-20 gap-4">
-                        <RefreshCw className="animate-spin text-slate-700" size={32} />
-                        <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Syncing Ledger...</p>
-                      </div>
-                    ) : transactions.length === 0 ? (
-                      <div className="text-center py-20">
-                        <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">No protocol actions recorded</p>
-                      </div>
-                    ) : (
-                      transactions.map((tx, idx) => (
-                        <div key={idx} className="flex justify-between items-center p-6 bg-white/5 rounded-2xl border border-white/5">
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tx.payment_status === 'finished' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                              {tx.payment_status === 'finished' ? <ArrowDownLeft size={18} /> : <RefreshCw size={18} className="animate-spin" />}
-                            </div>
-                            <div>
-                              <p className="text-sm font-bold text-white">{tx.order_description || 'Inbound Deposit'}</p>
-                              <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mt-0.5">
-                                {tx.createdAt?.toDate ? tx.createdAt.toDate().toLocaleString() : 'Recent'}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <span className={`text-sm font-black block ${tx.payment_status === 'finished' ? 'text-emerald-500' : 'text-slate-400'}`}>
-                              +{tx.pay_amount || tx.amount}
-                            </span>
-                            <span className="text-[8px] font-black text-slate-700 uppercase">{tx.payment_status}</span>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-10 text-center py-20">
-                    <AlertCircle className="mx-auto text-slate-700 mb-4" size={48} />
-                    <p className="text-[10px] font-black text-slate-700 uppercase tracking-widest">Protocol under maintenance</p>
-                  </div>
+                  </motion.div>
                 )}
-              </div>
-
-              <div className="absolute bottom-0 left-0 right-0 bg-[#0b0e11] border-t border-white/5 p-8">
-                <button 
-                  onClick={() => setActiveTab(null)}
-                  className="w-full py-5 bg-white/5 text-slate-400 font-black rounded-2xl hover:text-white transition-all text-xs uppercase tracking-widest"
-                >
-                  Close Interface
-                </button>
-              </div>
+              </AnimatePresence>
             </div>
-          </div>
-        )}
-      </AnimatePresence>
+            <div className="space-y-1 md:space-y-2 text-right relative">
+              <p className="text-[9px] md:text-xs font-bold text-white uppercase tracking-widest">Right Affiliates:</p>
+              <p className="text-sm md:text-lg font-black text-white italic">{userProfile?.team_size?.right || 0} | {userProfile?.right_count || 0}</p>
+              <button 
+                onClick={() => setShowRankBreakdown(showRankBreakdown === 'right' ? null : 'right')}
+                className="inline-block px-3 md:px-4 py-1 md:py-1.5 bg-gradient-to-r from-[#c0841a] to-[#d49a2d] rounded-full transition-transform active:scale-95"
+              >
+                <span className="text-[7px] md:text-[8px] font-black text-black uppercase tracking-widest">TOTAL OF ALL RANKS</span>
+              </button>
 
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div>
-          <h2 className="text-4xl font-black uppercase tracking-tight text-white italic">Network Architecture</h2>
-          <div className="flex items-center gap-4 mt-2">
-            <p className="text-slate-500 font-medium">Visualization of your institutional binary growth nodes.</p>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={handleGoUp}
-                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-white/5 flex items-center gap-2"
-              >
-                <ArrowLeft size={12} /> Go Up
-              </button>
-              <button 
-                onClick={handleResetView}
-                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-white/5 flex items-center gap-2"
-              >
-                <RefreshCw size={12} /> Reset View
-              </button>
-              <button 
-                onClick={refreshTree}
-                disabled={isTreeLoading}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white font-black text-[9px] uppercase tracking-widest rounded-xl transition-all border border-orange-500/20 flex items-center gap-2 shadow-lg shadow-orange-950/20"
-              >
-                <RefreshCw size={12} className={isTreeLoading ? "animate-spin" : ""} /> Sync Network
-              </button>
+              <AnimatePresence>
+                {showRankBreakdown === 'right' && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 top-full mt-2 w-64 bg-[#f2a93b] rounded-2xl p-4 z-[200] shadow-2xl text-left"
+                  >
+                    <div className="space-y-1">
+                      {RANK_NAMES.map((name) => (
+                        <div key={name} className="flex justify-between items-center bg-white/20 rounded-lg px-3 py-1.5">
+                          <span className="text-[10px] font-black text-black uppercase">{name}</span>
+                          <span className="text-sm font-black text-black">{rankCounts.right[name]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded-2xl border border-white/5 backdrop-blur-xl">
-            <button onClick={() => setActiveTab('ledger')} className="p-3 text-slate-400 hover:text-white transition-colors flex flex-col items-center gap-1">
-              <History size={20} />
-              <span className="text-[7px] font-black uppercase">Ledger</span>
-            </button>
-            <button onClick={() => setActiveTab('deposit')} className="p-3 text-slate-400 hover:text-white transition-colors flex flex-col items-center gap-1">
-              <ArrowDownLeft size={20} />
-              <span className="text-[7px] font-black uppercase">Deposit</span>
-            </button>
-            <button onClick={() => setActiveTab('withdraw')} className="p-3 text-slate-400 hover:text-white transition-colors flex flex-col items-center gap-1">
-              <ArrowUpRight size={20} />
-              <span className="text-[7px] font-black uppercase">Withdraw</span>
-            </button>
-          </div>
 
-          <div className="flex items-center gap-4 bg-slate-900/50 p-2 rounded-2xl border border-white/5 backdrop-blur-xl">
-            <div className="flex items-center gap-3 px-4">
-               <div className="flex items-center gap-2">
-                 <div className="w-2 h-2 rounded-full bg-orange-500" />
-                 <span className="text-[10px] font-black text-slate-500 uppercase">Path Active</span>
-               </div>
-               {viewRootId !== userProfile?.id && (
-                 <div className="flex gap-2">
-                   <button 
-                     onClick={() => {
-                       const currentRoot = treeData['root'];
-                       if (currentRoot && currentRoot.parentId) {
-                         setViewRootId(currentRoot.parentId);
-                       }
-                     }}
-                     className="px-4 py-2 bg-slate-800 text-slate-400 text-[9px] font-black uppercase rounded-lg border border-white/5 hover:text-white transition-all"
-                   >
-                     Go Up
-                   </button>
-                   <button 
-                     onClick={() => {
-                       setViewRootId(userProfile?.id || null);
-                       // scrollToMyNode
-                     }}
-                     className="px-4 py-2 bg-orange-600/20 text-orange-500 text-[9px] font-black uppercase rounded-lg border border-orange-500/30 hover:bg-orange-600 hover:text-white transition-all"
-                   >
-                     My Node
-                   </button>
-                 </div>
-               )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-orange-500/10 to-transparent">
-          <div>
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Direct Referrals</p>
-            <h3 className="text-3xl font-black text-white italic">{totalReferrals}</h3>
-          </div>
-          <div className="w-12 h-12 bg-orange-500/20 rounded-2xl flex items-center justify-center text-orange-500">
-            <UserPlus size={24} />
-          </div>
-        </GlassCard>
-        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-emerald-500/10 to-transparent">
-          <div>
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Left Leg Count</p>
-            <h3 className="text-3xl font-black text-white italic">{userProfile?.team_size?.left || 0}</h3>
-          </div>
-          <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-500">
-            <ArrowDownLeft size={24} />
-          </div>
-        </GlassCard>
-        <GlassCard className="p-6 border-white/5 flex items-center justify-between bg-gradient-to-br from-blue-500/10 to-transparent">
-          <div>
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Right Leg Count</p>
-            <h3 className="text-3xl font-black text-white italic">{userProfile?.team_size?.right || 0}</h3>
-          </div>
-          <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center text-blue-500">
-            <ArrowUpRight size={24} />
-          </div>
-        </GlassCard>
-      </div>
-
-      <div className="flex flex-col lg:flex-row gap-8 items-start relative">
         {/* Main Tree Container */}
-        <div className="w-full lg:flex-1 h-[600px] md:h-[850px] relative">
+        <div className="w-full h-[700px] md:h-[900px] relative">
           {isTreeLoading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0b] rounded-[40px] border border-white/5">
               <div className="flex flex-col items-center gap-4">
-                <RefreshCw className="text-orange-500 animate-spin" size={48} />
+                <RefreshCw className="text-[#c0841a] animate-spin" size={48} />
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Synchronizing Network Data...</p>
               </div>
             </div>
@@ -635,6 +456,7 @@ const BinaryTree: React.FC = () => {
             />
           )}
         </div>
+      </div>
 
         {/* Profile Sidebar (Chain Details) */}
         <AnimatePresence>
@@ -879,7 +701,6 @@ const BinaryTree: React.FC = () => {
             </>
           )}
         </AnimatePresence>
-      </div>
 
       <div className="bg-[#111112] border border-white/5 p-10 rounded-[40px] flex flex-col md:flex-row items-center gap-10">
         <div className="p-5 bg-orange-500/10 rounded-3xl text-orange-500 shadow-inner">
@@ -891,8 +712,243 @@ const BinaryTree: React.FC = () => {
             Selecting an active node activates the <b>Primary Connection Chain</b>. Clicking an empty node initializes the <b>Registration Invite Protocol</b>, providing side-specific placement links for new organizational expansion.
           </p>
         </div>
-        </div>
       </div>
+
+      {/* Downline List Modal */}
+      <AnimatePresence>
+        {activeTab === 'ledger' && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setActiveTab(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-4xl bg-[#121214] border border-white/10 rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+            >
+              <div className="p-8 md:p-10 border-b border-white/5">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-[#c0841a]/20 rounded-2xl flex items-center justify-center text-[#c0841a]">
+                      <Users size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white uppercase tracking-tight">Downline Ledger</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Network Synchronization Active</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setActiveTab(null)}
+                    className="p-2 text-slate-500 hover:text-white transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+                <div className="space-y-4">
+                  {(Object.values(treeData) as NodeData[]).filter(n => n.status !== 'Vacant').length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-separate border-spacing-y-2">
+                        <thead>
+                          <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                            <th className="px-6 py-4">Member</th>
+                            <th className="px-6 py-4">ID</th>
+                            <th className="px-6 py-4">Rank</th>
+                            <th className="px-6 py-4">Business (L/R)</th>
+                            <th className="px-6 py-4 text-right">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(Object.values(treeData) as NodeData[])
+                            .filter(n => n.status !== 'Vacant')
+                            .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                            .map((member, idx) => (
+                              <tr key={idx} className="bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
+                                <td className="px-6 py-4 rounded-l-2xl border-l border-t border-b border-white/5">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center overflow-hidden">
+                                      <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${member.name}`} alt="User" className="w-full h-full object-cover" />
+                                    </div>
+                                    <span className="text-sm font-bold text-white italic">{member.name}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 border-t border-b border-white/5">
+                                  <span className="text-xs font-mono text-slate-400">{member.id}</span>
+                                </td>
+                                <td className="px-6 py-4 border-t border-b border-white/5">
+                                  <span className="text-[10px] font-black text-[#c0841a] uppercase tracking-widest">{member.rank}</span>
+                                </td>
+                                <td className="px-6 py-4 border-t border-b border-white/5">
+                                  <div className="text-[10px] font-bold text-slate-400">
+                                    <span className="text-white">{member.leftBusiness}</span> / <span className="text-white">{member.rightBusiness}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 rounded-r-2xl border-r border-t border-b border-white/5 text-right">
+                                  <button 
+                                    onClick={() => {
+                                      if (member.uid) {
+                                        setViewRootId(member.uid);
+                                        setActiveTab(null);
+                                      }
+                                    }}
+                                    className="p-2 bg-white/5 hover:bg-[#c0841a] hover:text-black rounded-lg transition-all"
+                                  >
+                                    <ArrowUpRight size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-center py-20 bg-white/[0.02] rounded-[40px] border border-dashed border-white/5">
+                      <Users className="mx-auto text-slate-800 mb-4" size={48} />
+                      <p className="text-sm font-black text-slate-500 uppercase tracking-widest">No Downline Members Found</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="p-8 border-t border-white/5 bg-black/20 flex justify-between items-center">
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                  Total Synchronized Nodes: {(Object.values(treeData) as NodeData[]).filter(n => n.status !== 'Vacant').length}
+                </p>
+                <button 
+                  onClick={() => {
+                    // Simple CSV export logic
+                    const headers = ['Name', 'ID', 'Rank', 'Left Business', 'Right Business', 'Join Date'];
+                    const rows = (Object.values(treeData) as NodeData[])
+                      .filter(n => n.status !== 'Vacant')
+                      .map(m => [m.name, m.id, m.rank, m.leftBusiness, m.rightBusiness, m.joinDate]);
+                    
+                    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                    const link = document.createElement("a");
+                    const url = URL.createObjectURL(blob);
+                    link.setAttribute("href", url);
+                    link.setAttribute("download", `downline_ledger_${new Date().toISOString().split('T')[0]}.csv`);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    toast.success('Ledger exported successfully');
+                  }}
+                  className="px-6 py-3 bg-[#c0841a] text-black font-black text-[10px] uppercase tracking-widest rounded-2xl hover:bg-[#d49a2d] transition-all flex items-center gap-2"
+                >
+                  Download CSV <ChevronRight size={14} />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Invite Modal */}
+      <AnimatePresence>
+        {inviteModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setInviteModal(null)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative w-full max-w-lg bg-[#121214] border border-white/10 rounded-[40px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-8 md:p-10">
+                <div className="flex justify-between items-center mb-8">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-orange-500/20 rounded-2xl flex items-center justify-center text-orange-500">
+                      <UserPlus size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white uppercase tracking-tight">Invite Partner</h3>
+                      <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Placement: {inviteModal.side} Branch</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setInviteModal(null)}
+                    className="p-2 text-slate-500 hover:text-white transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="p-6 bg-white/[0.02] border border-white/5 rounded-3xl">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">Referral Protocol Link</p>
+                    <div className="flex items-center gap-3 bg-black/40 border border-white/5 rounded-2xl p-4">
+                      <div className="flex-1 overflow-hidden">
+                        <p className="text-xs font-mono text-slate-400 truncate">{inviteModal.url}</p>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          copyToClipboard(inviteModal.url);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                          toast.success('Link copied to clipboard');
+                        }}
+                        className="p-2 bg-orange-600 rounded-xl text-white hover:bg-orange-500 transition-all"
+                      >
+                        {copied ? <Check size={18} /> : <Copy size={18} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4">
+                    <button 
+                      onClick={() => {
+                        window.open(inviteModal.url, '_blank');
+                        setInviteModal(null);
+                      }}
+                      className="w-full py-5 bg-orange-600 hover:bg-orange-500 text-white font-black text-xs uppercase tracking-[0.2em] rounded-2xl transition-all shadow-xl shadow-orange-950/20 flex items-center justify-center gap-3 group"
+                    >
+                      Open Registration <ArrowUpRight size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        if (navigator.share) {
+                          navigator.share({
+                            title: 'Join Arowin Trading',
+                            text: 'Join my network on Arowin Trading and start earning!',
+                            url: inviteModal.url
+                          }).catch(console.error);
+                        } else {
+                          copyToClipboard(inviteModal.url);
+                          toast.success('Link copied to clipboard');
+                        }
+                      }}
+                      className="w-full py-5 bg-white/5 hover:bg-white/10 text-white font-black text-xs uppercase tracking-[0.2em] rounded-2xl transition-all border border-white/5 flex items-center justify-center gap-3"
+                    >
+                      Share Protocol <Share2 size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-orange-500/5 p-6 border-t border-white/5">
+                <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest text-center leading-relaxed">
+                  This link automatically configures the sponsor ID and binary placement side for the new node enrollment.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

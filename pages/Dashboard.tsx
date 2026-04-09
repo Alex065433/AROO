@@ -8,7 +8,7 @@ import {
   QrCode, Search, ShieldAlert, Package
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MOCK_USER, RANKS, PACKAGES } from '../constants';
+import { MOCK_USER, RANKS, PACKAGES, RANK_NAMES } from '../constants';
 import { ArowinLogo } from '../components/ArowinLogo';
 
 import { supabaseService } from '../services/supabaseService';
@@ -67,29 +67,29 @@ const WalletCardRow: React.FC<{
   isMaster?: boolean;
 }> = ({ title, amount, buttons, isMaster = false }) => {
   return (
-    <div className={`w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-8 shadow-2xl transition-all duration-500 hover:border-white/10`}>
-      <div className={`w-full py-3.5 px-6 flex justify-center items-center relative overflow-hidden ${isMaster ? 'bg-[#3b2a0c]' : 'bg-[#18181b]'}`}>
-        <h3 className="text-white text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-3">
-          {isMaster && <Wallet size={16} />}
+    <div className={`w-full bg-[#111112] border border-white/5 rounded-2xl overflow-hidden mb-4 md:mb-8 shadow-2xl transition-all duration-500 hover:border-white/10`}>
+      <div className={`w-full py-2.5 md:py-3.5 px-4 md:px-6 flex justify-center items-center relative overflow-hidden ${isMaster ? 'bg-[#3b2a0c]' : 'bg-[#18181b]'}`}>
+        <h3 className="text-white text-[10px] md:text-xs font-black uppercase tracking-[0.2em] relative z-10 flex items-center gap-2 md:gap-3">
+          {isMaster && <Wallet size={14} className="md:w-4 md:h-4" />}
           {title}
         </h3>
       </div>
 
-      <div className="p-6 md:p-10 text-center bg-[#0d0d0e]">
-        <div className="flex flex-col items-center mb-6 md:mb-10">
-          <p className="text-3xl md:text-4xl font-black text-slate-200 tracking-tight mb-2">
+      <div className="p-4 md:p-10 text-center bg-[#0d0d0e]">
+        <div className="flex flex-col items-center mb-4 md:mb-10">
+          <p className="text-2xl md:text-4xl font-black text-slate-200 tracking-tight mb-1 md:mb-2">
             {(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
-          <p className="text-[#c0841a] text-[9px] md:text-[10px] font-black tracking-[0.2em] uppercase">USDT NODE ASSET</p>
+          <p className="text-[#c0841a] text-[8px] md:text-[10px] font-black tracking-[0.2em] uppercase">USDT NODE ASSET</p>
         </div>
 
-        <div className="flex flex-wrap justify-center gap-4">
+        <div className="flex flex-wrap justify-center gap-2 md:gap-4">
           {buttons.map((btn, idx) => (
             <button 
               key={idx}
               onClick={btn.action}
               disabled={btn.disabled}
-              className={`px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg border border-white/5 ${
+              className={`px-4 md:px-6 py-2 md:py-2.5 rounded-lg md:rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg border border-white/5 ${
                 btn.disabled ? 'opacity-30 cursor-not-allowed' : (btn.color || 'bg-[#1e293b] text-slate-400 hover:text-white')
               }`}
             >
@@ -189,7 +189,7 @@ const Dashboard: React.FC = () => {
         console.log('profileResponse:', profile);
         setUserData(profile);
 
-        const masterBalance = Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0);
+        const masterBalance = Number(profile.wallets?.master?.balance ?? profile.wallet_balance ?? profile.deposit_wallet ?? 0);
         const referralBalance = Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0);
         const matchingBalance = Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0);
         const rankBalance = Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0);
@@ -396,6 +396,7 @@ const Dashboard: React.FC = () => {
   };
 
   const handleClaim = async (walletKey: string) => {
+    if (isProcessing) return;
     setIsProcessing(true);
     console.log('Claiming wallet:', walletKey);
     try {
@@ -404,7 +405,8 @@ const Dashboard: React.FC = () => {
       console.log('Claim successful');
       setNotification(`Successfully claimed to Vault`);
       
-      // Refresh user data
+      // Refresh user data with a small delay to ensure DB consistency
+      await new Promise(resolve => setTimeout(resolve, 1000));
       await fetchAllData(false);
     } catch (err) {
       console.error('Claim Failed:', err);
@@ -718,26 +720,25 @@ const Dashboard: React.FC = () => {
 
 
       {/* Top Welcome Section */}
-      <div className="bg-[#0c0c0d] p-6 md:p-12 rounded-[32px] md:rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl relative overflow-hidden group">
+      <div className="bg-[#0c0c0d] p-6 md:p-12 rounded-[24px] md:rounded-[48px] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 md:gap-8 shadow-2xl relative overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600/5 via-transparent to-amber-600/5 pointer-events-none" />
         
-        <div className="flex flex-col md:flex-row items-center gap-6 md:gap-10 relative z-10 text-center md:text-left">
+        <div className="flex flex-col md:flex-row items-center gap-4 md:gap-10 relative z-10 text-center md:text-left">
           <div className="relative">
             <div className="absolute inset-0 bg-blue-500/10 blur-3xl rounded-full" />
-            <div className="w-20 h-20 md:w-28 md:h-28 rounded-[24px] md:rounded-[32px] bg-[#1a1a1c] border border-white/10 p-3 flex items-center justify-center relative z-10 shadow-2xl">
-               <ArowinLogo size={window.innerWidth < 768 ? 60 : 80} />
+            <div className="w-16 h-16 md:w-28 md:h-28 rounded-2xl md:rounded-[32px] bg-[#1a1a1c] border border-white/10 p-2 md:p-3 flex items-center justify-center relative z-10 shadow-2xl">
+               <ArowinLogo size={window.innerWidth < 768 ? 40 : 80} />
             </div>
           </div>
           <div>
-            <h2 className="text-2xl md:text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
-            <div className="flex flex-wrap justify-center md:justify-start items-center gap-3 md:gap-4 mt-3">
-               <span className="text-slate-500 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">OPERATOR: {userData.name}</span>
+            <h2 className="text-xl md:text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-2 md:gap-4 mt-2 md:mt-3">
+               <span className="text-slate-500 text-[7px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">OPERATOR: {userData.name}</span>
                <div className="w-1 h-1 md:w-1.5 md:h-1.5 rounded-full bg-emerald-500" />
-               <span className="text-blue-500 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">NODE: {userData.operatorId || userData.id}</span>
+               <span className="text-amber-500 text-[8px] md:text-[12px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">RANK: {RANK_NAMES[(userData.rank || 1) - 1] || 'Starter'}</span>
             </div>
           </div>
         </div>
-
       </div>
 
       <div className="max-w-4xl mx-auto px-4">
@@ -762,7 +763,12 @@ const Dashboard: React.FC = () => {
             title={item.label}
             amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
             buttons={[
-              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
+              { 
+                label: isProcessing ? 'PROCESSING...' : 'CLAIM TO VAULT', 
+                color: 'bg-[#a3680e] text-white', 
+                action: () => handleClaim(item.key as any), 
+                disabled: isProcessing || (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 
+              },
               { label: 'DETAILS', action: () => navigate('/master-wallet') }
             ]}
           />
@@ -781,7 +787,12 @@ const Dashboard: React.FC = () => {
             title={item.label}
             amount={userWallets[item.key as keyof typeof userWallets]?.balance || 0}
             buttons={[
-              { label: 'CLAIM TO VAULT', color: 'bg-[#a3680e] text-white', action: () => handleClaim(item.key as any), disabled: (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 },
+              { 
+                label: isProcessing ? 'PROCESSING...' : 'CLAIM TO VAULT', 
+                color: 'bg-[#a3680e] text-white', 
+                action: () => handleClaim(item.key as any), 
+                disabled: isProcessing || (userWallets[item.key as keyof typeof userWallets]?.balance || 0) <= 0 
+              },
               { label: 'DETAILS', action: () => navigate('/master-wallet') }
             ]}
           />

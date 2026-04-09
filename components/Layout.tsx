@@ -5,7 +5,7 @@ import {
   LayoutDashboard, GitBranch, Trophy, 
   LogOut, Menu, Gift, Bell, Search, Wallet, Share2, User, X,
   HelpCircle, ChevronRight, AlertCircle, Info, Zap, Cpu,
-  Wallet2, ShieldCheck
+  Wallet2, ShieldCheck, Home
 } from 'lucide-react';
 import { RANKS } from '../constants';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -140,8 +140,16 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
     </>
   );
 
+  const bottomMenu = [
+    { name: 'Home', path: '/dashboard', icon: Home },
+    { name: 'Tree', path: '/binary-tree', icon: GitBranch },
+    { name: 'Team', path: '/team-collection', icon: Wallet2 },
+    { name: 'Ranks', path: '/ranks', icon: Trophy },
+    { name: 'Profile', path: '/profile', icon: User },
+  ];
+
   return (
-    <div className="flex h-screen bg-[#0a0a0b] text-slate-100 font-inter">
+    <div className="flex h-screen bg-[#0a0a0b] text-slate-100 font-inter overflow-hidden">
       {/* Desktop Sidebar */}
       <aside className={`hidden lg:flex ${isOpen ? 'w-72' : 'w-24'} transition-all duration-300 border-r border-white/5 bg-[#0a0a0b] flex-col shadow-2xl z-50`}>
         <SidebarContent />
@@ -163,13 +171,13 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
       )}
 
       {/* Content */}
-      <main className="flex-1 flex flex-col min-w-0 bg-[#0a0a0b] relative overflow-hidden">
+      <main className="flex-1 flex flex-col min-w-0 bg-[#0a0a0b] relative overflow-hidden pb-20 lg:pb-0">
         {/* Decorative background glow - Navy and Amber */}
         <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-[120px] -mr-64 -mt-64 pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-amber-600/5 rounded-full blur-[100px] -ml-64 -mb-64 pointer-events-none" />
 
-        <header className="h-20 border-b border-white/5 bg-[#0a0a0b]/80 backdrop-blur-md px-8 flex items-center justify-between z-40 sticky top-0">
-          <div className="flex items-center gap-6 flex-1">
+        <header className="h-16 md:h-20 border-b border-white/5 bg-[#0a0a0b]/80 backdrop-blur-md px-4 md:px-8 flex items-center justify-between z-40 sticky top-0">
+          <div className="flex items-center gap-3 md:gap-6 flex-1">
             <button onClick={() => {
               if (window.innerWidth < 1024) setMobileMenuOpen(true);
               else setIsOpen(!isOpen);
@@ -177,9 +185,9 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
               <Menu size={24} />
             </button>
             
-            <div className="flex items-center gap-3 lg:hidden">
-              <ArowinLogo size={32} />
-              <span className="font-black text-white text-xs tracking-tighter uppercase">AROWIN</span>
+            <div className="flex items-center gap-2 md:gap-3 lg:hidden">
+              <ArowinLogo size={28} />
+              <span className="font-black text-white text-[10px] md:text-xs tracking-tighter uppercase">AROWIN</span>
             </div>
 
             <div className="relative hidden md:block w-full max-w-lg ml-4">
@@ -192,12 +200,12 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
             </div>
           </div>
 
-          <div className="flex items-center gap-4 lg:gap-8">
-            <div className="relative p-2 text-slate-400 hover:text-white cursor-pointer transition-colors hidden sm:block">
+          <div className="flex items-center gap-3 lg:gap-8">
+            <div className="relative p-2 text-slate-400 hover:text-white cursor-pointer transition-colors">
               <button onClick={() => setNotifOpen(!notifOpen)} className="relative">
-                <Bell size={22} className={unreadCount > 0 ? 'text-amber-400' : ''} />
+                <Bell size={20} className={unreadCount > 0 ? 'text-amber-400' : ''} />
                 {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-blue-600 rounded-full border-2 border-[#0a0a0b] text-[8px] font-black flex items-center justify-center text-white">
+                  <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-blue-600 rounded-full border-2 border-[#0a0a0b] text-[7px] font-black flex items-center justify-center text-white">
                     {unreadCount}
                   </span>
                 )}
@@ -287,11 +295,33 @@ const Layout: React.FC<{ role: 'user' | 'admin', onLogout: () => void }> = ({ ro
           </div>
         </header>
 
-        <section className="flex-1 overflow-y-auto p-4 lg:p-10 custom-scrollbar z-10">
-          <div className="max-w-7xl mx-auto space-y-10">
+        <section className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-10 custom-scrollbar z-10">
+          <div className="max-w-7xl mx-auto space-y-6 md:space-y-10">
             <Outlet />
           </div>
         </section>
+
+        {/* Mobile Bottom Navigation */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-[#0a0a0b]/90 backdrop-blur-xl border-t border-white/5 flex items-center justify-around px-2 z-[60]">
+          {bottomMenu.map((item) => {
+            const isActive = location.pathname === item.path;
+            const Icon = item.icon;
+            return (
+              <Link 
+                key={item.path} 
+                to={item.path} 
+                className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl transition-all ${
+                  isActive ? 'text-amber-500' : 'text-slate-500'
+                }`}
+              >
+                <Icon size={20} className={isActive ? 'text-amber-500' : ''} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${isActive ? 'text-amber-500' : 'text-slate-600'}`}>
+                  {item.name}
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
       </main>
     </div>
   );

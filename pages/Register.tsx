@@ -42,14 +42,20 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     
     if (ref) {
       setSponsorId(ref);
+      localStorage.setItem('arowin_ref', ref);
     } else if (currentUser?.operator_id) {
       // If logged in and no ref in URL, default to current user
       setSponsorId(currentUser.operator_id);
     }
 
-    if (parentParam) setParentId(parentParam);
-    if (sideParam === 'left' || sideParam === 'right') {
-      setSide(sideParam.toUpperCase() as 'LEFT' | 'RIGHT');
+    if (parentParam) {
+      setParentId(parentParam);
+      localStorage.setItem('arowin_parent', parentParam);
+    }
+    if (sideParam && (sideParam.toLowerCase() === 'left' || sideParam.toLowerCase() === 'right')) {
+      const normalizedSide = sideParam.toUpperCase() as 'LEFT' | 'RIGHT';
+      setSide(normalizedSide);
+      localStorage.setItem('arowin_side', normalizedSide.toLowerCase());
     }
   }, [location, currentUser]);
 
@@ -264,23 +270,6 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 </p>
               )}
             </div>
-
-            {parentId && (
-              <div className="md:col-span-2 space-y-3">
-                <label className="text-[10px] font-black text-blue-500 uppercase tracking-[0.3em] ml-1">Placement Parent ID</label>
-                <input 
-                  readOnly
-                  type="text" 
-                  value={parentId || ''}
-                  className="w-full bg-slate-900/60 border border-blue-500/20 rounded-2xl px-6 py-4 text-white font-mono focus:outline-none opacity-70" 
-                />
-                {parentName && (
-                  <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest ml-1">
-                    Parent: {parentName} ({side} Side)
-                  </p>
-                )}
-              </div>
-            )}
 
             {!parentId && (
               <div className="md:col-span-2 space-y-3">
