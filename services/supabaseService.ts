@@ -755,10 +755,50 @@ export const supabaseService = {
       // 4. Create Team Collection Nodes if package has nodes
       const packageData = PACKAGES.find(p => p.price === amount);
       if (packageData) {
+        // Create IDs in Team Collection
+        // According to the image, "NO. OF IDS" is packageData.nodes
+        const numIds = packageData.nodes;
+        if (numIds > 0) {
+          const nodesToCreate = [];
+          const numRankNodes = (numIds + 1) / 2;
+          const numInternalParentNodes = (numIds - 1) / 2;
+          const internalBonusPerParent = 10; // $5 referral + $5 matching
+          
+          for (let i = 0; i < numIds; i++) {
+            // Only the first numRankNodes are "Rank Nodes"
+            // Generation calculation: floor(log2(i + 1))
+            const generation = Math.floor(Math.log2(i + 1));
+            const isParent = i < numInternalParentNodes;
+            const initialBalance = isParent ? internalBonusPerParent : 0;
+            
+            nodesToCreate.push({
+              uid: uid,
+              node_id: `${userProfile.operator_id}-${String(i + 1).padStart(2, '0')}`,
+              name: `${userProfile.name} Node ${i + 1}`,
+              balance: initialBalance,
+              eligible: i < numRankNodes, // First N nodes are rank nodes
+              created_at: new Date().toISOString()
+            });
+          }
+          
+          if (isAdmin) {
+            try {
+              await this.adminQuery('team_collection', 'insert', nodesToCreate);
+            } catch (nodeError) {
+              console.error('Failed to create team nodes via admin query:', nodeError);
+            }
+          } else {
+            const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
+            if (nodeError) console.error('Failed to create team nodes:', nodeError);
+          }
+        }
+
         // Internal Referral Bonus (5% of all sub-IDs)
         const internalReferralBonus = ((packageData.nodes - 1) * 50) * 0.05;
         if (internalReferralBonus > 0) {
-          await this.addIncome(uid, internalReferralBonus, 'referral_bonus');
+          // This will now be distributed among the nodes if we modify addIncome
+          // But since we already added initialBalance to nodes, we just update the stats
+          await this.addIncome(uid, internalReferralBonus, 'referral_bonus', { skipNodeDistribution: true });
         }
 
         // Internal Matching Bonus (based on internal tree structure)
@@ -774,13 +814,10 @@ export const supabaseService = {
         };
         const internalMatchingBonus = internalMatchingBonusMap[amount] || 0;
         if (internalMatchingBonus > 0) {
-          await this.addIncome(uid, internalMatchingBonus, 'matching_bonus');
+          await this.addIncome(uid, internalMatchingBonus, 'matching_bonus', { skipNodeDistribution: true });
         }
 
         // Update user's own business counts for their internal tree (for rank qualification)
-        // Formula: (nodes - 1) / 2 gives the units on each side
-        // Starter (3 nodes) -> 1 unit left, 1 unit right (Qualifies for Starter rank)
-        // Bronze (7 nodes) -> 3 units left, 3 units right (Qualifies for Bronze rank)
         const internalCount = (packageData.nodes - 1) / 2;
         if (internalCount > 0) {
           const countUpdateData = {
@@ -797,41 +834,6 @@ export const supabaseService = {
             }
           } else {
             await supabase.from('profiles').update(countUpdateData).eq('id', uid);
-          }
-        }
-
-        // Create IDs in Team Collection
-        // According to the image, "NO. OF IDS" is packageData.nodes
-        const numIds = packageData.nodes;
-        if (numIds > 0) {
-          const nodesToCreate = [];
-          const numRankNodes = (numIds + 1) / 2;
-          const timestamp = Date.now().toString().slice(-6);
-          
-          for (let i = 0; i < numIds; i++) {
-            // Only the first numRankNodes are "Rank Nodes"
-            // Generation calculation: floor(log2(i + 1))
-            const generation = Math.floor(Math.log2(i + 1));
-            
-            nodesToCreate.push({
-              uid: uid,
-              node_id: `${userProfile.operator_id}-${String(i + 1).padStart(2, '0')}`,
-              name: `${userProfile.name} Node ${i + 1}`,
-              balance: 0,
-              eligible: i < numRankNodes, // First N nodes are rank nodes
-              created_at: new Date().toISOString()
-            });
-          }
-          
-          if (isAdmin) {
-            try {
-              await this.adminQuery('team_collection', 'insert', nodesToCreate);
-            } catch (nodeError) {
-              console.error('Failed to create team nodes via admin query:', nodeError);
-            }
-          } else {
-            const { error: nodeError } = await supabase.from('team_collection').insert(nodesToCreate);
-            if (nodeError) console.error('Failed to create team nodes:', nodeError);
           }
         }
       }
@@ -1253,8 +1255,7 @@ export const supabaseService = {
       if (!packageData) return 0;
 
       const totalWeeklyEarning = packageData.weeklyEarning;
-      const earningPerNodePerWeek = totalWeeklyEarning / nodes.length; // This should be based on total nodes user has, not just selected ones
-      // Wait, nodes.length here is only the selected ones. We need the total count of nodes for the user.
+      
       const { count: totalNodesCount } = await supabase
         .from('team_collection')
         .select('*', { count: 'exact', head: true })
@@ -1263,19 +1264,20 @@ export const supabaseService = {
       const actualTotalNodes = totalNodesCount || nodes.length;
       const earningPerNodePerSecond = (totalWeeklyEarning / actualTotalNodes) / (7 * 24 * 60 * 60);
 
-      let totalCollected = 0;
+      let totalYield = 0;
+      let totalFromBalance = 0;
       const now = new Date();
 
       for (const node of nodes) {
         let nodeBalance = Number(node.balance) || 0;
+        totalFromBalance += nodeBalance;
         
         if (node.eligible) {
           const lastUpdate = new Date(node.created_at);
           const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
-          nodeBalance += secondsElapsed * earningPerNodePerSecond;
+          const accruedYield = secondsElapsed * earningPerNodePerSecond;
+          totalYield += accruedYield;
         }
-
-        totalCollected += nodeBalance;
         
         // Reset node balance and update timestamp
         await supabase
@@ -1284,10 +1286,17 @@ export const supabaseService = {
           .eq('node_id', node.node_id);
       }
 
+      const totalCollected = totalYield + totalFromBalance;
       if (totalCollected <= 0) return 0;
 
-      // 2. Add to user's master wallet via addIncome
-      await this.addIncome(uid, totalCollected, 'team_collection');
+      // 2. Add to user's master wallet
+      // Split into yield (new income) and balance (already counted income)
+      if (totalYield > 0) {
+        await this.addIncome(uid, totalYield, 'team_collection_yield');
+      }
+      if (totalFromBalance > 0) {
+        await this.addIncome(uid, totalFromBalance, 'team_collection_balance');
+      }
 
       return totalCollected;
     } catch (err) {
@@ -1638,27 +1647,100 @@ export const supabaseService = {
     }
   },
 
-  async addIncome(uid: string, amount: number, type: string) {
+  async addIncome(uid: string, amount: number, type: string, options: { skipNodeDistribution?: boolean } = {}) {
     const profile = await this.getUserProfile(uid);
     if (!profile) return;
 
     let payableAmount = amount;
+    const { skipNodeDistribution } = options;
     
-    // Update wallet directly
-    const newWallets = { ...profile.wallets };
-    let walletKey = 'master'; // default
+    // Determine wallet key and if we should update total_income
+    let walletKey = 'master';
+    let shouldUpdateTotalIncome = true;
+    
     if (type === 'referral_bonus') walletKey = 'referral';
     else if (type === 'matching_bonus' || type === 'matching_income') walletKey = 'matching';
     else if (type === 'rank_bonus') walletKey = 'rankBonus';
     else if (type === 'rank_reward') walletKey = 'rewards';
-    else if (type === 'team_collection') walletKey = 'yield'; 
+    else if (type === 'team_collection' || type === 'team_collection_yield') walletKey = 'yield'; 
+    else if (type === 'team_collection_balance') {
+      walletKey = 'master';
+      shouldUpdateTotalIncome = false; // Already counted when distributed to nodes
+    }
     else if (type === 'incentive_accrual') walletKey = 'incentive';
 
-    // ALWAYS add to master wallet so user can withdraw
+    // Check for distribution to team collection nodes
+    const distributableTypes = ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward'];
+    if (distributableTypes.includes(type) && !skipNodeDistribution) {
+      const { data: nodes } = await supabase
+        .from('team_collection')
+        .select('id, balance')
+        .eq('uid', uid);
+      
+      if (nodes && nodes.length > 0) {
+        const amountPerNode = payableAmount / nodes.length;
+        for (const node of nodes) {
+          await supabase
+            .from('team_collection')
+            .update({ balance: (Number(node.balance) || 0) + amountPerNode })
+            .eq('id', node.id);
+        }
+        
+        // Update profile stats only (NOT wallet balance)
+        const updateData: any = {};
+        if (shouldUpdateTotalIncome) {
+          updateData.total_income = (Number(profile.total_income) || 0) + payableAmount;
+        }
+        
+        if (walletKey === 'referral') updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
+        else if (walletKey === 'matching') updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
+        else if (walletKey === 'yield') updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
+        else if (walletKey === 'rankBonus') updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
+        else if (walletKey === 'rewards') updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
+
+        const currentUser = this.getCurrentUser();
+        const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01';
+
+        if (isAdmin) {
+          await this.adminQuery('profiles', 'update', updateData, { id: uid });
+        } else {
+          await supabase.from('profiles').update(updateData).eq('id', uid);
+        }
+
+        // Log transaction
+        const paymentData = {
+          uid: uid,
+          amount: payableAmount,
+          type: type,
+          method: skipNodeDistribution ? 'INTERNAL_STATS_ONLY' : 'INTERNAL_DISTRIBUTED',
+          description: skipNodeDistribution ? `Income Stats: ${type.replace('_', ' ').toUpperCase()}` : `Income Distributed: ${type.replace('_', ' ').toUpperCase()}`,
+          status: 'finished',
+          currency: 'usdtbsc'
+        };
+        if (isAdmin) await this.adminQuery('payments', 'insert', paymentData);
+        else await supabase.from('payments').insert(paymentData);
+
+        return;
+      } else if (skipNodeDistribution) {
+        // If we were told to skip distribution but no nodes exist, 
+        // we should still only update stats if that was the intent (e.g. internal bonuses)
+        // For internal bonuses, they are tied to the package nodes.
+        // If no nodes exist, it's an error state, but we'll just update stats to be safe.
+        const updateData: any = {};
+        if (shouldUpdateTotalIncome) updateData.total_income = (Number(profile.total_income) || 0) + payableAmount;
+        if (walletKey === 'referral') updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
+        else if (walletKey === 'matching') updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
+        
+        await supabase.from('profiles').update(updateData).eq('id', uid);
+        return;
+      }
+    }
+
+    // Standard Master Wallet Update
+    const newWallets = { ...profile.wallets };
     newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
     newWallets.master.balance += payableAmount;
 
-    // ALSO update the specific wallet tally
     if (walletKey !== 'master') {
       newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
       newWallets[walletKey].balance += payableAmount;
@@ -1666,28 +1748,21 @@ export const supabaseService = {
 
     const updateData: any = {
       wallets: newWallets,
-      total_income: (Number(profile.total_income) || 0) + payableAmount,
       wallet_balance: (Number(profile.wallet_balance) || 0) + payableAmount
     };
-
-    // Keep specific income columns in sync
-    if (walletKey === 'referral') {
-      updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
-    } else if (walletKey === 'matching') {
-      updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
-    } else if (walletKey === 'yield') {
-      updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
-    } else if (walletKey === 'rankBonus') {
-      updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
-    } else if (walletKey === 'rewards') {
-      updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
-    } else if (walletKey === 'incentive') {
-      // If we have an incentive_income column, we could use it, but here rewards maps to incentive_income
-      // Let's just update total_income and wallets for now if no specific column
+    
+    if (shouldUpdateTotalIncome) {
+      updateData.total_income = (Number(profile.total_income) || 0) + payableAmount;
     }
 
+    if (walletKey === 'referral') updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
+    else if (walletKey === 'matching') updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
+    else if (walletKey === 'yield') updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
+    else if (walletKey === 'rankBonus') updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
+    else if (walletKey === 'rewards') updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
+
     const currentUser = this.getCurrentUser();
-    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01';
 
     if (isAdmin) {
       try {
