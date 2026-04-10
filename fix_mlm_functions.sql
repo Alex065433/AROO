@@ -16,6 +16,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- 1.5. Recursive function to get binary ancestors
+CREATE OR REPLACE FUNCTION get_binary_ancestors(p_user_id UUID)
+RETURNS SETOF profiles AS $$
+BEGIN
+    RETURN QUERY
+    WITH RECURSIVE ancestors AS (
+        -- Base case: the node itself
+        SELECT * FROM profiles WHERE id = p_user_id
+        UNION ALL
+        -- Recursive case: parent of the nodes in the ancestors list
+        SELECT p.* FROM profiles p
+        INNER JOIN ancestors a ON p.id = a.parent_id
+    )
+    SELECT * FROM ancestors WHERE id != p_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- 2. Function to claim wallet balance to master vault
 -- DROP first to avoid return type change error
 DROP FUNCTION IF EXISTS claim_wallet(uuid, text);

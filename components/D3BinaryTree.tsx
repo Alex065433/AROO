@@ -51,76 +51,71 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
     });
   };
 
+  const buildHierarchy = useCallback((path: string, depth: number = 0): any => {
+    if (depth > 20) return null;
+    const node = data[path];
+    if (!node) return null;
+
+    const leftPath = `${path}-left`;
+    const rightPath = `${path}-right`;
+
+    const children = [];
+    const leftChild = buildHierarchy(leftPath, depth + 1);
+    const rightChild = buildHierarchy(rightPath, depth + 1);
+
+    // For a binary tree, we want to ensure left is always index 0 and right is index 1
+    // even if they are vacant, to maintain visual structure.
+    
+    // Left child
+    if (leftChild) {
+      children.push(leftChild);
+    } else if (node.status !== 'Vacant') {
+      children.push({
+        id: `${node.id}-vacant-left`,
+        name: 'Vacant',
+        status: 'Vacant',
+        side: 'LEFT',
+        parentId: node.uid,
+        parentOperatorId: node.id,
+        path: leftPath,
+        depth: depth + 1
+      });
+    }
+
+    // Right child
+    if (rightChild) {
+      children.push(rightChild);
+    } else if (node.status !== 'Vacant') {
+      children.push({
+        id: `${node.id}-vacant-right`,
+        name: 'Vacant',
+        status: 'Vacant',
+        side: 'RIGHT',
+        parentId: node.uid,
+        parentOperatorId: node.id,
+        path: rightPath,
+        depth: depth + 1
+      });
+    }
+
+    return {
+      ...node,
+      path,
+      depth,
+      children: collapsedNodes.has(path) ? null : (children.length > 0 ? children : null),
+      _children: children.length > 0 ? children : null,
+      isCollapsed: collapsedNodes.has(path),
+      hasChildren: children.length > 0
+    };
+  }, [data, collapsedNodes]);
+
+  const hierarchyData = useMemo(() => buildHierarchy('root'), [buildHierarchy]);
+
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || !data || Object.keys(data).length === 0) return;
 
     const updateTree = () => {
-      if (!svgRef.current || !containerRef.current) return;
-      
-      // Convert flat data to hierarchical
-      const rootNode = data['root'];
-      if (!rootNode) return;
-
-      const buildHierarchy = (path: string, depth: number = 0): any => {
-        if (depth > 20) return null;
-        const node = data[path];
-        if (!node) return null;
-
-        const leftPath = `${path}-left`;
-        const rightPath = `${path}-right`;
-
-        const children = [];
-        const leftChild = buildHierarchy(leftPath, depth + 1);
-        const rightChild = buildHierarchy(rightPath, depth + 1);
-
-        // For a binary tree, we want to ensure left is always index 0 and right is index 1
-        // even if they are vacant, to maintain visual structure.
-        
-        // Left child
-        if (leftChild) {
-          children.push(leftChild);
-        } else if (node.status !== 'Vacant') {
-          children.push({
-            id: `${node.id}-vacant-left`,
-            name: 'Vacant',
-            status: 'Vacant',
-            side: 'LEFT',
-            parentId: node.uid,
-            parentOperatorId: node.id,
-            path: leftPath,
-            depth: depth + 1
-          });
-        }
-
-        // Right child
-        if (rightChild) {
-          children.push(rightChild);
-        } else if (node.status !== 'Vacant') {
-          children.push({
-            id: `${node.id}-vacant-right`,
-            name: 'Vacant',
-            status: 'Vacant',
-            side: 'RIGHT',
-            parentId: node.uid,
-            parentOperatorId: node.id,
-            path: rightPath,
-            depth: depth + 1
-          });
-        }
-
-        return {
-          ...node,
-          path,
-          depth,
-          children: collapsedNodes.has(path) ? null : (children.length > 0 ? children : null),
-          _children: children.length > 0 ? children : null,
-          isCollapsed: collapsedNodes.has(path),
-          hasChildren: children.length > 0
-        };
-      };
-
-      const hierarchyData = buildHierarchy('root');
-      if (!hierarchyData) return;
+      if (!svgRef.current || !containerRef.current || !hierarchyData) return;
       
       const root = d3.hierarchy(hierarchyData);
 
@@ -166,6 +161,8 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
         .scaleExtent([0.1, 3])
         .on("zoom", (event) => {
           g.attr("transform", event.transform);
+        })
+        .on("end", (event) => {
           setZoom(event.transform.k);
         });
 
@@ -319,12 +316,19 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
     updateTree();
 
     // Add ResizeObserver to handle container resizing
+    let resizeTimeout: any;
     const resizeObserver = new ResizeObserver(() => {
-      updateTree();
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        updateTree();
+      }, 200);
     });
     
     resizeObserver.observe(containerRef.current);
-    return () => resizeObserver.disconnect();
+    return () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeObserver.disconnect();
+    };
   }, [data, collapsedNodes]);
 
   return (

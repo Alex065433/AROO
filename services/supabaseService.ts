@@ -206,10 +206,10 @@ export const supabaseService = {
     
     for (let i = 0; i <= retries; i++) {
       try {
-        // Use a longer timeout (30s) to allow for database wake-up
+        // Use a longer timeout (60s) to allow for database wake-up
         const { data, error } = await this.withTimeout(
           supabase.from("profiles").select(columns).eq("id", userId).single(),
-          30000 
+          60000 
         );
 
         if (error) {
@@ -727,7 +727,7 @@ export const supabaseService = {
 
       // 3. Update active_package and total_deposit
       const packageUpdateData = { 
-        active_package: amount, 
+        active_package: 50, // Each node is a $50 package
         total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
         status: 'active'
       };
@@ -747,7 +747,31 @@ export const supabaseService = {
         if (packageError) throw packageError;
       }
 
-      // 4. Create Sub-Nodes in Binary Tree if package has multiple nodes
+      // 4. Create Team Collection entry for the main node if it doesn't exist
+      const { data: existingMainNode } = await supabase
+        .from('team_collection')
+        .select('id')
+        .eq('uid', uid)
+        .eq('node_id', userProfile.operator_id)
+        .single();
+
+      if (!existingMainNode) {
+        const mainTeamNode = {
+          uid: uid,
+          node_id: userProfile.operator_id,
+          name: userProfile.name,
+          balance: 0,
+          eligible: true,
+          created_at: new Date().toISOString()
+        };
+        if (isAdmin) {
+          await this.adminQuery('team_collection', 'insert', mainTeamNode);
+        } else {
+          await supabase.from('team_collection').insert(mainTeamNode);
+        }
+      }
+
+      // 5. Create Sub-Nodes in Binary Tree if package has multiple nodes
       const packageData = PACKAGES.find(p => p.price === amount);
       if (packageData && packageData.nodes > 1) {
         const numSubNodes = packageData.nodes - 1;
@@ -756,7 +780,51 @@ export const supabaseService = {
         // We'll build an internal tree structure
         // Node 0 is the main userProfile
         const nodes: any[] = [userProfile];
+        const subNodesToInsert: any[] = [];
+        const teamCollectionToInsert: any[] = [];
         
+        // Fetch downline once to find all spots in memory
+        const { data: downline } = await supabase.rpc('get_binary_downline', { root_id: uid });
+        const localTree = new Map<string, { left?: string, right?: string }>();
+        if (downline) {
+          downline.forEach((p: any) => {
+            if (p.parent_id) {
+              if (!localTree.has(p.parent_id)) localTree.set(p.parent_id, {});
+              const children = localTree.get(p.parent_id)!;
+              const s = (p.side || '').trim().toUpperCase();
+              if (s === 'LEFT') children.left = p.id;
+              else if (s === 'RIGHT') children.right = p.id;
+            }
+          });
+        }
+
+        const findSpotInMemory = (startId: string, side: 'LEFT' | 'RIGHT'): { parentId: string, side: 'LEFT' | 'RIGHT' } => {
+          const queue: { id: string, depth: number }[] = [{ id: startId, depth: 0 }];
+          const visited = new Set<string>();
+          while (queue.length > 0) {
+            const { id: currentId, depth } = queue.shift()!;
+            if (visited.has(currentId)) continue;
+            visited.add(currentId);
+            if (depth > 20) break;
+            const children = localTree.get(currentId) || {};
+            if (depth === 0) {
+              if (side === 'LEFT') {
+                if (!children.left) return { parentId: currentId, side: 'LEFT' };
+                queue.push({ id: children.left, depth: depth + 1 });
+              } else {
+                if (!children.right) return { parentId: currentId, side: 'RIGHT' };
+                queue.push({ id: children.right, depth: depth + 1 });
+              }
+            } else {
+              if (!children.left) return { parentId: currentId, side: 'LEFT' };
+              if (!children.right) return { parentId: currentId, side: 'RIGHT' };
+              queue.push({ id: children.left, depth: depth + 1 });
+              queue.push({ id: children.right, depth: depth + 1 });
+            }
+          }
+          return { parentId: startId, side };
+        };
+
         for (let i = 0; i < numSubNodes; i++) {
           const subNodeIndex = i + 1;
           const internalParentIndex = Math.floor((subNodeIndex - 1) / 2);
@@ -767,32 +835,19 @@ export const supabaseService = {
           const subNodeOperatorId = `${userProfile.operator_id}-${String(subNodeIndex + 1).padStart(2, '0')}`;
           
           // Find correct placement for this sub-node in the global tree
-          // We want to place it under the internal parent, but it might need to spill over
-          // if that spot is taken by a real user.
-          let placementParentId = internalParent.id;
-          let placementSide = internalSide;
+          const placement = findSpotInMemory(internalParent.id, internalSide);
           
-          try {
-            const binaryResult = await this.findBinaryParent(internalParent.id, internalSide);
-            if (binaryResult) {
-              placementParentId = binaryResult.parentId;
-              placementSide = binaryResult.side;
-            }
-          } catch (err) {
-            console.warn(`Binary parent search failed for sub-node ${subNodeOperatorId}, using default:`, err);
-          }
-
           const subNodeData = {
             id: subNodeId,
             email: `${subNodeOperatorId.toLowerCase()}@arowin.internal`,
             operator_id: subNodeOperatorId,
             name: `${userProfile.name} Node ${subNodeIndex + 1}`,
-            sponsor_id: userProfile.id, // Sponsor is always the main node
-            parent_id: placementParentId,
-            side: placementSide,
+            sponsor_id: userProfile.id,
+            parent_id: placement.parentId,
+            side: placement.side,
             status: 'active',
             role: 'user',
-            active_package: 50, // Each sub-node is effectively a $50 node
+            active_package: 50,
             package_amount: 50,
             wallet_balance: 0,
             total_income: 0,
@@ -810,60 +865,58 @@ export const supabaseService = {
             created_at: new Date().toISOString()
           };
 
-          // Create the sub-node profile
-          if (isAdmin) {
-            await this.adminQuery('profiles', 'insert', subNodeData);
-          } else {
-            const { error: insertError } = await supabase.from('profiles').insert(subNodeData);
-            if (insertError) {
-              console.error(`Failed to insert sub-node ${subNodeOperatorId}:`, insertError);
-              // Fallback to admin query if possible
-              try {
-                await this.adminQuery('profiles', 'insert', subNodeData);
-              } catch (e) {
-                console.error('Admin query fallback also failed');
-              }
-            }
-          }
-
-          // Add to our local list for further parenting
-          nodes.push(subNodeData);
-
-          // 5. Referral Bonus for the internal parent (5% of $50 = $2.50)
-          const subNodeReferralBonus = 50 * 0.05;
-          await this.addIncome(internalParent.id, subNodeReferralBonus, 'referral_bonus');
-
-          // 6. Update business and matching up the tree starting from this sub-node
-          await this.distributeTreeIncome(subNodeId, 50);
-          
-          // Also add to team_collection for the UI
-          const teamNode = {
+          subNodesToInsert.push(subNodeData);
+          teamCollectionToInsert.push({
             uid: uid,
             node_id: subNodeOperatorId,
             name: subNodeData.name,
             balance: 0,
             eligible: true,
             created_at: new Date().toISOString()
-          };
-          
-          if (isAdmin) {
-            await this.adminQuery('team_collection', 'insert', teamNode);
-          } else {
-            await supabase.from('team_collection').insert(teamNode);
+          });
+
+          // Update local tree for next sub-node placement
+          if (!localTree.has(placement.parentId)) localTree.set(placement.parentId, {});
+          const children = localTree.get(placement.parentId)!;
+          if (placement.side === 'LEFT') children.left = subNodeId;
+          else children.right = subNodeId;
+
+          // Add to our local list for further parenting
+          nodes.push(subNodeData);
+        }
+
+        // Batch Insert Sub-Nodes
+        console.log(`Batch inserting ${subNodesToInsert.length} sub-nodes...`);
+        if (isAdmin) {
+          await this.adminQuery('profiles', 'insert', subNodesToInsert);
+          await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
+        } else {
+          const { error: insertError } = await supabase.from('profiles').insert(subNodesToInsert);
+          if (insertError) {
+            console.error('Batch insert failed, trying admin query:', insertError);
+            await this.adminQuery('profiles', 'insert', subNodesToInsert);
           }
+          await supabase.from('team_collection').insert(teamCollectionToInsert);
+        }
+
+        // Process income and business volume for each sub-node
+        // We still do this sequentially but it's much faster now that nodes are already in DB
+        for (const subNode of subNodesToInsert) {
+          // For simplicity and to avoid too many queries, we'll just distribute volume
+          await this.distributeTreeIncome(subNode.id, 50);
+          
+          // Add referral bonus to the main node (sponsor of sub-nodes)
+          await this.addIncome(uid, 50 * 0.05, 'referral_bonus');
         }
       }
 
-      // 7. Referral Bonus for the main node (5% of $50 to the external sponsor)
+      // 8. Referral Bonus for the main node (5% of $50 to the external sponsor)
       if (userProfile.sponsor_id && amount > 0) {
-        // The main node itself is $50 in terms of referral
         const mainNodeReferralBonus = 50 * 0.05;
         await this.addIncome(userProfile.sponsor_id, mainNodeReferralBonus, 'referral_bonus');
       }
 
-      // 8. Update business and matching up the tree for the main node ($50)
-      // Note: We only add $50 to the tree for the main node because the sub-nodes 
-      // were already added individually above.
+      // 9. Update business and matching up the tree for the main node ($50)
       await this.distributeTreeIncome(uid, 50);
 
       // 6. Log activation payment
@@ -898,6 +951,85 @@ export const supabaseService = {
   },
 
   async distributeTreeIncome(uid: string, amount: number) {
+    const currentUser = this.getCurrentUser();
+    const isAdmin = currentUser?.role === 'admin' || 
+                    currentUser?.operator_id === 'ADMIN_AROWIN_2026' || 
+                    currentUser?.operator_id === 'ARW-ADMIN-01' ||
+                    currentUser?.email === 'admin@arowin.internal';
+
+    try {
+      // 1. Fetch all ancestors in one go using RPC
+      const { data: ancestors, error: rpcError } = await supabase.rpc('get_binary_ancestors', { p_user_id: uid });
+      
+      if (rpcError || !ancestors) {
+        console.warn('RPC get_binary_ancestors failed, falling back to sequential updates:', rpcError);
+        return this.distributeTreeIncomeSequential(uid, amount);
+      }
+
+      // 2. Process each ancestor
+      let childSide = '';
+      const { data: startNode } = await supabase.from('profiles').select('side').eq('id', uid).single();
+      childSide = startNode?.side || '';
+
+      for (const ancestor of ancestors) {
+        const parentId = ancestor.id;
+        const side = childSide;
+
+        const updateData: any = {};
+        const newTeamSize = { 
+          left: Number(ancestor.left_count ?? ancestor.team_size?.left ?? 0),
+          right: Number(ancestor.right_count ?? ancestor.team_size?.right ?? 0)
+        };
+        const matchingVolume = ancestor.matching_volume || { left: 0, right: 0 };
+        let newMatchedPairs = ancestor.matched_pairs || 0;
+        let matchingIncomeToAdd = 0;
+
+        if (side === 'LEFT') {
+          updateData.left_business = (Number(ancestor.left_business) || 0) + amount;
+          updateData.left_count = (Number(ancestor.left_count) || 0) + 1;
+          newTeamSize.left += 1;
+          matchingVolume.left = (Number(matchingVolume.left) || 0) + amount;
+        } else if (side === 'RIGHT') {
+          updateData.right_business = (Number(ancestor.right_business) || 0) + amount;
+          updateData.right_count = (Number(ancestor.right_count) || 0) + 1;
+          newTeamSize.right += 1;
+          matchingVolume.right = (Number(matchingVolume.right) || 0) + amount;
+        }
+
+        // Calculate matching income (10% of matched volume)
+        const matchedAmount = Math.min(matchingVolume.left, matchingVolume.right);
+        if (matchedAmount > 0) {
+          matchingIncomeToAdd = matchedAmount * 0.10;
+          matchingVolume.left -= matchedAmount;
+          matchingVolume.right -= matchedAmount;
+          newMatchedPairs += matchedAmount;
+        }
+
+        updateData.team_size = newTeamSize;
+        updateData.matching_volume = matchingVolume;
+        updateData.matched_pairs = newMatchedPairs;
+
+        if (isAdmin) {
+          await this.adminQuery('profiles', 'update', updateData, { id: parentId });
+        } else {
+          await supabase.from('profiles').update(updateData).eq('id', parentId);
+        }
+        
+        if (matchingIncomeToAdd > 0) {
+          await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
+        }
+
+        await this.checkAndUpdateRank(parentId);
+
+        // Prepare for next ancestor
+        childSide = ancestor.side;
+      }
+    } catch (err) {
+      console.error('Error in distributeTreeIncome:', err);
+    }
+  },
+
+  async distributeTreeIncomeSequential(uid: string, amount: number) {
     const currentUser = this.getCurrentUser();
     const isAdmin = currentUser?.role === 'admin' || 
                     currentUser?.operator_id === 'ADMIN_AROWIN_2026' || 
@@ -939,17 +1071,16 @@ export const supabaseService = {
 
         if (side === 'LEFT') {
           updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
-          updateData.left_count = (Number(parentProfile.left_count) || 0) + 1; // Each node is 1 unit
+          updateData.left_count = (Number(parentProfile.left_count) || 0) + 1;
           newTeamSize.left += 1;
-          matchingVolume.left += amount;
+          matchingVolume.left = (Number(matchingVolume.left) || 0) + amount;
         } else if (side === 'RIGHT') {
           updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
           updateData.right_count = (Number(parentProfile.right_count) || 0) + 1;
           newTeamSize.right += 1;
-          matchingVolume.right += amount;
+          matchingVolume.right = (Number(matchingVolume.right) || 0) + amount;
         }
-        
-        // Calculate matching income (10% of matched volume)
+
         const matchedAmount = Math.min(matchingVolume.left, matchingVolume.right);
         if (matchedAmount > 0) {
           matchingIncomeToAdd = matchedAmount * 0.10;
@@ -963,23 +1094,15 @@ export const supabaseService = {
         updateData.matched_pairs = newMatchedPairs;
 
         if (isAdmin) {
-          try {
-            await this.adminQuery('profiles', 'update', updateData, { id: parentId });
-          } catch (error) {
-            console.error('Failed to update parent profile via admin query:', error);
-          }
+          await this.adminQuery('profiles', 'update', updateData, { id: parentId });
         } else {
-          await supabase
-            .from('profiles')
-            .update(updateData)
-            .eq('id', parentId);
+          await supabase.from('profiles').update(updateData).eq('id', parentId);
         }
         
         if (matchingIncomeToAdd > 0) {
           await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
         }
 
-        // Check for rank update for parent
         await this.checkAndUpdateRank(parentId);
       }
 
@@ -1189,7 +1312,47 @@ export const supabaseService = {
       p_wallet_key: walletKey
     });
 
-    if (error) throw error;
+    if (error) {
+      console.warn('RPC claim_wallet failed, falling back to client-side claim:', error);
+      // Client-side fallback
+      const profile = await this.getUserProfile(user.id);
+      if (!profile) throw new Error('User not found');
+      
+      const wallets = profile.wallets || {};
+      const wallet = wallets[walletKey];
+      if (!wallet || !wallet.balance || wallet.balance <= 0) {
+        throw new Error('No balance to claim');
+      }
+      
+      const claimAmount = Number(wallet.balance);
+      const newWallets = { ...wallets };
+      newWallets[walletKey] = { ...wallet, balance: 0 };
+      newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+      newWallets.master.balance = Number(newWallets.master.balance) + claimAmount;
+      
+      const newWalletBalance = Number(profile.wallet_balance || 0) + claimAmount;
+      
+      const { error: updateError } = await supabase.from('profiles').update({
+        wallets: newWallets,
+        wallet_balance: newWalletBalance
+      }).eq('id', user.id);
+      
+      if (updateError) throw updateError;
+      
+      // Log transaction
+      await supabase.from('payments').insert({
+        uid: user.id,
+        amount: claimAmount,
+        type: 'claim',
+        method: 'INTERNAL',
+        description: `Claimed ${walletKey} to Master Vault`,
+        status: 'finished',
+        currency: 'usdtbsc'
+      });
+      
+      return { success: true, claimed_amount: claimAmount, new_master_balance: newWallets.master.balance };
+    }
+
     if (data && !data.success) {
       throw new Error(data.message || 'Failed to claim wallet');
     }
@@ -1694,10 +1857,27 @@ export const supabaseService = {
   // MLM Logic
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // Breadth-first search to find the first available spot on the chosen side
-      // This ensures "no spillover" in the sense that it fills the tree level by level
-      // under the sponsor, rather than just going to the extreme leg.
+      // Fetch the downline once to find the spot in memory
+      const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: startNodeId });
       
+      if (error || !downline) {
+        console.warn('RPC get_binary_downline failed in findBinaryParent, falling back to sequential search:', error);
+        return this.findBinaryParentSequential(startNodeId, side);
+      }
+
+      // Build a map of children for efficient lookup
+      const nodesByParent = new Map<string, { left?: string, right?: string }>();
+      downline.forEach((p: any) => {
+        if (p.parent_id) {
+          if (!nodesByParent.has(p.parent_id)) nodesByParent.set(p.parent_id, {});
+          const children = nodesByParent.get(p.parent_id)!;
+          const s = (p.side || '').trim().toUpperCase();
+          if (s === 'LEFT') children.left = p.id;
+          else if (s === 'RIGHT') children.right = p.id;
+        }
+      });
+
+      // Breadth-first search in memory
       const queue: { id: string, depth: number }[] = [{ id: startNodeId, depth: 0 }];
       const visited = new Set<string>();
       
@@ -1706,41 +1886,70 @@ export const supabaseService = {
         if (visited.has(currentId)) continue;
         visited.add(currentId);
         
-        if (depth > 20) break; // Safety limit
+        if (depth > 20) break;
 
-        const { data: children } = await supabase
-          .from('profiles')
-          .select('id, side')
-          .eq('parent_id', currentId);
+        const children = nodesByParent.get(currentId) || {};
         
-        const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
-        const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
-
         if (depth === 0) {
-          // On the first level, we MUST respect the chosen side
           if (side === 'LEFT') {
-            if (!leftChild) return { parentId: currentId, side: 'LEFT' };
-            queue.push({ id: leftChild.id, depth: depth + 1 });
+            if (!children.left) return { parentId: currentId, side: 'LEFT' };
+            queue.push({ id: children.left, depth: depth + 1 });
           } else {
-            if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
-            queue.push({ id: rightChild.id, depth: depth + 1 });
+            if (!children.right) return { parentId: currentId, side: 'RIGHT' };
+            queue.push({ id: children.right, depth: depth + 1 });
           }
         } else {
-          // Deeper levels: find the first available spot (breadth-first)
-          if (!leftChild) return { parentId: currentId, side: 'LEFT' };
-          if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+          if (!children.left) return { parentId: currentId, side: 'LEFT' };
+          if (!children.right) return { parentId: currentId, side: 'RIGHT' };
           
-          queue.push({ id: leftChild.id, depth: depth + 1 });
-          queue.push({ id: rightChild.id, depth: depth + 1 });
+          queue.push({ id: children.left, depth: depth + 1 });
+          queue.push({ id: children.right, depth: depth + 1 });
         }
       }
 
-      // Fallback to extreme leg logic if BFS fails or reaches limit
       return { parentId: startNodeId, side };
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
       return { parentId: startNodeId, side };
     }
+  },
+
+  async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+    const queue: { id: string, depth: number }[] = [{ id: startNodeId, depth: 0 }];
+    const visited = new Set<string>();
+    
+    while (queue.length > 0) {
+      const { id: currentId, depth } = queue.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.add(currentId);
+      
+      if (depth > 20) break;
+
+      const { data: children } = await supabase
+        .from('profiles')
+        .select('id, side')
+        .eq('parent_id', currentId);
+      
+      const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
+      const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
+
+      if (depth === 0) {
+        if (side === 'LEFT') {
+          if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+          queue.push({ id: leftChild.id, depth: depth + 1 });
+        } else {
+          if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+          queue.push({ id: rightChild.id, depth: depth + 1 });
+        }
+      } else {
+        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+        
+        queue.push({ id: leftChild.id, depth: depth + 1 });
+        queue.push({ id: rightChild.id, depth: depth + 1 });
+      }
+    }
+    return { parentId: startNodeId, side };
   },
 
   async updateAncestorsTeamSize(uid: string) {

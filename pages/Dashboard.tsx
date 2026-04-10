@@ -320,22 +320,30 @@ const Dashboard: React.FC = () => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user && isMounted) {
-        try {
-          const profile = await supabaseService.getUserProfile(session.user.id);
-          if (profile && isMounted) {
-            setUserData(profile);
-            setUserWallets({
-              master: { balance: Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
-              referral: { balance: Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
-              matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
-              rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
-              rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
-              yield: { balance: Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0), currency: 'USDT' },
-              capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
-            });
+        // Only fetch if it's a significant event or we don't have data yet
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || !userData || userData.id !== session.user.id) {
+          try {
+            const profile = await supabaseService.getUserProfile(session.user.id);
+            if (profile && isMounted) {
+              setUserData(profile);
+              setUserWallets({
+                master: { balance: Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
+                referral: { balance: Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
+                matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
+                rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
+                rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
+                yield: { balance: Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0), currency: 'USDT' },
+                capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
+              });
+            }
+          } catch (err: any) {
+            // Don't spam console for timeouts during background auth changes
+            if (!err.message?.includes('timed out') && !err.message?.includes('waking up')) {
+              console.error('Error updating profile on auth change:', err);
+            } else {
+              console.warn('Profile update on auth change timed out (background).');
+            }
           }
-        } catch (err) {
-          console.error('Error updating profile on auth change:', err);
         }
       }
     });
@@ -347,8 +355,9 @@ const Dashboard: React.FC = () => {
         try {
           data = await apiFetch('binance-rates');
         } catch (err) {
-          // Fallback to direct Binance API call if Edge Function is not deployed
-          const response = await fetch('https://api.binance.com/api/v3/ticker/price');
+          // Fallback to direct Binance API call with specific symbols to save bandwidth and CPU
+          const symbolsQuery = encodeURIComponent(JSON.stringify(symbols));
+          const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=${symbolsQuery}`);
           if (response.ok) {
             data = await response.json();
           } else {
@@ -357,6 +366,8 @@ const Dashboard: React.FC = () => {
         }
         
         if (Array.isArray(data) && isMounted) {
+          // The API might return only the requested symbols if using the fallback, 
+          // but we filter anyway just in case the edge function returns all
           const filtered = data.filter((item: any) => symbols.includes(item.symbol));
           setBinanceRates(filtered);
         }
@@ -366,7 +377,8 @@ const Dashboard: React.FC = () => {
     };
 
     fetchRates();
-    const interval = setInterval(fetchRates, 10000);
+    // Increase interval to 30s to save battery on mobile devices
+    const interval = setInterval(fetchRates, 30000);
 
     return () => {
       isMounted = false;
