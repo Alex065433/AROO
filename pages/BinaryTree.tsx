@@ -106,8 +106,6 @@ const BinaryTree: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   const rankCounts = useMemo(() => {
-    // Rank counts should be fetched from the backend or profile data
-    // For now, we use the counts provided in the user profile if available
     const left: Record<string, number> = {};
     const right: Record<string, number> = {};
     
@@ -116,10 +114,20 @@ const BinaryTree: React.FC = () => {
       right[name] = 0;
     });
 
-    // If the backend provides these counts in the profile, we could map them here
-    // Otherwise, this feature is disabled until backend support is added
+    (Object.entries(treeData) as [string, NodeData][]).forEach(([path, node]) => {
+      if (path.startsWith('root.left')) {
+        if (node.rank && left[node.rank] !== undefined) {
+          left[node.rank]++;
+        }
+      } else if (path.startsWith('root.right')) {
+        if (node.rank && right[node.rank] !== undefined) {
+          right[node.rank]++;
+        }
+      }
+    });
+
     return { left, right };
-  }, []);
+  }, [treeData]);
 
   useEffect(() => {
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
