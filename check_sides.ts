@@ -1,15 +1,30 @@
+
 import { createClient } from '@supabase/supabase-js';
-import * as dotenv from 'dotenv';
+import dotenv from 'dotenv';
 dotenv.config();
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
-async function check() {
-  const { data, error } = await supabase.from('profiles').select('id, parent_id, side').limit(20);
+
+const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!);
+
+async function checkSides() {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, operator_id, side, parent_id');
+  
   if (error) {
-    console.log(error.message);
-  } else {
-    console.log(JSON.stringify(data, null, 2));
+    console.error('Error:', error);
+    return;
   }
+
+  console.log('Total profiles:', data.length);
+  const sideCounts: Record<string, number> = {};
+  data.forEach(p => {
+    const side = p.side === null ? 'NULL' : `'${p.side}'`;
+    sideCounts[side] = (sideCounts[side] || 0) + 1;
+    if (p.side === null && p.parent_id !== null) {
+        console.log(`Node with NULL side but has parent: ${p.operator_id}, parent: ${p.parent_id}`);
+    }
+  });
+  console.log('Side counts:', sideCounts);
 }
-check();
+
+checkSides();

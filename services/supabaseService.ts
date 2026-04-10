@@ -768,7 +768,6 @@ export const supabaseService = {
           
           const subNodeData = {
             id: subNodeId,
-            uid: uid, // Link to main user's auth ID
             email: `${subNodeOperatorId.toLowerCase()}@arowin.internal`,
             operator_id: subNodeOperatorId,
             name: `${userProfile.name} Node ${subNodeIndex + 1}`,
@@ -1198,42 +1197,61 @@ export const supabaseService = {
   // Team Collection
   async getTeamCollection(uid: string) {
     try {
-      // 1. Fetch user profile to get package info
+      // 1. Fetch user profile to get package info and operator_id
       const profile = await this.getUserProfile(uid);
       if (!profile || !profile.active_package) return [];
 
       const packageData = PACKAGES.find(p => p.price === profile.active_package);
       if (!packageData) return [];
 
-      // 2. Fetch nodes
-      const { data: nodes, error } = await supabase
+      // 2. Fetch nodes from team_collection (these are the sub-nodes linked to this user)
+      const { data: teamNodes, error: teamError } = await supabase
         .from('team_collection')
         .select('*')
         .eq('uid', uid);
 
-      if (error || !nodes || nodes.length === 0) return [];
+      if (teamError || !teamNodes) return [];
 
-      // Calculate earning per node per second
+      // 3. Fetch sub-profiles from profiles table to get their real-time balances
+      // We identify sub-profiles by their operator_id (e.g., ARW-123456-02)
+      const nodeOperatorIds = teamNodes.map(n => n.node_id);
+      const { data: subProfiles, error: profileError } = await supabase
+        .from('profiles')
+        .select('operator_id, referral_income, matching_income, yield_income, wallets')
+        .in('operator_id', nodeOperatorIds);
+
+      const subProfilesMap = new Map();
+      if (subProfiles) {
+        subProfiles.forEach(p => subProfilesMap.set(p.operator_id, p));
+      }
+
+      // 4. Calculate yield and combine with other incomes
       const totalWeeklyEarning = packageData.weeklyEarning;
-      if (totalWeeklyEarning <= 0) return nodes;
-
-      const earningPerNodePerWeek = totalWeeklyEarning / nodes.length;
+      // For yield calculation, we use the number of nodes in the package
+      const totalNodesInPackage = packageData.nodes || 1;
+      const earningPerNodePerWeek = totalWeeklyEarning / totalNodesInPackage;
       const earningPerNodePerSecond = earningPerNodePerWeek / (7 * 24 * 60 * 60);
 
       const now = new Date();
-      const updatedNodes = nodes.map(node => {
-        let newBalance = Number(node.balance) || 0;
-        if (node.eligible) {
-          const lastUpdate = new Date(node.created_at);
-          const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
-          
-          const accruedBalance = secondsElapsed * earningPerNodePerSecond;
-          newBalance += accruedBalance;
-        }
+      const updatedNodes = teamNodes.map(node => {
+        const subProfile = subProfilesMap.get(node.node_id);
+        
+        // Calculate yield accrued since last collection (stored in created_at of team_collection)
+        const lastUpdate = new Date(node.created_at);
+        const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
+        const accruedYield = secondsElapsed * earningPerNodePerSecond;
+        
+        // Total balance = accrued yield + referral income + matching income + yield income (from sub-profile wallets)
+        const referralIncome = Number(subProfile?.referral_income) || 0;
+        const matchingIncome = Number(subProfile?.matching_income) || 0;
+        const yieldIncome = Number(subProfile?.yield_income) || 0;
+        const manualBalance = Number(node.balance) || 0;
+        
+        const totalBalance = accruedYield + referralIncome + matchingIncome + yieldIncome + manualBalance;
 
         return {
           ...node,
-          balance: newBalance,
+          balance: totalBalance,
           package_name: packageData.name,
           package_amount: packageData.price,
           daily_yield: (earningPerNodePerWeek / 7),
@@ -1251,58 +1269,83 @@ export const supabaseService = {
   async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
       // 1. Fetch nodes and user profile
-      const [profile, { data: nodes }] = await Promise.all([
+      const [profile, { data: teamNodes }] = await Promise.all([
         this.getUserProfile(uid),
         supabase.from('team_collection').select('*').in('node_id', nodeIds).eq('uid', uid)
       ]);
 
-      if (!profile || !nodes || nodes.length === 0) return 0;
+      if (!profile || !teamNodes || teamNodes.length === 0) return 0;
+
+      // 2. Fetch sub-profiles
+      const { data: subProfiles } = await supabase
+        .from('profiles')
+        .select('id, operator_id, referral_income, matching_income, yield_income')
+        .in('operator_id', nodeIds);
+
+      const subProfilesMap = new Map();
+      if (subProfiles) {
+        subProfiles.forEach(p => subProfilesMap.set(p.operator_id, p));
+      }
 
       const packageData = PACKAGES.find(p => p.price === profile.active_package);
-      if (!packageData) return 0;
+      const totalWeeklyEarning = packageData?.weeklyEarning || 0;
+      const totalNodesInPackage = packageData?.nodes || 1;
+      const earningPerNodePerSecond = (totalWeeklyEarning / totalNodesInPackage) / (7 * 24 * 60 * 60);
 
-      const totalWeeklyEarning = packageData.weeklyEarning;
-      
-      const { count: totalNodesCount } = await supabase
-        .from('team_collection')
-        .select('*', { count: 'exact', head: true })
-        .eq('uid', uid);
-      
-      const actualTotalNodes = totalNodesCount || nodes.length;
-      const earningPerNodePerSecond = (totalWeeklyEarning / actualTotalNodes) / (7 * 24 * 60 * 60);
-
-      let totalYield = 0;
-      let totalFromBalance = 0;
+      let totalCollected = 0;
       const now = new Date();
 
-      for (const node of nodes) {
-        let nodeBalance = Number(node.balance) || 0;
-        totalFromBalance += nodeBalance;
+      for (const node of teamNodes) {
+        const subProfile = subProfilesMap.get(node.node_id);
         
-        if (node.eligible) {
-          const lastUpdate = new Date(node.created_at);
-          const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
-          const accruedYield = secondsElapsed * earningPerNodePerSecond;
-          totalYield += accruedYield;
+        // Calculate yield
+        const lastUpdate = new Date(node.created_at);
+        const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
+        const accruedYield = secondsElapsed * earningPerNodePerSecond;
+        
+        // Get sub-profile incomes
+        const referralIncome = Number(subProfile?.referral_income) || 0;
+        const matchingIncome = Number(subProfile?.matching_income) || 0;
+        const yieldIncome = Number(subProfile?.yield_income) || 0;
+        const manualBalance = Number(node.balance) || 0;
+
+        const nodeTotal = accruedYield + referralIncome + matchingIncome + yieldIncome + manualBalance;
+        totalCollected += nodeTotal;
+
+        // Reset sub-profile incomes in profiles table
+        if (subProfile) {
+          const resetData = {
+            referral_income: 0,
+            matching_income: 0,
+            yield_income: 0,
+            wallets: {
+              master: { balance: 0, currency: 'USDT' },
+              referral: { balance: 0, currency: 'USDT' },
+              matching: { balance: 0, currency: 'USDT' },
+              yield: { balance: 0, currency: 'USDT' },
+              rankBonus: { balance: 0, currency: 'USDT' },
+              incentive: { balance: 0, currency: 'USDT' },
+              rewards: { balance: 0, currency: 'USDT' },
+            }
+          };
+          
+          await supabase
+            .from('profiles')
+            .update(resetData)
+            .eq('id', subProfile.id);
         }
-        
-        // Reset node balance and update timestamp
+
+        // Reset team_collection node and update timestamp
         await supabase
           .from('team_collection')
           .update({ balance: 0, created_at: now.toISOString() })
           .eq('node_id', node.node_id);
       }
 
-      const totalCollected = totalYield + totalFromBalance;
-      if (totalCollected <= 0) return 0;
-
-      // 2. Add to user's master wallet
-      // Split into yield (new income) and balance (already counted income)
-      if (totalYield > 0) {
-        await this.addIncome(uid, totalYield, 'team_collection_yield');
-      }
-      if (totalFromBalance > 0) {
-        await this.addIncome(uid, totalFromBalance, 'team_collection_balance');
+      if (totalCollected > 0) {
+        // 3. Add to main user's master wallet
+        // We use 'team_collection_claim' which should go directly to master wallet balance
+        await this.addIncome(uid, totalCollected, 'team_collection_claim');
       }
 
       return totalCollected;
@@ -1595,7 +1638,11 @@ export const supabaseService = {
         throw error;
       }
       
-      const sideChild = children?.find(c => (c.side || '').toUpperCase() === side.toUpperCase());
+      const sideChild = children?.find(c => {
+        const childSide = (c.side || '').trim().toUpperCase();
+        return childSide === side.toUpperCase();
+      });
+      
       if (!sideChild) {
         // Found an empty spot on the desired side
         console.log(`Found empty spot for parent ${currentParentId} on side ${side} at depth ${depth}`);
@@ -1679,9 +1726,9 @@ export const supabaseService = {
     else if (type === 'rank_bonus') walletKey = 'rankBonus';
     else if (type === 'rank_reward') walletKey = 'rewards';
     else if (type === 'team_collection' || type === 'team_collection_yield') walletKey = 'yield'; 
-    else if (type === 'team_collection_balance') {
+    else if (type === 'team_collection_balance' || type === 'team_collection_claim') {
       walletKey = 'master';
-      shouldUpdateTotalIncome = false; // Already counted when distributed to nodes
+      shouldUpdateTotalIncome = false; // Already counted when distributed to nodes or earned by sub-nodes
     }
     else if (type === 'incentive_accrual') walletKey = 'incentive';
 
@@ -1918,8 +1965,22 @@ export const supabaseService = {
           nodesByParent.set(p.parent_id, {});
         }
         const parentChildren = nodesByParent.get(p.parent_id)!;
-        if (p.side) {
-          parentChildren[p.side.toUpperCase()] = p;
+        const side = (p.side || '').trim().toUpperCase();
+        
+        if (side === 'LEFT' || side === 'RIGHT') {
+          // If multiple nodes claim the same spot, keep the one created first (or just the first one we see)
+          if (!parentChildren[side]) {
+            parentChildren[side] = p;
+          } else {
+            console.warn(`Duplicate placement detected for parent ${p.parent_id} on side ${side}. Node ${p.operator_id} ignored in tree building.`);
+          }
+        } else {
+          // Fallback for missing or invalid side: assign to first available spot
+          if (!parentChildren['LEFT']) {
+            parentChildren['LEFT'] = p;
+          } else if (!parentChildren['RIGHT']) {
+            parentChildren['RIGHT'] = p;
+          }
         }
       }
     });

@@ -8,7 +8,9 @@ console.log('[API] api.ts module loaded');
 
 export const getApiBaseUrl = () => {
   // In production, we use Supabase Edge Functions
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jhlxehnwnlzftoylancq.supabase.co';
+  const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
+                      (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) || 
+                      'https://jhlxehnwnlzftoylancq.supabase.co';
   
   if (supabaseUrl && !supabaseUrl.includes('placeholder')) {
     const cleanUrl = supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl;
@@ -36,8 +38,12 @@ const getSession = async () => {
 };
 
 export const apiFetch = async (endpoint: string, options: any = {}, retries = 3) => {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jhlxehnwnlzftoylancq.supabase.co';
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
+  const supabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
+                      (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL) || 
+                      'https://jhlxehnwnlzftoylancq.supabase.co';
+  const anonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
+                  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) || 
+                  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
   const functionsUrl = `${supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl}/functions/v1`;
   
   let url = endpoint;
@@ -55,8 +61,11 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
       url = `${functionsUrl}/binance-rates`;
     } else if (endpoint.includes('/health')) {
       url = `${functionsUrl}/health`;
+    } else if (endpoint.includes('/admin-query')) {
+      const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+      url = `${baseUrl}/api/admin-query`;
+      console.log(`[API DEBUG] Mapped to local admin-query: ${url}`);
     } else if (endpoint.includes('/admin/query')) {
-      url = `${functionsUrl}/admin-query`;
     } else if (endpoint.includes('/api/')) {
       // Generic mapping for other /api/ routes
       const path = endpoint.split('/api/')[1].replace(/\//g, '-');

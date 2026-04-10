@@ -65,6 +65,35 @@ apiRouter.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), env: process.env.NODE_ENV });
 });
 
+// Admin Query Endpoint
+apiRouter.post("/admin-query", async (req, res) => {
+  const { table, operation, data, match } = req.body;
+  console.log(`[ADMIN QUERY] ${operation} on ${table}`, { data, match });
+
+  try {
+    let result;
+    if (operation === 'insert') {
+      result = await supabase.from(table).insert(data).select();
+    } else if (operation === 'update') {
+      result = await supabase.from(table).update(data).match(match).select();
+    } else if (operation === 'delete') {
+      result = await supabase.from(table).delete().match(match).select();
+    } else {
+      return res.status(400).json({ error: "Invalid operation" });
+    }
+
+    if (result.error) {
+      console.error(`[ADMIN QUERY ERROR]`, result.error);
+      return res.status(500).json({ error: result.error.message });
+    }
+
+    res.json(result.data);
+  } catch (error: any) {
+    console.error(`[ADMIN QUERY CRITICAL]`, error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // All other /api routes are now handled by Supabase Edge Functions
 // The frontend apiFetch utility handles the routing.
 apiRouter.all("*", (req, res) => {
