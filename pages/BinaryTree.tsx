@@ -81,13 +81,18 @@ const BinaryTree: React.FC = () => {
   const [inviteModal, setInviteModal] = useState<{ parentId: string; side: 'LEFT' | 'RIGHT'; url: string } | null>(null);
   const treeContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT') => {
-    const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
+  const [fullRankCounts, setFullRankCounts] = useState<{ left: Record<string, number>; right: Record<string, number> }>({
+    left: {},
+    right: {}
+  });
+
+  const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT', parentOperatorId?: string) => {
+    const sponsorId = parentOperatorId || userProfile?.operator_id || 'ARW-XXXX';
     
-    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentId}&side=${side.toLowerCase()}`;
+    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentOperatorId || parentId}&side=${side.toLowerCase()}`;
     
     setInviteModal({
-      parentId,
+      parentId: parentOperatorId || parentId,
       side,
       url: inviteUrl
     });
@@ -106,6 +111,10 @@ const BinaryTree: React.FC = () => {
   }, [exchangeAmount, selectedCoin]);
 
   const rankCounts = useMemo(() => {
+    if (fullRankCounts.left && Object.keys(fullRankCounts.left).length > 0) {
+      return fullRankCounts;
+    }
+
     const left: Record<string, number> = {};
     const right: Record<string, number> = {};
     
@@ -127,7 +136,7 @@ const BinaryTree: React.FC = () => {
     });
 
     return { left, right };
-  }, [treeData]);
+  }, [treeData, fullRankCounts]);
 
   useEffect(() => {
     const unsubscribe = supabaseService.onAuthChange(async (user) => {
@@ -189,6 +198,12 @@ const BinaryTree: React.FC = () => {
           const dynamicTree = await supabaseService.getBinaryTree(viewRootId);
           if (isMounted) {
             setTreeData(dynamicTree);
+          }
+          
+          // Fetch full rank breakdown
+          const breakdown = await supabaseService.getRankBreakdown(viewRootId);
+          if (isMounted && breakdown) {
+            setFullRankCounts(breakdown);
           }
         } catch (err) {
           console.error('Error fetching tree:', err);

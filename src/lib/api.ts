@@ -61,7 +61,7 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
       url = `${functionsUrl}/binance-rates`;
     } else if (endpoint.includes('/health')) {
       url = `${functionsUrl}/health`;
-    } else if (endpoint.includes('/admin-query')) {
+    } else if (endpoint === 'admin-query' || endpoint === '/admin-query') {
       const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
       url = `${baseUrl}/api/admin-query`;
       console.log(`[API DEBUG] Mapped to local admin-query: ${url}`);

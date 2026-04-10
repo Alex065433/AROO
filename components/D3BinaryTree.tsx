@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -32,7 +32,7 @@ interface D3Node extends d3.HierarchyNode<NodeData> {
 interface D3BinaryTreeProps {
   data: Record<string, NodeData>;
   onSelect: (id: string) => void;
-  onInvite: (parentId: string, side: 'LEFT' | 'RIGHT') => void;
+  onInvite: (parentId: string, side: 'LEFT' | 'RIGHT', parentOperatorId?: string) => void;
   userProfile: any;
 }
 
@@ -86,6 +86,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             status: 'Vacant',
             side: 'LEFT',
             parentId: node.uid,
+            parentOperatorId: node.id,
             path: leftPath,
             depth: depth + 1
           });
@@ -101,6 +102,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             status: 'Vacant',
             side: 'RIGHT',
             parentId: node.uid,
+            parentOperatorId: node.id,
             path: rightPath,
             depth: depth + 1
           });
@@ -209,7 +211,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
         .on("click", (event, d) => {
           event.stopPropagation();
           if (d.data.status === 'Vacant') {
-            onInvite(d.data.parentId || '', d.data.side as 'LEFT' | 'RIGHT');
+            onInvite(d.data.parentId || '', d.data.side as 'LEFT' | 'RIGHT', (d.data as any).parentOperatorId);
           } else {
             onSelect(d.data.path || 'root');
           }

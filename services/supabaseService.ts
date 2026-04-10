@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { PACKAGES, RANKS, MOCK_USER } from '../constants';
+import { PACKAGES, RANKS, MOCK_USER, RANK_NAMES } from '../constants';
 import { apiFetch } from '../src/lib/api';
 
 export interface Ticket {
@@ -766,14 +766,30 @@ export const supabaseService = {
           const subNodeId = crypto.randomUUID();
           const subNodeOperatorId = `${userProfile.operator_id}-${String(subNodeIndex + 1).padStart(2, '0')}`;
           
+          // Find correct placement for this sub-node in the global tree
+          // We want to place it under the internal parent, but it might need to spill over
+          // if that spot is taken by a real user.
+          let placementParentId = internalParent.id;
+          let placementSide = internalSide;
+          
+          try {
+            const binaryResult = await this.findBinaryParent(internalParent.id, internalSide);
+            if (binaryResult) {
+              placementParentId = binaryResult.parentId;
+              placementSide = binaryResult.side;
+            }
+          } catch (err) {
+            console.warn(`Binary parent search failed for sub-node ${subNodeOperatorId}, using default:`, err);
+          }
+
           const subNodeData = {
             id: subNodeId,
             email: `${subNodeOperatorId.toLowerCase()}@arowin.internal`,
             operator_id: subNodeOperatorId,
             name: `${userProfile.name} Node ${subNodeIndex + 1}`,
-            sponsor_id: internalParent.id,
-            parent_id: internalParent.id,
-            side: internalSide,
+            sponsor_id: userProfile.id, // Sponsor is always the main node
+            parent_id: placementParentId,
+            side: placementSide,
             status: 'active',
             role: 'user',
             active_package: 50, // Each sub-node is effectively a $50 node
@@ -827,7 +843,7 @@ export const supabaseService = {
             name: subNodeData.name,
             balance: 0,
             eligible: true,
-            created_at: subNodeData.created_at
+            created_at: new Date().toISOString()
           };
           
           if (isAdmin) {
@@ -1266,6 +1282,63 @@ export const supabaseService = {
     }
   },
 
+  // Rank Breakdown
+  async getRankBreakdown(rootId: string) {
+    try {
+      // Use the get_binary_downline RPC which we know exists
+      const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: rootId });
+      
+      if (error || !downline) {
+        console.error('Error fetching downline for rank breakdown:', error);
+        return null;
+      }
+
+      // Get direct children to separate left and right
+      const { data: children } = await supabase
+        .from('profiles')
+        .select('id, side')
+        .eq('parent_id', rootId);
+
+      const leftRootId = children?.find(c => c.side === 'LEFT')?.id;
+      const rightRootId = children?.find(c => c.side === 'RIGHT')?.id;
+
+      const left: Record<string, number> = {};
+      const right: Record<string, number> = {};
+      
+      RANK_NAMES.forEach(name => {
+        left[name] = 0;
+        right[name] = 0;
+      });
+
+      if (leftRootId) {
+        const { data: leftDownline } = await supabase.rpc('get_binary_downline', { root_id: leftRootId });
+        if (leftDownline) {
+          leftDownline.forEach((node: any) => {
+            const rankIndex = (node.rank || 1) - 1;
+            const rankName = RANK_NAMES[rankIndex];
+            if (rankName) left[rankName] = (left[rankName] || 0) + 1;
+          });
+        }
+      }
+
+      if (rightRootId) {
+        const { data: rightDownline } = await supabase.rpc('get_binary_downline', { root_id: rightRootId });
+        if (rightDownline) {
+          rightDownline.forEach((node: any) => {
+            const rankIndex = (node.rank || 1) - 1;
+            const rankName = RANK_NAMES[rankIndex];
+            if (rankName) right[rankName] = (right[rankName] || 0) + 1;
+          });
+        }
+      }
+
+      return { left, right };
+    } catch (err) {
+      console.error('Error in getRankBreakdown:', err);
+      return null;
+    }
+  },
+
   async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
       // 1. Fetch nodes and user profile
@@ -1620,41 +1693,54 @@ export const supabaseService = {
 
   // MLM Logic
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
-    let currentParentId = startNodeId;
-    let depth = 0;
-    const MAX_DEPTH = 1000;
-    
-    console.log(`Searching for binary parent starting from ${startNodeId} on side ${side}`);
-    
-    while (depth < MAX_DEPTH) {
-      depth++;
-      const { data: children, error } = await supabase
-        .from('profiles')
-        .select('id, side, operator_id')
-        .eq('parent_id', currentParentId);
+    try {
+      // Breadth-first search to find the first available spot on the chosen side
+      // This ensures "no spillover" in the sense that it fills the tree level by level
+      // under the sponsor, rather than just going to the extreme leg.
       
-      if (error) {
-        console.error('Error fetching children in findBinaryParent:', error);
-        throw error;
+      const queue: { id: string, depth: number }[] = [{ id: startNodeId, depth: 0 }];
+      const visited = new Set<string>();
+      
+      while (queue.length > 0) {
+        const { id: currentId, depth } = queue.shift()!;
+        if (visited.has(currentId)) continue;
+        visited.add(currentId);
+        
+        if (depth > 20) break; // Safety limit
+
+        const { data: children } = await supabase
+          .from('profiles')
+          .select('id, side')
+          .eq('parent_id', currentId);
+        
+        const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
+        const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
+
+        if (depth === 0) {
+          // On the first level, we MUST respect the chosen side
+          if (side === 'LEFT') {
+            if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+            queue.push({ id: leftChild.id, depth: depth + 1 });
+          } else {
+            if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+            queue.push({ id: rightChild.id, depth: depth + 1 });
+          }
+        } else {
+          // Deeper levels: find the first available spot (breadth-first)
+          if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+          if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+          
+          queue.push({ id: leftChild.id, depth: depth + 1 });
+          queue.push({ id: rightChild.id, depth: depth + 1 });
+        }
       }
-      
-      const sideChild = children?.find(c => {
-        const childSide = (c.side || '').trim().toUpperCase();
-        return childSide === side.toUpperCase();
-      });
-      
-      if (!sideChild) {
-        // Found an empty spot on the desired side
-        console.log(`Found empty spot for parent ${currentParentId} on side ${side} at depth ${depth}`);
-        return { parentId: currentParentId, side };
-      } else {
-        // Move down to the child and continue searching on the same side
-        console.log(`Side ${side} occupied by ${sideChild.operator_id}, moving deeper...`);
-        currentParentId = sideChild.id;
-      }
+
+      // Fallback to extreme leg logic if BFS fails or reaches limit
+      return { parentId: startNodeId, side };
+    } catch (err) {
+      console.error('Error in findBinaryParent:', err);
+      return { parentId: startNodeId, side };
     }
-    
-    throw new Error('Maximum binary tree depth reached');
   },
 
   async updateAncestorsTeamSize(uid: string) {

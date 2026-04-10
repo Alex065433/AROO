@@ -78,6 +78,10 @@ apiRouter.post("/admin-query", async (req, res) => {
       result = await supabase.from(table).update(data).match(match).select();
     } else if (operation === 'delete') {
       result = await supabase.from(table).delete().match(match).select();
+    } else if (operation === 'execute') {
+      // Use rpc to execute SQL if available, or direct query
+      // For now, we'll try to use a known RPC or just return error if not possible
+      return res.status(400).json({ error: "Arbitrary SQL execution not supported via this endpoint for security" });
     } else {
       return res.status(400).json({ error: "Invalid operation" });
     }
