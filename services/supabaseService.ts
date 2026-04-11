@@ -767,7 +767,11 @@ export const supabaseService = {
         if (isAdmin) {
           await this.adminQuery('team_collection', 'insert', mainTeamNode);
         } else {
-          await supabase.from('team_collection').insert(mainTeamNode);
+          const { error: mainTeamError } = await supabase.from('team_collection').insert(mainTeamNode);
+          if (mainTeamError) {
+            console.error('Main team node insert failed, trying admin query:', mainTeamError);
+            await this.adminQuery('team_collection', 'insert', mainTeamNode);
+          }
         }
       }
 
@@ -799,30 +803,22 @@ export const supabaseService = {
         }
 
         const findSpotInMemory = (startId: string, side: 'LEFT' | 'RIGHT'): { parentId: string, side: 'LEFT' | 'RIGHT' } => {
-          const queue: { id: string, depth: number }[] = [{ id: startId, depth: 0 }];
-          const visited = new Set<string>();
-          while (queue.length > 0) {
-            const { id: currentId, depth } = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-            if (depth > 20) break;
+          let currentId = startId;
+          let depth = 0;
+          
+          while (depth <= 50) { // Safety limit
             const children = localTree.get(currentId) || {};
-            if (depth === 0) {
-              if (side === 'LEFT') {
-                if (!children.left) return { parentId: currentId, side: 'LEFT' };
-                queue.push({ id: children.left, depth: depth + 1 });
-              } else {
-                if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-                queue.push({ id: children.right, depth: depth + 1 });
-              }
-            } else {
+            
+            if (side === 'LEFT') {
               if (!children.left) return { parentId: currentId, side: 'LEFT' };
+              currentId = children.left;
+            } else {
               if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-              queue.push({ id: children.left, depth: depth + 1 });
-              queue.push({ id: children.right, depth: depth + 1 });
+              currentId = children.right;
             }
+            depth++;
           }
-          return { parentId: startId, side };
+          return { parentId: currentId, side };
         };
 
         for (let i = 0; i < numSubNodes; i++) {
@@ -896,7 +892,12 @@ export const supabaseService = {
             console.error('Batch insert failed, trying admin query:', insertError);
             await this.adminQuery('profiles', 'insert', subNodesToInsert);
           }
-          await supabase.from('team_collection').insert(teamCollectionToInsert);
+          
+          const { error: teamInsertError } = await supabase.from('team_collection').insert(teamCollectionToInsert);
+          if (teamInsertError) {
+            console.error('Team collection insert failed, trying admin query:', teamInsertError);
+            await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
+          }
         }
 
         // Process income and business volume for each sub-node
@@ -1421,12 +1422,14 @@ export const supabaseService = {
         const accruedYield = secondsElapsed * earningPerNodePerSecond;
         
         // Total balance = accrued yield + referral income + matching income + yield income (from sub-profile wallets)
-        const referralIncome = Number(subProfile?.referral_income) || 0;
-        const matchingIncome = Number(subProfile?.matching_income) || 0;
-        const yieldIncome = Number(subProfile?.yield_income) || 0;
+        const referralIncome = Number(subProfile?.wallets?.referral?.balance) || 0;
+        const matchingIncome = Number(subProfile?.wallets?.matching?.balance) || 0;
+        const yieldIncome = Number(subProfile?.wallets?.yield?.balance) || 0;
+        const rankBonus = Number(subProfile?.wallets?.rankBonus?.balance) || 0;
+        const rewards = Number(subProfile?.wallets?.rewards?.balance) || 0;
         const manualBalance = Number(node.balance) || 0;
         
-        const totalBalance = accruedYield + referralIncome + matchingIncome + yieldIncome + manualBalance;
+        const totalBalance = accruedYield + referralIncome + matchingIncome + yieldIncome + rankBonus + rewards + manualBalance;
 
         return {
           ...node,
@@ -1540,29 +1543,27 @@ export const supabaseService = {
         const accruedYield = secondsElapsed * earningPerNodePerSecond;
         
         // Get sub-profile incomes
-        const referralIncome = Number(subProfile?.referral_income) || 0;
-        const matchingIncome = Number(subProfile?.matching_income) || 0;
-        const yieldIncome = Number(subProfile?.yield_income) || 0;
+        const referralIncome = Number(subProfile?.wallets?.referral?.balance) || 0;
+        const matchingIncome = Number(subProfile?.wallets?.matching?.balance) || 0;
+        const yieldIncome = Number(subProfile?.wallets?.yield?.balance) || 0;
+        const rankBonus = Number(subProfile?.wallets?.rankBonus?.balance) || 0;
+        const rewards = Number(subProfile?.wallets?.rewards?.balance) || 0;
         const manualBalance = Number(node.balance) || 0;
 
-        const nodeTotal = accruedYield + referralIncome + matchingIncome + yieldIncome + manualBalance;
+        const nodeTotal = accruedYield + referralIncome + matchingIncome + yieldIncome + rankBonus + rewards + manualBalance;
         totalCollected += nodeTotal;
 
-        // Reset sub-profile incomes in profiles table
+        // Reset sub-profile wallets in profiles table
         if (subProfile) {
+          const newWallets = { ...(subProfile.wallets || {}) };
+          newWallets.referral = { balance: 0, currency: 'USDT' };
+          newWallets.matching = { balance: 0, currency: 'USDT' };
+          newWallets.yield = { balance: 0, currency: 'USDT' };
+          newWallets.rankBonus = { balance: 0, currency: 'USDT' };
+          newWallets.rewards = { balance: 0, currency: 'USDT' };
+          
           const resetData = {
-            referral_income: 0,
-            matching_income: 0,
-            yield_income: 0,
-            wallets: {
-              master: { balance: 0, currency: 'USDT' },
-              referral: { balance: 0, currency: 'USDT' },
-              matching: { balance: 0, currency: 'USDT' },
-              yield: { balance: 0, currency: 'USDT' },
-              rankBonus: { balance: 0, currency: 'USDT' },
-              incentive: { balance: 0, currency: 'USDT' },
-              rewards: { balance: 0, currency: 'USDT' },
-            }
+            wallets: newWallets
           };
           
           await supabase
@@ -1877,37 +1878,24 @@ export const supabaseService = {
         }
       });
 
-      // Breadth-first search in memory
-      const queue: { id: string, depth: number }[] = [{ id: startNodeId, depth: 0 }];
-      const visited = new Set<string>();
+      // Extreme Left/Right traversal in memory
+      let currentId = startNodeId;
+      let depth = 0;
       
-      while (queue.length > 0) {
-        const { id: currentId, depth } = queue.shift()!;
-        if (visited.has(currentId)) continue;
-        visited.add(currentId);
-        
-        if (depth > 20) break;
-
+      while (depth <= 50) { // Safety limit
         const children = nodesByParent.get(currentId) || {};
         
-        if (depth === 0) {
-          if (side === 'LEFT') {
-            if (!children.left) return { parentId: currentId, side: 'LEFT' };
-            queue.push({ id: children.left, depth: depth + 1 });
-          } else {
-            if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-            queue.push({ id: children.right, depth: depth + 1 });
-          }
-        } else {
+        if (side === 'LEFT') {
           if (!children.left) return { parentId: currentId, side: 'LEFT' };
+          currentId = children.left;
+        } else {
           if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-          
-          queue.push({ id: children.left, depth: depth + 1 });
-          queue.push({ id: children.right, depth: depth + 1 });
+          currentId = children.right;
         }
+        depth++;
       }
 
-      return { parentId: startNodeId, side };
+      return { parentId: currentId, side };
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
       return { parentId: startNodeId, side };
@@ -1915,16 +1903,10 @@ export const supabaseService = {
   },
 
   async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
-    const queue: { id: string, depth: number }[] = [{ id: startNodeId, depth: 0 }];
-    const visited = new Set<string>();
+    let currentId = startNodeId;
+    let depth = 0;
     
-    while (queue.length > 0) {
-      const { id: currentId, depth } = queue.shift()!;
-      if (visited.has(currentId)) continue;
-      visited.add(currentId);
-      
-      if (depth > 20) break;
-
+    while (depth <= 50) { // Safety limit
       const { data: children } = await supabase
         .from('profiles')
         .select('id, side')
@@ -1933,23 +1915,17 @@ export const supabaseService = {
       const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
       const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
 
-      if (depth === 0) {
-        if (side === 'LEFT') {
-          if (!leftChild) return { parentId: currentId, side: 'LEFT' };
-          queue.push({ id: leftChild.id, depth: depth + 1 });
-        } else {
-          if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
-          queue.push({ id: rightChild.id, depth: depth + 1 });
-        }
-      } else {
+      if (side === 'LEFT') {
         if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+        currentId = leftChild.id;
+      } else {
         if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
-        
-        queue.push({ id: leftChild.id, depth: depth + 1 });
-        queue.push({ id: rightChild.id, depth: depth + 1 });
+        currentId = rightChild.id;
       }
+      depth++;
     }
-    return { parentId: startNodeId, side };
+    
+    return { parentId: currentId, side };
   },
 
   async updateAncestorsTeamSize(uid: string) {
@@ -2027,74 +2003,7 @@ export const supabaseService = {
     }
     else if (type === 'incentive_accrual') walletKey = 'incentive';
 
-    // Check for distribution to team collection nodes
-    const distributableTypes = ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward'];
-    if (distributableTypes.includes(type) && !skipNodeDistribution) {
-      const { data: nodes } = await supabase
-        .from('team_collection')
-        .select('id, balance')
-        .eq('uid', uid);
-      
-      if (nodes && nodes.length > 0) {
-        const amountPerNode = payableAmount / nodes.length;
-        for (const node of nodes) {
-          await supabase
-            .from('team_collection')
-            .update({ balance: (Number(node.balance) || 0) + amountPerNode })
-            .eq('id', node.id);
-        }
-        
-        // Update profile stats only (NOT wallet balance)
-        const updateData: any = {};
-        if (shouldUpdateTotalIncome) {
-          updateData.total_income = (Number(profile.total_income) || 0) + payableAmount;
-        }
-        
-        if (walletKey === 'referral') updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
-        else if (walletKey === 'matching') updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
-        else if (walletKey === 'yield') updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
-        else if (walletKey === 'rankBonus') updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
-        else if (walletKey === 'rewards') updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
-
-        const currentUser = this.getCurrentUser();
-        const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01';
-
-        if (isAdmin) {
-          await this.adminQuery('profiles', 'update', updateData, { id: uid });
-        } else {
-          await supabase.from('profiles').update(updateData).eq('id', uid);
-        }
-
-        // Log transaction
-        const paymentData = {
-          uid: uid,
-          amount: payableAmount,
-          type: type,
-          method: skipNodeDistribution ? 'INTERNAL_STATS_ONLY' : 'INTERNAL_DISTRIBUTED',
-          description: skipNodeDistribution ? `Income Stats: ${type.replace('_', ' ').toUpperCase()}` : `Income Distributed: ${type.replace('_', ' ').toUpperCase()}`,
-          status: 'finished',
-          currency: 'usdtbsc'
-        };
-        if (isAdmin) await this.adminQuery('payments', 'insert', paymentData);
-        else await supabase.from('payments').insert(paymentData);
-
-        return;
-      } else if (skipNodeDistribution) {
-        // If we were told to skip distribution but no nodes exist, 
-        // we should still only update stats if that was the intent (e.g. internal bonuses)
-        // For internal bonuses, they are tied to the package nodes.
-        // If no nodes exist, it's an error state, but we'll just update stats to be safe.
-        const updateData: any = {};
-        if (shouldUpdateTotalIncome) updateData.total_income = (Number(profile.total_income) || 0) + payableAmount;
-        if (walletKey === 'referral') updateData.referral_income = (Number(profile.referral_income) || 0) + payableAmount;
-        else if (walletKey === 'matching') updateData.matching_income = (Number(profile.matching_income) || 0) + payableAmount;
-        
-        await supabase.from('profiles').update(updateData).eq('id', uid);
-        return;
-      }
-    }
-
-    // Standard Wallet Update (for non-distributed income)
+    // Standard Wallet Update
     const newWallets = { ...profile.wallets };
     
     // Initialize wallets if missing
