@@ -87,7 +87,7 @@ const BinaryTree: React.FC = () => {
   });
 
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT', parentOperatorId?: string) => {
-    const sponsorId = parentOperatorId || userProfile?.operator_id || 'ARW-XXXX';
+    const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     
     const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentOperatorId || parentId}&side=${side.toLowerCase()}`;
     
