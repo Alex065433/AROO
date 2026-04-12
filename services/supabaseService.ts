@@ -331,16 +331,46 @@ export const supabaseService = {
     if (!authData.user) throw new Error('User creation failed');
     const user = authData.user;
 
-    // 2. Find Sponsor and Binary Parent
-    // Normalize Operator ID format
-    let cleanSponsorId = sponsorId.trim();
-    const isSponsorUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSponsorId);
-    
-    let sponsorQuery = supabase.from('profiles').select('id');
-    
-    if (isSponsorUuid) {
-      sponsorQuery = sponsorQuery.eq('id', cleanSponsorId);
-    } else {
+    // 1. Find Sponsor and Parent
+    let sponsor = null;
+    let parentId = null;
+    let finalSide = (side || 'LEFT').toUpperCase() as 'LEFT' | 'RIGHT';
+    let isSpillover = false;
+
+    // Determine if it's a spillover join (manual placement)
+    if (additionalData.parentId) {
+      isSpillover = true;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
+      let parentQuery = supabase.from('profiles').select('id, operator_id');
+      
+      if (isUuid) {
+        parentQuery = parentQuery.or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`);
+      } else {
+        parentQuery = parentQuery.eq('operator_id', additionalData.parentId);
+      }
+      
+      const { data: explicitParent } = await parentQuery.single();
+      
+      if (explicitParent) {
+        console.log(`Spillover join under parent: ${explicitParent.operator_id}`);
+        // Rule: sponsor_id = that parent, parent_id = that parent (or BFS under it)
+        sponsor = explicitParent;
+        try {
+          const binaryResult = await this.findBinaryParent(explicitParent.id, finalSide);
+          parentId = binaryResult.parentId;
+          finalSide = binaryResult.side;
+        } catch (err) {
+          console.warn('Binary parent search failed for spillover:', err);
+          parentId = explicitParent.id;
+        }
+      }
+    }
+
+    // If not spillover or parent not found, handle as direct referral
+    if (!isSpillover || !sponsor) {
+      let cleanSponsorId = sponsorId.trim();
+      
+      // Normalize Operator ID format
       if (/^\d{6}$/.test(cleanSponsorId)) {
         cleanSponsorId = `ARW-${cleanSponsorId}`;
       }
@@ -350,84 +380,39 @@ export const supabaseService = {
       if (/^ARW-\d{6}$/i.test(cleanSponsorId)) {
         cleanSponsorId = `ARW-${cleanSponsorId.substring(4).toUpperCase()}`;
       }
-      sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
-    }
 
-    const { data: sponsor, error: sponsorError } = await sponsorQuery.single();
-
-    if (sponsorError || !sponsor) {
-      // Check if this is the first user (bootstrap)
-      const { count } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true });
+      const isSponsorUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSponsorId);
+      let sponsorQuery = supabase.from('profiles').select('id, operator_id');
       
-      if (count !== 0) {
-        throw new Error('Invalid Sponsor ID');
-      }
-      
-      // If it's the first user, they can be their own sponsor or have no sponsor
-    }
-
-    // Find the correct parent in the binary tree
-    let parentId = sponsor?.id || null;
-    let finalSide = (side || 'LEFT').toUpperCase() as 'LEFT' | 'RIGHT';
-    
-    // If an explicit parent is provided in additionalData, use it
-    if (additionalData.parentId && sponsor) {
-      // Verify parent exists
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(additionalData.parentId);
-      
-      let query = supabase.from('profiles').select('id, operator_id');
-      
-      if (isUuid) {
-          query = query.or(`id.eq.${additionalData.parentId},operator_id.eq.${additionalData.parentId}`);
+      if (isSponsorUuid) {
+        sponsorQuery = sponsorQuery.eq('id', cleanSponsorId);
       } else {
-          query = query.eq('operator_id', additionalData.parentId);
+        sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
       }
-      
-      const { data: explicitParent } = await query.single();
-      
-      if (explicitParent) {
-        console.log(`Using explicit parent: ${explicitParent.operator_id} (${explicitParent.id})`);
-        try {
-          const binaryResult = await this.findBinaryParent(explicitParent.id, finalSide);
-          if (binaryResult) {
-            parentId = binaryResult.parentId;
-            finalSide = binaryResult.side;
-          } else {
-            parentId = explicitParent.id;
-          }
-        } catch (err) {
-          console.warn('Binary parent search failed for explicit parent:', err);
-          parentId = explicitParent.id;
+
+      const { data: foundSponsor, error: sponsorError } = await sponsorQuery.single();
+
+      if (sponsorError || !foundSponsor) {
+        const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
+        if (count !== 0) {
+          throw new Error('Invalid Sponsor ID');
         }
-      } else if (sponsor) {
-        console.log(`Explicit parent ${additionalData.parentId} not found, falling back to sponsor ${sponsor.id}`);
+        // First user bootstrap
+      } else {
+        sponsor = foundSponsor;
+        console.log(`Direct referral join under sponsor: ${sponsor.operator_id}`);
         try {
           const binaryResult = await this.findBinaryParent(sponsor.id, finalSide);
-          if (binaryResult) {
-            parentId = binaryResult.parentId;
-            finalSide = binaryResult.side;
-          }
-        } catch (err) {
-          console.warn('Binary parent search failed, defaulting to sponsor:', err);
-        }
-      }
-    } else if (sponsor) {
-      // Standard spillover logic from sponsor
-      try {
-        const binaryResult = await this.findBinaryParent(sponsor.id, finalSide);
-        if (binaryResult) {
           parentId = binaryResult.parentId;
           finalSide = binaryResult.side;
+        } catch (err) {
+          console.warn('Binary parent search failed for referral:', err);
+          parentId = sponsor.id;
         }
-      } catch (err) {
-        console.warn('Binary parent search failed, defaulting to sponsor:', err);
       }
     }
 
     // 3. Prepare Profile Data
-    // We use snake_case for database columns
     const profileData = {
       id: user.id,
       email: email.toLowerCase(),
@@ -441,7 +426,7 @@ export const supabaseService = {
       side: finalSide,
       position: finalSide.toLowerCase(),
       rank: 1,
-      package_amount: 50, // Default joining package
+      package_amount: 50,
       total_income: 0,
       wallets: {
         master: { balance: 0, currency: 'USDT' },
@@ -456,7 +441,7 @@ export const supabaseService = {
       matching_volume: { left: 0, right: 0 },
       matched_pairs: 0,
       role: 'user',
-      status: 'active', // Default to active as per user request
+      status: 'active',
       created_at: new Date().toISOString(),
     };
 
@@ -514,50 +499,7 @@ export const supabaseService = {
       console.warn('Failed to send welcome email:', err);
     }
 
-    // 5. Update Tree Tracking (Chain-based tracking)
-    this.updateTreeTracking(user.id, parentId, finalSide).catch(err => {
-      console.error('Failed to update tree tracking:', err);
-    });
-
     return { ...profileData, uid: user.id };
-  },
-
-  async updateTreeTracking(newUserId: string, parentId: string, side: string) {
-    let currentParentId = parentId;
-    let currentSide = side;
-    let depth = 0;
-
-    while (currentParentId && depth < 500) {
-      const { data: parent } = await supabase
-        .from('profiles')
-        .select('id, parent_id, side, wallets')
-        .eq('id', currentParentId)
-        .single();
-      
-      if (!parent) break;
-
-      // Update this parent's tracking for the specific side
-      const newWallets = { ...(parent.wallets || {}) };
-      if (!newWallets.tree_meta) newWallets.tree_meta = {};
-      
-      if (currentSide === 'LEFT') {
-        newWallets.tree_meta.left_last_id = newUserId;
-      } else {
-        newWallets.tree_meta.right_last_id = newUserId;
-      }
-
-      await this.adminQuery('profiles', 'update', { wallets: newWallets }, { id: parent.id });
-
-      // Move up only if the current node was the same side as the parent's chain
-      // e.g., if we are updating the LEFT chain, we only move up if the current parent was also a LEFT child
-      if (parent.parent_id && parent.side === currentSide) {
-        currentParentId = parent.parent_id;
-        depth++;
-      } else {
-        // Chain broken or reached root
-        break;
-      }
-    }
   },
 
   async registerUser(name: string, email: string) {
@@ -1839,35 +1781,23 @@ export const supabaseService = {
   // MLM Logic
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // 1. Try to use tracking from the start node's profile
-      const startNode = await this.getUserProfile(startNodeId);
-      if (startNode) {
-        const treeMeta = startNode.wallets?.tree_meta || {};
-        const trackedLastId = side === 'LEFT' ? treeMeta.left_last_id : treeMeta.right_last_id;
-        
-        if (trackedLastId) {
-          // Quick verification: check if this tracked node still exists and has no child on this side
-          const { data: lastNode } = await supabase.from('profiles').select('id, parent_id').eq('id', trackedLastId).single();
-          if (lastNode) {
-            const { data: child } = await supabase.from('profiles')
-              .select('id')
-              .eq('parent_id', trackedLastId)
-              .eq('side', side)
-              .single();
-            
-            if (!child) {
-              console.log(`Using tracked ${side} last ID: ${trackedLastId}`);
-              return { parentId: trackedLastId, side };
-            }
-          }
-        }
+      // 1. Check if the direct side is available
+      const { data: directChild } = await supabase.from('profiles')
+        .select('id')
+        .eq('parent_id', startNodeId)
+        .eq('side', side)
+        .single();
+
+      if (!directChild) {
+        return { parentId: startNodeId, side };
       }
 
-      // 2. Fallback to extreme traversal if tracking is missing or invalid
+      // 2. If full, use BFS within the subtree rooted at directChild
+      // Fetch the entire downline of the start node to perform BFS in memory
       const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: startNodeId });
       
       if (error || !downline) {
-        console.warn('RPC get_binary_downline failed in findBinaryParent, falling back to sequential search:', error);
+        console.warn('RPC get_binary_downline failed, falling back to sequential search');
         return this.findBinaryParentSequential(startNodeId, side);
       }
 
@@ -1883,24 +1813,28 @@ export const supabaseService = {
         }
       });
 
-      // Extreme Left/Right traversal in memory
-      let currentId = startNodeId;
-      let depth = 0;
-      
-      while (depth <= 500) { // Increased safety limit for deep chains
+      // BFS starting from directChild.id
+      const queue = [directChild.id];
+      const visited = new Set([directChild.id]);
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
         const children = nodesByParent.get(currentId) || {};
-        
-        if (side === 'LEFT') {
-          if (!children.left) return { parentId: currentId, side: 'LEFT' };
-          currentId = children.left;
-        } else {
-          if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-          currentId = children.right;
+
+        if (!children.left) return { parentId: currentId, side: 'LEFT' };
+        if (!children.right) return { parentId: currentId, side: 'RIGHT' };
+
+        if (!visited.has(children.left)) {
+          visited.add(children.left);
+          queue.push(children.left);
         }
-        depth++;
+        if (!visited.has(children.right)) {
+          visited.add(children.right);
+          queue.push(children.right);
+        }
       }
 
-      return { parentId: currentId, side };
+      return { parentId: startNodeId, side }; // Should not happen
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
       return { parentId: startNodeId, side };
@@ -1908,29 +1842,45 @@ export const supabaseService = {
   },
 
   async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
-    let currentId = startNodeId;
-    let depth = 0;
-    
-    while (depth <= 50) { // Safety limit
-      const { data: children } = await supabase
-        .from('profiles')
-        .select('id, side')
-        .eq('parent_id', currentId);
-      
-      const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
-      const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
+    try {
+      // 1. Check direct child
+      const { data: directChild } = await supabase.from('profiles')
+        .select('id')
+        .eq('parent_id', startNodeId)
+        .eq('side', side)
+        .single();
 
-      if (side === 'LEFT') {
-        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
-        currentId = leftChild.id;
-      } else {
-        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
-        currentId = rightChild.id;
+      if (!directChild) {
+        return { parentId: startNodeId, side };
       }
-      depth++;
+
+      // 2. BFS (Sequential - slower but safe fallback)
+      const queue = [directChild.id];
+      let depth = 0;
+
+      while (queue.length > 0 && depth < 100) {
+        const currentId = queue.shift()!;
+        depth++;
+        
+        const { data: children } = await supabase.from('profiles')
+          .select('id, side')
+          .eq('parent_id', currentId);
+
+        const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
+        const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
+
+        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+
+        queue.push(leftChild.id);
+        queue.push(rightChild.id);
+      }
+      
+      return { parentId: startNodeId, side };
+    } catch (err) {
+      console.error('Error in findBinaryParentSequential:', err);
+      return { parentId: startNodeId, side };
     }
-    
-    return { parentId: currentId, side };
   },
 
   async updateAncestorsTeamSize(uid: string) {
