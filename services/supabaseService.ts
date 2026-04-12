@@ -349,7 +349,7 @@ export const supabaseService = {
         parentQuery = parentQuery.eq('operator_id', additionalData.parentId);
       }
       
-      const { data: explicitParent } = await parentQuery.single();
+      const { data: explicitParent } = await parentQuery.maybeSingle();
       
       if (explicitParent) {
         console.log(`Spillover join under parent: ${explicitParent.operator_id}`);
@@ -390,7 +390,7 @@ export const supabaseService = {
         sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
       }
 
-      const { data: foundSponsor, error: sponsorError } = await sponsorQuery.single();
+      const { data: foundSponsor, error: sponsorError } = await sponsorQuery.maybeSingle();
 
       if (sponsorError || !foundSponsor) {
         const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
@@ -1782,37 +1782,61 @@ export const supabaseService = {
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
       // 1. Check if the direct side is available
+      // Use maybeSingle() to avoid 406 errors if duplicates exist
       const { data: directChild } = await supabase.from('profiles')
         .select('id')
         .eq('parent_id', startNodeId)
         .eq('side', side)
-        .single();
+        .maybeSingle();
 
       if (!directChild) {
         return { parentId: startNodeId, side };
       }
 
-      // 2. Extreme Placement Logic: Go to the very bottom of the chosen side
-      // This ensures "Unlimited Layers" and "No Spillover" (no filling gaps)
-      let currentId = directChild.id;
-      let depth = 0;
-      const MAX_SEARCH_DEPTH = 1000;
-
-      while (depth < MAX_SEARCH_DEPTH) {
-        const { data: nextChild } = await supabase.from('profiles')
-          .select('id')
-          .eq('parent_id', currentId)
-          .eq('side', side)
-          .single();
-        
-        if (!nextChild) {
-          return { parentId: currentId, side };
-        }
-        currentId = nextChild.id;
-        depth++;
+      // 2. If full, use BFS within the subtree rooted at directChild
+      // Fetch the entire downline to perform BFS in memory for speed and stability
+      const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: startNodeId });
+      
+      if (error || !downline) {
+        console.warn('RPC get_binary_downline failed, falling back to sequential search');
+        return this.findBinaryParentSequential(startNodeId, side);
       }
 
-      return { parentId: currentId, side };
+      // Build a map of children for efficient lookup
+      const nodesByParent = new Map<string, { left?: string, right?: string }>();
+      downline.forEach((p: any) => {
+        if (p.parent_id) {
+          if (!nodesByParent.has(p.parent_id)) nodesByParent.set(p.parent_id, {});
+          const children = nodesByParent.get(p.parent_id)!;
+          const s = (p.side || '').trim().toUpperCase();
+          if (s === 'LEFT') children.left = p.id;
+          else if (s === 'RIGHT') children.right = p.id;
+        }
+      });
+
+      // BFS starting from the directChild on the requested side
+      const queue = [directChild.id];
+      const visited = new Set([directChild.id]);
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        const children = nodesByParent.get(currentId) || {};
+
+        // Check left first, then right
+        if (!children.left) return { parentId: currentId, side: 'LEFT' };
+        if (!children.right) return { parentId: currentId, side: 'RIGHT' };
+
+        if (!visited.has(children.left)) {
+          visited.add(children.left);
+          queue.push(children.left);
+        }
+        if (!visited.has(children.right)) {
+          visited.add(children.right);
+          queue.push(children.right);
+        }
+      }
+
+      return { parentId: startNodeId, side };
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
       return { parentId: startNodeId, side };
@@ -1840,7 +1864,7 @@ export const supabaseService = {
         .from('profiles')
         .select('parent_id, side')
         .eq('id', currentId)
-        .single();
+        .maybeSingle();
       
       if (error || !profile || !profile.parent_id) break;
       
@@ -1852,7 +1876,7 @@ export const supabaseService = {
         .from('profiles')
         .select('team_size, left_count, right_count')
         .eq('id', parentId)
-        .single();
+        .maybeSingle();
         
       if (parentError || !parent) break;
       

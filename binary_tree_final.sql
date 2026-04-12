@@ -53,7 +53,8 @@ BEGIN
     -- 1. Check if the direct side is available
     SELECT id INTO v_direct_child_id 
     FROM profiles 
-    WHERE profiles.parent_id = p_start_node_id AND profiles.side = p_side;
+    WHERE profiles.parent_id = p_start_node_id AND profiles.side = p_side
+    LIMIT 1; -- Avoid multiple rows error
 
     IF v_direct_child_id IS NULL THEN
         RETURN QUERY SELECT p_start_node_id, p_side;
@@ -68,14 +69,14 @@ BEGIN
         v_queue := v_queue[2:array_length(v_queue, 1)]; -- Pop first
 
         -- Check left
-        SELECT id INTO v_left_child FROM profiles WHERE profiles.parent_id = v_current_id AND profiles.side = 'LEFT';
+        SELECT id INTO v_left_child FROM profiles WHERE profiles.parent_id = v_current_id AND profiles.side = 'LEFT' LIMIT 1;
         IF v_left_child IS NULL THEN
             RETURN QUERY SELECT v_current_id, 'LEFT'::TEXT;
             RETURN;
         END IF;
 
         -- Check right
-        SELECT id INTO v_right_child FROM profiles WHERE profiles.parent_id = v_current_id AND profiles.side = 'RIGHT';
+        SELECT id INTO v_right_child FROM profiles WHERE profiles.parent_id = v_current_id AND profiles.side = 'RIGHT' LIMIT 1;
         IF v_right_child IS NULL THEN
             RETURN QUERY SELECT v_current_id, 'RIGHT'::TEXT;
             RETURN;
@@ -85,8 +86,8 @@ BEGIN
         v_queue := array_append(v_queue, v_left_child);
         v_queue := array_append(v_queue, v_right_child);
         
-        -- Safety break for very deep trees (e.g. 1000 nodes)
-        IF array_length(v_queue, 1) > 1000 THEN
+        -- Safety break for very deep trees
+        IF array_length(v_queue, 1) > 2000 THEN
             EXIT;
         END IF;
     END LOOP;
