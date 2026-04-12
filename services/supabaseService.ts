@@ -514,7 +514,50 @@ export const supabaseService = {
       console.warn('Failed to send welcome email:', err);
     }
 
+    // 5. Update Tree Tracking (Chain-based tracking)
+    this.updateTreeTracking(user.id, parentId, finalSide).catch(err => {
+      console.error('Failed to update tree tracking:', err);
+    });
+
     return { ...profileData, uid: user.id };
+  },
+
+  async updateTreeTracking(newUserId: string, parentId: string, side: string) {
+    let currentParentId = parentId;
+    let currentSide = side;
+    let depth = 0;
+
+    while (currentParentId && depth < 500) {
+      const { data: parent } = await supabase
+        .from('profiles')
+        .select('id, parent_id, side, wallets')
+        .eq('id', currentParentId)
+        .single();
+      
+      if (!parent) break;
+
+      // Update this parent's tracking for the specific side
+      const newWallets = { ...(parent.wallets || {}) };
+      if (!newWallets.tree_meta) newWallets.tree_meta = {};
+      
+      if (currentSide === 'LEFT') {
+        newWallets.tree_meta.left_last_id = newUserId;
+      } else {
+        newWallets.tree_meta.right_last_id = newUserId;
+      }
+
+      await this.adminQuery('profiles', 'update', { wallets: newWallets }, { id: parent.id });
+
+      // Move up only if the current node was the same side as the parent's chain
+      // e.g., if we are updating the LEFT chain, we only move up if the current parent was also a LEFT child
+      if (parent.parent_id && parent.side === currentSide) {
+        currentParentId = parent.parent_id;
+        depth++;
+      } else {
+        // Chain broken or reached root
+        break;
+      }
+    }
   },
 
   async registerUser(name: string, email: string) {
@@ -1796,7 +1839,31 @@ export const supabaseService = {
   // MLM Logic
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // Fetch the downline once to find the spot in memory
+      // 1. Try to use tracking from the start node's profile
+      const startNode = await this.getUserProfile(startNodeId);
+      if (startNode) {
+        const treeMeta = startNode.wallets?.tree_meta || {};
+        const trackedLastId = side === 'LEFT' ? treeMeta.left_last_id : treeMeta.right_last_id;
+        
+        if (trackedLastId) {
+          // Quick verification: check if this tracked node still exists and has no child on this side
+          const { data: lastNode } = await supabase.from('profiles').select('id, parent_id').eq('id', trackedLastId).single();
+          if (lastNode) {
+            const { data: child } = await supabase.from('profiles')
+              .select('id')
+              .eq('parent_id', trackedLastId)
+              .eq('side', side)
+              .single();
+            
+            if (!child) {
+              console.log(`Using tracked ${side} last ID: ${trackedLastId}`);
+              return { parentId: trackedLastId, side };
+            }
+          }
+        }
+      }
+
+      // 2. Fallback to extreme traversal if tracking is missing or invalid
       const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: startNodeId });
       
       if (error || !downline) {
@@ -1820,7 +1887,7 @@ export const supabaseService = {
       let currentId = startNodeId;
       let depth = 0;
       
-      while (depth <= 50) { // Safety limit
+      while (depth <= 500) { // Increased safety limit for deep chains
         const children = nodesByParent.get(currentId) || {};
         
         if (side === 'LEFT') {
