@@ -152,3 +152,11 @@ BEGIN
     END;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 5. Alias for cumulative volume rebuild
+CREATE OR REPLACE FUNCTION rebuild_cumulative_volume()
+RETURNS VOID AS $$
+BEGIN
+    PERFORM rebuild_team_sizes();
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

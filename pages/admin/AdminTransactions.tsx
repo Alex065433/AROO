@@ -233,7 +233,16 @@ const AdminTransactions: React.FC = () => {
                       <ExternalLink size={12} className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" />
                     </div>
                   </td>
-                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">{tx.uid?.substring(0, 8)}...</td>
+                  <td className="px-8 py-5">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-bold text-slate-900 dark:text-white">
+                        {tx.profiles?.name || tx.uid?.substring(0, 8) + '...'}
+                      </span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {tx.profiles?.email || tx.uid}
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-8 py-5">
                     <span className={`text-xs font-bold uppercase ${
                       tx.type === 'deposit' ? 'text-emerald-500' : 
@@ -242,15 +251,15 @@ const AdminTransactions: React.FC = () => {
                       {tx.type}
                     </span>
                   </td>
-                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">${tx.amount?.toFixed(2)}</td>
-                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">{tx.method || 'INTERNAL'}</td>
+                  <td className="px-8 py-5 text-sm font-bold text-slate-900 dark:text-white">${tx?.amount?.toFixed(2)}</td>
+                  <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">{tx?.method || 'INTERNAL'}</td>
                   <td className="px-8 py-5">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                      tx.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500' :
-                      tx.status === 'pending' ? 'bg-amber-500/10 text-amber-500' :
+                      tx?.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500' :
+                      tx?.status === 'pending' ? 'bg-amber-500/10 text-amber-500' :
                       'bg-rose-500/10 text-rose-500'
                     }`}>
-                      {tx.status}
+                      {tx?.status}
                     </span>
                   </td>
                   <td className="px-8 py-5 text-xs text-slate-500 dark:text-slate-400">

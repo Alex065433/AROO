@@ -69,7 +69,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setError(userMessage);
       }
       
-      if (err.message?.includes('not found') || err.status === 401) {
+      if (err?.message?.includes('not found') || err?.status === 401) {
         setProfile(null);
         localStorage.removeItem('arowin_supabase_user');
       }
