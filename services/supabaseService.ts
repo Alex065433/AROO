@@ -208,7 +208,7 @@ export const supabaseService = {
       try {
         // Use a longer timeout (60s) to allow for database wake-up
         const { data, error } = await this.withTimeout(
-          supabase.from("profiles").select(columns).eq("id", userId).single(),
+          supabase.from("profiles").select(columns).eq("id", userId).maybeSingle(),
           60000 
         );
 
@@ -1782,11 +1782,11 @@ export const supabaseService = {
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
       // 1. Check if the direct side is available
-      // Use maybeSingle() to avoid 406 errors if duplicates exist
+      // Check both 'side' and 'position' columns to be safe against data inconsistencies
       const { data: directChild } = await supabase.from('profiles')
         .select('id')
         .eq('parent_id', startNodeId)
-        .eq('side', side)
+        .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
         .maybeSingle();
 
       if (!directChild) {
@@ -1799,7 +1799,8 @@ export const supabaseService = {
       
       if (error || !downline) {
         console.warn('RPC get_binary_downline failed, falling back to sequential search');
-        return this.findBinaryParentSequential(startNodeId, side);
+        // Avoid circular dependency by implementing a simple sequential search here
+        return this.findBinaryParentSimpleSequential(startNodeId, side);
       }
 
       // Build a map of children for efficient lookup
@@ -1808,7 +1809,8 @@ export const supabaseService = {
         if (p.parent_id) {
           if (!nodesByParent.has(p.parent_id)) nodesByParent.set(p.parent_id, {});
           const children = nodesByParent.get(p.parent_id)!;
-          const s = (p.side || '').trim().toUpperCase();
+          // Check both side and position for mapping
+          const s = (p.side || p.position || '').trim().toUpperCase();
           if (s === 'LEFT') children.left = p.id;
           else if (s === 'RIGHT') children.right = p.id;
         }
@@ -1843,14 +1845,44 @@ export const supabaseService = {
     }
   },
 
-  async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+  // Helper for findBinaryParent to avoid circular dependency
+  async findBinaryParentSimpleSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // Use the same extreme placement logic for the sequential fallback
-      return this.findBinaryParent(startNodeId, side);
+      const { data: directChild } = await supabase.from('profiles')
+        .select('id')
+        .eq('parent_id', startNodeId)
+        .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
+        .maybeSingle();
+
+      if (!directChild) return { parentId: startNodeId, side };
+
+      const queue = [directChild.id];
+      let depth = 0;
+      while (queue.length > 0 && depth < 100) {
+        const currentId = queue.shift()!;
+        depth++;
+        
+        const { data: children } = await supabase.from('profiles')
+          .select('id, side, position')
+          .eq('parent_id', currentId);
+
+        const leftChild = children?.find(c => (c.side || c.position || '').trim().toUpperCase() === 'LEFT');
+        const rightChild = children?.find(c => (c.side || c.position || '').trim().toUpperCase() === 'RIGHT');
+
+        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+
+        queue.push(leftChild.id);
+        queue.push(rightChild.id);
+      }
+      return { parentId: startNodeId, side };
     } catch (err) {
-      console.error('Error in findBinaryParentSequential:', err);
       return { parentId: startNodeId, side };
     }
+  },
+
+  async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+    return this.findBinaryParent(startNodeId, side);
   },
 
   async updateAncestorsTeamSize(uid: string) {
@@ -2214,7 +2246,7 @@ export const supabaseService = {
         .from('profiles')
         .select('*')
         .eq('id', cleanId)
-        .single();
+        .maybeSingle();
       if (!error && data) return data;
     }
 
@@ -2233,7 +2265,7 @@ export const supabaseService = {
       query = query.eq('operator_id', cleanId);
     }
     
-    let { data, error } = await query.single();
+    let { data, error } = await query.maybeSingle();
 
     // Fallback to ilike on operator_id if not found
     if ((error || !data) && !isUuid) {
@@ -2241,7 +2273,7 @@ export const supabaseService = {
         .from('profiles')
         .select('*')
         .ilike('operator_id', cleanId)
-        .single();
+        .maybeSingle();
       
       if (!retryError && retryData) {
         data = retryData;
