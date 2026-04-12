@@ -94,14 +94,14 @@ const AdminTransactions: React.FC = () => {
 
   const filteredTransactions = transactions.filter(tx => {
     const matchesType = filterType === 'All' || (tx.type || '').toLowerCase().includes(filterType.toLowerCase());
-    const matchesSearch = (tx.uid || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+    const matchesSearch = (tx.uid || tx.user_id || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
                          tx.id?.toString().includes(searchQuery);
     return matchesType && matchesSearch;
   });
 
   const stats = {
-    deposits: transactions.filter(t => t.type === 'deposit' && (t.status === 'finished' || t.status === 'completed')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
-    withdrawals: transactions.filter(t => t.type === 'withdrawal' && (t.status === 'finished' || t.status === 'completed')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+    deposits: transactions.filter(t => t.type === 'deposit' && (t.status === 'finished' || t.status === 'completed' || t.status === 'success')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
+    withdrawals: transactions.filter(t => t.type === 'withdrawal' && (t.status === 'finished' || t.status === 'completed' || t.status === 'success')).reduce((sum, t) => sum + (Number(t.amount) || 0), 0),
     pending: transactions.filter(t => t.status === 'waiting' || t.status === 'pending').length
   };
 

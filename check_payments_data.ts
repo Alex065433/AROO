@@ -7,7 +7,7 @@ const supabaseKey = process.env.VITE_SUPABASE_SERVICE_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function check() {
-  const { data, error } = await supabase.from('profiles').select('id, operator_id, side, position').eq('parent_id', '332da83b-e244-48d4-b322-aa5578eee5de');
-  console.log(data);
+  const { data, error } = await supabase.from('payments').select('*').limit(5);
+  console.log("Payments:", data);
 }
 check();

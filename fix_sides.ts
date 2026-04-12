@@ -1,48 +1,27 @@
 
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import * as dotenv from 'dotenv';
 dotenv.config();
-
-const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!);
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseKey = process.env.VITE_SUPABASE_SERVICE_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function fixSides() {
-  const { data: profiles, error } = await supabase
-    .from('profiles')
-    .select('id, operator_id, side, parent_id');
-  
+  const { data: profiles, error } = await supabase.from('profiles').select('id, side, position');
   if (error) {
-    console.error('Error:', error);
+    console.error(error);
     return;
   }
 
   for (const p of profiles) {
-    if (p.parent_id && !p.side) {
-      console.log(`Fixing NULL side for ${p.operator_id} (parent: ${p.parent_id})`);
-      
-      // Check existing children of this parent
-      const { data: siblings } = await supabase
-        .from('profiles')
-        .select('side')
-        .eq('parent_id', p.parent_id);
-      
-      const occupiedSides = (siblings || []).map(s => s.side).filter(Boolean);
-      let newSide = 'LEFT';
-      if (occupiedSides.includes('LEFT')) {
-        newSide = 'RIGHT';
-      }
-      
-      console.log(`Assigning side ${newSide} to ${p.operator_id}`);
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ side: newSide })
-        .eq('id', p.id);
-      
+    const expectedPosition = p.side ? p.side.toLowerCase() : null;
+    if (p.position !== expectedPosition && expectedPosition) {
+      console.log(`Fixing ${p.id}: position ${p.position} -> ${expectedPosition}`);
+      const { error: updateError } = await supabase.from('profiles').update({ position: expectedPosition }).eq('id', p.id);
       if (updateError) {
-        console.error(`Failed to update ${p.operator_id}:`, updateError.message);
+        console.error(`Failed to update ${p.id}:`, updateError);
       }
     }
   }
-  console.log('Fix complete.');
 }
-
 fixSides();

@@ -283,11 +283,11 @@ const Dashboard: React.FC = () => {
             setUserData(updatedProfile);
             // Use nullish coalescing for better robustness
             const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? updatedProfile.wallets?.master?.balance ?? 0;
-            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
-            const rankBonusBalance = updatedProfile.wallets?.rankBonus?.balance || 0;
-            const rewardsBalance = updatedProfile.wallets?.rewards?.balance || 0;
-            const yieldBalance = updatedProfile.wallets?.yield?.balance || 0;
+            const referralBalance = updatedProfile.wallets?.referral?.balance ?? updatedProfile.referral_income ?? 0;
+            const matchingBalance = updatedProfile.wallets?.matching?.balance ?? updatedProfile.matching_income ?? 0;
+            const rankBonusBalance = updatedProfile.wallets?.rankBonus?.balance ?? updatedProfile.rank_income ?? 0;
+            const rewardsBalance = updatedProfile.wallets?.rewards?.balance ?? updatedProfile.incentive_income ?? 0;
+            const yieldBalance = updatedProfile.wallets?.yield?.balance ?? updatedProfile.yield_income ?? 0;
             const cappingBoxBalance = updatedProfile.wallets?.capping_box?.balance || 0;
             
             setUserWallets({ 
@@ -328,11 +328,11 @@ const Dashboard: React.FC = () => {
               setUserData(profile);
               setUserWallets({
                 master: { balance: Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
-                referral: { balance: Number(profile.wallets?.referral?.balance || 0), currency: 'USDT' },
-                matching: { balance: Number(profile.wallets?.matching?.balance || 0), currency: 'USDT' },
-                rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance || 0), currency: 'USDT' },
-                rewards: { balance: Number(profile.wallets?.rewards?.balance || 0), currency: 'USDT' },
-                yield: { balance: Number(profile.wallets?.yield?.balance || 0), currency: 'USDT' },
+                referral: { balance: Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
+                matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
+                rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
+                rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
+                yield: { balance: Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0), currency: 'USDT' },
                 capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
               });
             }

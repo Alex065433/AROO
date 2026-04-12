@@ -67,6 +67,7 @@ apiRouter.get("/health", (req, res) => {
 
 // Admin Query Endpoint
 apiRouter.post("/admin-query", async (req, res) => {
+  const start = Date.now();
   const { table, operation, data, match } = req.body;
   console.log(`[ADMIN QUERY] ${operation} on ${table}`, { data, match });
 
@@ -79,11 +80,14 @@ apiRouter.post("/admin-query", async (req, res) => {
     } else if (operation === 'delete') {
       result = await supabase.from(table).delete().match(match).select();
     } else if (operation === 'execute') {
-      // Use rpc to execute SQL if available, or direct query
-      // For now, we'll try to use a known RPC or just return error if not possible
       return res.status(400).json({ error: "Arbitrary SQL execution not supported via this endpoint for security" });
     } else {
       return res.status(400).json({ error: "Invalid operation" });
+    }
+
+    const duration = Date.now() - start;
+    if (duration > 1000) {
+      console.warn(`[ADMIN QUERY SLOW] ${operation} on ${table} took ${duration}ms`);
     }
 
     if (result.error) {
