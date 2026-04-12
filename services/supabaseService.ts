@@ -717,7 +717,7 @@ export const supabaseService = {
 
       // 3. Update active_package and total_deposit
       const packageUpdateData = { 
-        active_package: 50, // Each node is a $50 package
+        active_package: amount, // Use the actual package amount
         total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
         status: 'active'
       };
@@ -1752,6 +1752,10 @@ export const supabaseService = {
 
   async createWithdrawal(uid: string, amount: number, address: string) {
     try {
+      if (amount < 10) {
+        throw new Error('Minimum withdrawal amount is 10 USDT');
+      }
+
       const profile = await this.getUserProfile(uid);
       if (!profile) throw new Error('User not found');
 
@@ -1759,6 +1763,10 @@ export const supabaseService = {
       if (balance < amount) {
         throw new Error('Insufficient balance');
       }
+
+      // 10% Transaction Fee (Page 14)
+      const fee = amount * 0.10;
+      const netAmount = amount - fee;
 
       // 1. Deduct balance immediately (to prevent double spending)
       const newWallets = { ...profile.wallets };
@@ -1775,7 +1783,21 @@ export const supabaseService = {
 
       if (updateError) throw updateError;
 
-      return { success: true };
+      // 2. Create withdrawal transaction
+      const { error: txError } = await supabase
+        .from('transactions')
+        .insert({
+          uid: uid,
+          user_id: uid,
+          amount: amount,
+          type: 'withdrawal',
+          description: `Withdrawal to ${address} (Net: ${netAmount.toFixed(2)} USDT, Fee: ${fee.toFixed(2)} USDT)`,
+          status: 'pending'
+        });
+
+      if (txError) console.error('Error logging withdrawal transaction:', txError);
+
+      return { success: true, netAmount, fee };
     } catch (error) {
       console.error('Error creating withdrawal:', error);
       throw error;
