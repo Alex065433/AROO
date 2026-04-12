@@ -9,18 +9,18 @@ export const RANK_NAMES = [
 ];
 
 const RANK_DATA = [
-  { required: 1, weekly: 4, capping: 50, pairIncome: 5, reward: 0 },     // Starter: 1L - 1R
-  { required: 3, weekly: 6, capping: 50, pairIncome: 5, reward: 0 },     // Bronze: 3L - 3R
-  { required: 7, weekly: 10, capping: 50, pairIncome: 5, reward: 0 },    // Silver: 7L - 7R
-  { required: 15, weekly: 16, capping: 50, pairIncome: 5, reward: 0 },   // Gold: 15L - 15R
-  { required: 31, weekly: 31, capping: 50, pairIncome: 5, reward: 0 },   // Platina: 31L - 31R
-  { required: 100, weekly: 50, capping: 50, pairIncome: 5, reward: 0 },  // Diamond: 100L - 100R
-  { required: 250, weekly: 125, capping: 50, pairIncome: 5, reward: 0 }, // Blue Sapphire: 250L - 250R
-  { required: 500, weekly: 250, capping: 60, pairIncome: 6, reward: 0 }, // Ruby Elite: 500L - 500R
-  { required: 1000, weekly: 500, capping: 70, pairIncome: 7, reward: 0 }, // Emerald Crown: 1000L - 1000R
-  { required: 2500, weekly: 1000, capping: 80, pairIncome: 8, reward: 0 }, // Titanium King: 2500L - 2500R
-  { required: 5000, weekly: 2500, capping: 90, pairIncome: 10, reward: 0 }, // Royal Legend: 5000L - 5000R
-  { required: 10000, weekly: 10000, capping: 100, pairIncome: 25, reward: 0 }, // Global Ambassador: 10000L - 10000R
+  { required: 1, weekly: 4, capping: 250, pairIncome: 5, reward: 0 },     // Starter: 1L - 1R
+  { required: 3, weekly: 6, capping: 250, pairIncome: 5, reward: 0 },     // Bronze: 3L - 3R
+  { required: 7, weekly: 10, capping: 250, pairIncome: 5, reward: 0 },    // Silver: 7L - 7R
+  { required: 15, weekly: 16, capping: 250, pairIncome: 5, reward: 0 },   // Gold: 15L - 15R
+  { required: 31, weekly: 31, capping: 250, pairIncome: 5, reward: 0 },   // Platina: 31L - 31R
+  { required: 100, weekly: 50, capping: 250, pairIncome: 5, reward: 0 },  // Diamond: 100L - 100R
+  { required: 250, weekly: 125, capping: 250, pairIncome: 5, reward: 0 }, // Blue Sapphire: 250L - 250R
+  { required: 500, weekly: 250, capping: 360, pairIncome: 6, reward: 0 }, // Ruby Elite: 500L - 500R
+  { required: 1000, weekly: 500, capping: 490, pairIncome: 7, reward: 0 }, // Emerald Crown: 1000L - 1000R
+  { required: 2500, weekly: 1000, capping: 640, pairIncome: 8, reward: 0 }, // Titanium King: 2500L - 2500R
+  { required: 5000, weekly: 2500, capping: 900, pairIncome: 10, reward: 0 }, // Royal Legend: 5000L - 5000R
+  { required: 10000, weekly: 10000, capping: 2500, pairIncome: 25, reward: 0 }, // Global Ambassador: 10000L - 10000R
 ];
 
 export const PACKAGES = [
