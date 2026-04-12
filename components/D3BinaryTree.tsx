@@ -52,7 +52,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
   };
 
   const buildHierarchy = useCallback((path: string, depth: number = 0): any => {
-    if (depth > 20) return null;
+    if (depth > 100) return null; // Increased from 20 to 100 for "Unlimited Layers"
     const node = data[path];
     if (!node) return null;
 

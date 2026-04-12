@@ -1792,49 +1792,27 @@ export const supabaseService = {
         return { parentId: startNodeId, side };
       }
 
-      // 2. If full, use BFS within the subtree rooted at directChild
-      // Fetch the entire downline of the start node to perform BFS in memory
-      const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: startNodeId });
-      
-      if (error || !downline) {
-        console.warn('RPC get_binary_downline failed, falling back to sequential search');
-        return this.findBinaryParentSequential(startNodeId, side);
+      // 2. Extreme Placement Logic: Go to the very bottom of the chosen side
+      // This ensures "Unlimited Layers" and "No Spillover" (no filling gaps)
+      let currentId = directChild.id;
+      let depth = 0;
+      const MAX_SEARCH_DEPTH = 1000;
+
+      while (depth < MAX_SEARCH_DEPTH) {
+        const { data: nextChild } = await supabase.from('profiles')
+          .select('id')
+          .eq('parent_id', currentId)
+          .eq('side', side)
+          .single();
+        
+        if (!nextChild) {
+          return { parentId: currentId, side };
+        }
+        currentId = nextChild.id;
+        depth++;
       }
 
-      // Build a map of children for efficient lookup
-      const nodesByParent = new Map<string, { left?: string, right?: string }>();
-      downline.forEach((p: any) => {
-        if (p.parent_id) {
-          if (!nodesByParent.has(p.parent_id)) nodesByParent.set(p.parent_id, {});
-          const children = nodesByParent.get(p.parent_id)!;
-          const s = (p.side || '').trim().toUpperCase();
-          if (s === 'LEFT') children.left = p.id;
-          else if (s === 'RIGHT') children.right = p.id;
-        }
-      });
-
-      // BFS starting from directChild.id
-      const queue = [directChild.id];
-      const visited = new Set([directChild.id]);
-
-      while (queue.length > 0) {
-        const currentId = queue.shift()!;
-        const children = nodesByParent.get(currentId) || {};
-
-        if (!children.left) return { parentId: currentId, side: 'LEFT' };
-        if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-
-        if (!visited.has(children.left)) {
-          visited.add(children.left);
-          queue.push(children.left);
-        }
-        if (!visited.has(children.right)) {
-          visited.add(children.right);
-          queue.push(children.right);
-        }
-      }
-
-      return { parentId: startNodeId, side }; // Should not happen
+      return { parentId: currentId, side };
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
       return { parentId: startNodeId, side };
@@ -1843,40 +1821,8 @@ export const supabaseService = {
 
   async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // 1. Check direct child
-      const { data: directChild } = await supabase.from('profiles')
-        .select('id')
-        .eq('parent_id', startNodeId)
-        .eq('side', side)
-        .single();
-
-      if (!directChild) {
-        return { parentId: startNodeId, side };
-      }
-
-      // 2. BFS (Sequential - slower but safe fallback)
-      const queue = [directChild.id];
-      let depth = 0;
-
-      while (queue.length > 0 && depth < 100) {
-        const currentId = queue.shift()!;
-        depth++;
-        
-        const { data: children } = await supabase.from('profiles')
-          .select('id, side')
-          .eq('parent_id', currentId);
-
-        const leftChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'LEFT');
-        const rightChild = children?.find(c => (c.side || '').trim().toUpperCase() === 'RIGHT');
-
-        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
-        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
-
-        queue.push(leftChild.id);
-        queue.push(rightChild.id);
-      }
-      
-      return { parentId: startNodeId, side };
+      // Use the same extreme placement logic for the sequential fallback
+      return this.findBinaryParent(startNodeId, side);
     } catch (err) {
       console.error('Error in findBinaryParentSequential:', err);
       return { parentId: startNodeId, side };
@@ -2101,21 +2047,6 @@ export const supabaseService = {
 
     const tree: Record<string, any> = {};
     
-    // Fetch all team collection nodes for the downline to integrate them into the tree
-    const uids = finalDownline.map((p: any) => p.id);
-    const { data: teamNodes } = await supabase
-      .from('team_collection')
-      .select('*')
-      .in('uid', uids);
-    
-    const teamNodesByUser = new Map<string, any[]>();
-    teamNodes?.forEach(node => {
-      if (!teamNodesByUser.has(node.uid)) {
-        teamNodesByUser.set(node.uid, []);
-      }
-      teamNodesByUser.get(node.uid)!.push(node);
-    });
-
     // Map nodes by parent ID and side for efficient binary tree construction
     const nodesByParent = new Map<string, Record<string, any>>();
     finalDownline.forEach((p: any) => {
@@ -2127,19 +2058,13 @@ export const supabaseService = {
         const side = (p.side || '').trim().toUpperCase();
         
         if (side === 'LEFT' || side === 'RIGHT') {
-          // If multiple nodes claim the same spot, keep the one created first (or just the first one we see)
           if (!parentChildren[side]) {
             parentChildren[side] = p;
-          } else {
-            console.warn(`Duplicate placement detected for parent ${p.parent_id} on side ${side}. Node ${p.operator_id} ignored in tree building.`);
           }
         } else {
-          // Fallback for missing or invalid side: assign to first available spot
-          if (!parentChildren['LEFT']) {
-            parentChildren['LEFT'] = p;
-          } else if (!parentChildren['RIGHT']) {
-            parentChildren['RIGHT'] = p;
-          }
+          // Fallback for missing or invalid side
+          if (!parentChildren['LEFT']) parentChildren['LEFT'] = p;
+          else if (!parentChildren['RIGHT']) parentChildren['RIGHT'] = p;
         }
       }
     });
@@ -2154,14 +2079,6 @@ export const supabaseService = {
       if (visited.has(node.id) || depth > MAX_DEPTH) return;
       visited.add(node.id);
 
-      const userTeamNodes = teamNodesByUser.get(node.id) || [];
-      // Sort nodes by ID suffix to ensure consistent internal tree structure
-      userTeamNodes.sort((a, b) => {
-        const aIdx = parseInt(a.node_id.split('-').pop() || '0');
-        const bIdx = parseInt(b.node_id.split('-').pop() || '0');
-        return aIdx - bIdx;
-      });
-
       const leftCount = parseInt(node.left_count || node.team_size?.left || '0');
       const rightCount = parseInt(node.right_count || node.team_size?.right || '0');
       
@@ -2173,15 +2090,14 @@ export const supabaseService = {
         joinDate: node.created_at?.split('T')[0] || 'N/A',
         totalTeam: leftCount + rightCount,
         team_size: { left: leftCount, right: rightCount },
-        leftBusiness: (Number(node.left_business) || (node.matching_volume?.left || 0) * 50).toFixed(2),
-        rightBusiness: (Number(node.right_business) || (node.matching_volume?.right || 0) * 50).toFixed(2),
+        leftBusiness: (Number(node.left_business) || 0).toFixed(2),
+        rightBusiness: (Number(node.right_business) || 0).toFixed(2),
         parentId: node.parent_id,
         sponsorId: node.sponsor_id,
         email: node.email,
         side: node.side || 'ROOT',
         uid: node.id,
-        generationIds: userTeamNodes.map(n => ({ id: n.node_id, gen: n.generation })),
-        nodeCount: userTeamNodes.length
+        nodeCount: 0 // Removed team_collection node count
       };
 
       // Recursively process children
