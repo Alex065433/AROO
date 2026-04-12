@@ -361,6 +361,9 @@ export const supabaseService = {
           finalSide = binaryResult.side;
         } catch (err) {
           console.warn('Binary parent search failed for spillover:', err);
+          // If search fails, we must NOT just use explicitParent.id as it might be full.
+          // But we have no other choice here if findBinaryParent throws.
+          // However, findBinaryParent is designed to return a fallback instead of throwing.
           parentId = explicitParent.id;
         }
       }
@@ -407,6 +410,7 @@ export const supabaseService = {
           finalSide = binaryResult.side;
         } catch (err) {
           console.warn('Binary parent search failed for referral:', err);
+          // Fallback to sponsor.id if search fails
           parentId = sponsor.id;
         }
       }
@@ -1783,10 +1787,12 @@ export const supabaseService = {
     try {
       // 1. Check if the direct side is available
       // Check both 'side' and 'position' columns to be safe against data inconsistencies
+      // Use .limit(1) to ensure we don't get 406 errors if duplicates already exist
       const { data: directChild } = await supabase.from('profiles')
         .select('id')
         .eq('parent_id', startNodeId)
         .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
+        .limit(1)
         .maybeSingle();
 
       if (!directChild) {
@@ -1838,6 +1844,7 @@ export const supabaseService = {
         }
       }
 
+      // If BFS fails (should not happen in a binary tree), fallback to start node
       return { parentId: startNodeId, side };
     } catch (err) {
       console.error('Error in findBinaryParent:', err);
@@ -1852,6 +1859,7 @@ export const supabaseService = {
         .select('id')
         .eq('parent_id', startNodeId)
         .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
+        .limit(1)
         .maybeSingle();
 
       if (!directChild) return { parentId: startNodeId, side };
