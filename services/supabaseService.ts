@@ -776,162 +776,50 @@ export const supabaseService = {
         }
       }
 
-      // 5. Create Sub-Nodes in Binary Tree if package has multiple nodes
+      // 5. Create Sub-Nodes in Team Collection if package has multiple nodes
       const packageData = PACKAGES.find(p => p.price === amount);
       if (packageData && packageData.nodes > 1) {
         const numSubNodes = packageData.nodes - 1;
-        console.log(`Creating ${numSubNodes} sub-nodes for package ${packageData.name}`);
+        console.log(`Creating ${numSubNodes} sub-nodes in team collection for package ${packageData.name}`);
         
-        // We'll build an internal tree structure
-        // Node 0 is the main userProfile
-        const nodes: any[] = [userProfile];
-        const subNodesToInsert: any[] = [];
         const teamCollectionToInsert: any[] = [];
         
-        // Fetch downline once to find all spots in memory
-        const { data: downline } = await supabase.rpc('get_binary_downline', { root_id: uid });
-        const localTree = new Map<string, { left?: string, right?: string }>();
-        if (downline) {
-          downline.forEach((p: any) => {
-            if (p.parent_id) {
-              if (!localTree.has(p.parent_id)) localTree.set(p.parent_id, {});
-              const children = localTree.get(p.parent_id)!;
-              const s = (p.side || '').trim().toUpperCase();
-              if (s === 'LEFT') children.left = p.id;
-              else if (s === 'RIGHT') children.right = p.id;
-            }
-          });
-        }
-
-        const findSpotInMemory = (startId: string, side: 'LEFT' | 'RIGHT'): { parentId: string, side: 'LEFT' | 'RIGHT' } => {
-          const queue: { id: string, depth: number }[] = [{ id: startId, depth: 0 }];
-          const visited = new Set<string>();
-          while (queue.length > 0) {
-            const { id: currentId, depth } = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-            if (depth > 20) break;
-            const children = localTree.get(currentId) || {};
-            if (depth === 0) {
-              if (side === 'LEFT') {
-                if (!children.left) return { parentId: currentId, side: 'LEFT' };
-                queue.push({ id: children.left, depth: depth + 1 });
-              } else {
-                if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-                queue.push({ id: children.right, depth: depth + 1 });
-              }
-            } else {
-              if (!children.left) return { parentId: currentId, side: 'LEFT' };
-              if (!children.right) return { parentId: currentId, side: 'RIGHT' };
-              queue.push({ id: children.left, depth: depth + 1 });
-              queue.push({ id: children.right, depth: depth + 1 });
-            }
-          }
-          return { parentId: startId, side };
-        };
-
         for (let i = 0; i < numSubNodes; i++) {
           const subNodeIndex = i + 1;
-          const internalParentIndex = Math.floor((subNodeIndex - 1) / 2);
-          const internalParent = nodes[internalParentIndex];
-          const internalSide = (subNodeIndex % 2 === 1) ? 'LEFT' : 'RIGHT';
-          
-          const subNodeId = crypto.randomUUID();
           const subNodeOperatorId = `${userProfile.operator_id}-${String(subNodeIndex + 1).padStart(2, '0')}`;
           
-          // Find correct placement for this sub-node in the global tree
-          const placement = findSpotInMemory(internalParent.id, internalSide);
-          
-          const subNodeData = {
-            id: subNodeId,
-            email: `${subNodeOperatorId.toLowerCase()}@arowin.internal`,
-            operator_id: subNodeOperatorId,
-            name: `${userProfile.name} Node ${subNodeIndex + 1}`,
-            sponsor_id: userProfile.id,
-            parent_id: placement.parentId,
-            side: placement.side,
-            position: placement.side.toLowerCase(),
-            status: 'active',
-            role: 'user',
-            active_package: 50,
-            package_amount: 50,
-            wallet_balance: 0,
-            total_income: 0,
-            wallets: {
-              master: { balance: 0, currency: 'USDT' },
-              referral: { balance: 0, currency: 'USDT' },
-              matching: { balance: 0, currency: 'USDT' },
-              yield: { balance: 0, currency: 'USDT' },
-              rankBonus: { balance: 0, currency: 'USDT' },
-              incentive: { balance: 0, currency: 'USDT' },
-              rewards: { balance: 0, currency: 'USDT' },
-            },
-            team_size: { left: 0, right: 0 },
-            matching_volume: { left: 0, right: 0 },
-            created_at: new Date().toISOString()
-          };
-
-          subNodesToInsert.push(subNodeData);
           teamCollectionToInsert.push({
             uid: uid,
             node_id: subNodeOperatorId,
-            name: subNodeData.name,
+            name: `${userProfile.name} Node ${subNodeIndex + 1}`,
             balance: 0,
             eligible: true,
             created_at: new Date().toISOString()
           });
-
-          // Update local tree for next sub-node placement
-          if (!localTree.has(placement.parentId)) localTree.set(placement.parentId, {});
-          const children = localTree.get(placement.parentId)!;
-          if (placement.side === 'LEFT') children.left = subNodeId;
-          else children.right = subNodeId;
-
-          // Add to our local list for further parenting
-          nodes.push(subNodeData);
         }
 
-        // Batch Insert Sub-Nodes
-        console.log(`Batch inserting ${subNodesToInsert.length} sub-nodes...`);
+        // Batch Insert Sub-Nodes into team collection
+        console.log(`Batch inserting ${teamCollectionToInsert.length} sub-nodes into team collection...`);
         if (isAdmin) {
-          await this.adminQuery('profiles', 'insert', subNodesToInsert);
           await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
         } else {
-          const { error: insertError } = await supabase.from('profiles').insert(subNodesToInsert);
-          if (insertError) {
-            console.error('Batch insert failed, trying admin query:', insertError);
-            await this.adminQuery('profiles', 'insert', subNodesToInsert);
-          }
-          
           const { error: teamInsertError } = await supabase.from('team_collection').insert(teamCollectionToInsert);
           if (teamInsertError) {
             console.error('Team collection insert failed, trying admin query:', teamInsertError);
             await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
           }
         }
-
-        // Process income and business volume for each sub-node
-        // We'll distribute volume sequentially to avoid lock contention, but batch the referral bonuses
-        for (const subNode of subNodesToInsert) {
-          await this.distributeTreeIncome(subNode.id, 50);
-        }
-        
-        // Add total referral bonus to the main node in one go
-        const totalSubNodeReferralBonus = numSubNodes * (50 * 0.05);
-        if (totalSubNodeReferralBonus > 0) {
-          await this.addIncome(uid, totalSubNodeReferralBonus, 'referral_bonus', { existingProfile: userProfile });
-        }
       }
 
-      // 8. Referral Bonus for the main node (5% of $50 to the external sponsor)
+      // 8. Referral Bonus for the main node (5% of total amount to the external sponsor)
       if (userProfile.sponsor_id && amount > 0) {
-        const mainNodeReferralBonus = 50 * 0.05;
+        const mainNodeReferralBonus = amount * 0.05;
         // We don't have the sponsor's profile handy, so we'll let addIncome fetch it
         await this.addIncome(userProfile.sponsor_id, mainNodeReferralBonus, 'referral_bonus');
       }
 
-      // 9. Update business and matching up the tree for the main node ($50)
-      await this.distributeTreeIncome(uid, 50);
+      // 9. Update business and matching up the tree for the main node (total amount)
+      await this.distributeTreeIncome(uid, amount);
 
       // 6. Log activation payment
       const paymentData = {
@@ -2243,7 +2131,7 @@ export const supabaseService = {
     if (!rootProfile) return {};
 
     const visited = new Set<string>();
-    const MAX_DEPTH = 20;
+    const MAX_DEPTH = 100;
 
     const buildNode = (node: any, path: string, depth: number = 0) => {
       if (visited.has(node.id) || depth > MAX_DEPTH) return;
