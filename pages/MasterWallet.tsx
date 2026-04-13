@@ -5,6 +5,7 @@ import { MOCK_USER, PACKAGES } from '../constants';
 import { supabaseService } from '../services/supabaseService';
 import { apiFetch } from '../src/lib/api';
 import { copyToClipboard as copyUtil } from '../src/lib/clipboard';
+import { useUser } from '../src/context/UserContext';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 
 const MasterWallet: React.FC = () => {
+  const { profile: userProfile, refreshProfile } = useUser();
   const [userWallets, setUserWallets] = useState(MOCK_USER.wallets);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'exchange' | 'package' | null>(null);
   const [selectedCoin, setSelectedCoin] = useState<'BTC' | 'ETH' | 'TRX'>('BTC');
@@ -24,7 +26,6 @@ const MasterWallet: React.FC = () => {
   const [isGeneratingAddress, setIsGeneratingAddress] = useState(false);
   const [paymentData, setPaymentData] = useState<any>(null);
   const [depositAmount, setDepositAmount] = useState('50');
-  const [userProfile, setUserProfile] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(true);
   
@@ -34,82 +35,49 @@ const MasterWallet: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let profileUnsubscribe: (() => void) | undefined;
     let isMounted = true;
 
-    const unsubscribe = supabaseService.onAuthChange(async (user) => {
-      if (user && isMounted) {
-        try {
-          const profile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (profile && isMounted) {
-            setUserProfile(profile);
-            // Use flat columns as the source of truth
-            const masterBalance = profile.wallet_balance ?? profile.deposit_wallet ?? (profile.wallets?.master?.balance || 0);
-            const referralBalance = profile.wallets?.referral?.balance || 0;
-            const matchingBalance = profile.wallets?.matching?.balance || 0;
-            const rankBalance = profile.wallets?.rankBonus?.balance || 0;
-            const rewardsBalance = profile.wallets?.rewards?.balance || 0;
-            const yieldBalance = profile.wallets?.yield?.balance || 0;
-            
-            setUserWallets({ 
-              ...MOCK_USER.wallets, 
-              master: { balance: Number(masterBalance), currency: 'USDT' },
-              referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              yield: { balance: Number(yieldBalance), currency: 'USDT' },
-              rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-              rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
-            });
-          }
-
-          // Fetch real transactions
-          const payments = await supabaseService.getTransactions(user.id || user.uid);
-          if (isMounted) {
-            setTransactions(payments);
-            setIsLoadingTransactions(false);
-          }
-
-          // Subscribe to real-time profile updates
-          if (profileUnsubscribe) profileUnsubscribe();
-          profileUnsubscribe = supabaseService.subscribeToProfile(user.id || user.uid, (updatedProfile) => {
-            console.log('Real-time profile update received in MasterWallet:', updatedProfile);
-            if (updatedProfile && isMounted) {
-              setUserProfile(updatedProfile);
-              const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
-              const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-              const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
-              const rankBalance = updatedProfile.wallets?.rankBonus?.balance || 0;
-              const rewardsBalance = updatedProfile.wallets?.rewards?.balance || 0;
-              const yieldBalance = updatedProfile.wallets?.yield?.balance || 0;
-              
-              setUserWallets({ 
-                ...MOCK_USER.wallets, 
-                master: { balance: Number(masterBalance), currency: 'USDT' },
-                referral: { balance: Number(referralBalance), currency: 'USDT' },
-                matching: { balance: Number(matchingBalance), currency: 'USDT' },
-                yield: { balance: Number(yieldBalance), currency: 'USDT' },
-                rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-                rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
-              });
-
-              // Re-fetch transactions when profile updates (to show the new fund addition)
-              supabaseService.getTransactions(user.id || user.uid).then(newTx => {
-                if (isMounted) setTransactions(newTx);
-              });
-            }
-          });
-        } catch (err) {
-          console.error('Error fetching profile or transactions:', err);
-          if (isMounted) setIsLoadingTransactions(false);
+    const fetchTransactions = async () => {
+      if (!userProfile?.id) return;
+      setIsLoadingTransactions(true);
+      try {
+        const payments = await supabaseService.getTransactions(userProfile.id);
+        if (isMounted) {
+          setTransactions(payments);
         }
+      } catch (err) {
+        console.error('Error fetching transactions:', err);
+      } finally {
+        if (isMounted) setIsLoadingTransactions(false);
       }
-    });
+    };
+
+    if (userProfile?.id) {
+      fetchTransactions();
+      
+      // Update wallets based on profile
+      const masterBalance = userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0);
+      const referralBalance = userProfile.wallets?.referral?.balance || 0;
+      const matchingBalance = userProfile.wallets?.matching?.balance || 0;
+      const rankBalance = userProfile.wallets?.rankBonus?.balance || 0;
+      const rewardsBalance = userProfile.wallets?.rewards?.balance || 0;
+      const yieldBalance = userProfile.wallets?.yield?.balance || 0;
+      
+      setUserWallets({ 
+        ...MOCK_USER.wallets, 
+        master: { balance: Number(masterBalance), currency: 'USDT' },
+        referral: { balance: Number(referralBalance), currency: 'USDT' },
+        matching: { balance: Number(matchingBalance), currency: 'USDT' },
+        yield: { balance: Number(yieldBalance), currency: 'USDT' },
+        rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
+        rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
+      });
+    }
+
     return () => {
       isMounted = false;
-      unsubscribe();
-      if (profileUnsubscribe) profileUnsubscribe();
     };
-  }, []);
+  }, [userProfile]);
 
   const coins = {
     USDT: { name: 'Tether USDT (BEP20)', symbol: 'USDT', color: 'text-orange-500', bg: 'bg-orange-500/10', rate: 1, change: '+0.01%' },
@@ -227,39 +195,15 @@ const MasterWallet: React.FC = () => {
     }
 
     if (activeTab === 'package') {
-      // The database RPC 'activate_package' handles the balance check and deduction 
-      // from the master wallet automatically.
       try {
-        const user = supabaseService.getCurrentUser();
-        if (user) {
+        if (userProfile?.id) {
           const cost = Number(amountToUse);
-          
-          // Call activatePackage which handles logging, team nodes, active_package field, and MLM income
-          // It will also trigger the wallet deduction in the DB
           setIsProcessing(true);
-          await supabaseService.activatePackage(user.id || user.uid, cost);
           
-          // Refresh local state immediately after success
-          const updatedProfile = await supabaseService.getUserProfile(user.id || user.uid) as any;
-          if (updatedProfile) {
-            setUserProfile(updatedProfile);
-            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? (updatedProfile.wallets?.master?.balance || 0);
-            const referralBalance = updatedProfile.wallets?.referral?.balance || 0;
-            const matchingBalance = updatedProfile.wallets?.matching?.balance || 0;
-            const rankBalance = updatedProfile.wallets?.rankBonus?.balance || 0;
-            const rewardsBalance = updatedProfile.wallets?.rewards?.balance || 0;
-            const yieldBalance = updatedProfile.wallets?.yield?.balance || 0;
-            
-            setUserWallets({ 
-              ...MOCK_USER.wallets, 
-              master: { balance: Number(masterBalance), currency: 'USDT' },
-              referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              yield: { balance: Number(yieldBalance), currency: 'USDT' },
-              rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-              rewards: { balance: Number(rewardsBalance), currency: 'USDT' }
-            });
-          }
+          await supabaseService.activatePackage(userProfile.id, cost);
+          
+          // Refresh profile from backend to sync state
+          await refreshProfile();
           
           setSuccess(true);
           setTimeout(() => {
@@ -534,6 +478,7 @@ const MasterWallet: React.FC = () => {
                             <img 
                               src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${paymentData.pay_address}`} 
                               alt="QR" 
+                              referrerPolicy="no-referrer"
                               className="w-full h-full object-contain"
                             />
                           </div>

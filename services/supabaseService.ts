@@ -441,11 +441,45 @@ export const supabaseService = {
       throw new Error(`Profile Sync Error: ${profileError.message}`);
     }
 
-    // Update binary counts up the tree
+    // 5. Verify Placement (Requirement 1)
+    console.log(`Verifying placement for ${user.id}: parent=${parentId}, side=${finalSide}`);
+    const { data: verifiedProfile, error: verifyError } = await supabase
+      .from('profiles')
+      .select('id, parent_id, side, operator_id')
+      .eq('id', user.id)
+      .single();
+
+    if (verifyError || !verifiedProfile) {
+      console.error('Placement verification failed:', verifyError);
+    } else {
+      const isParentCorrect = verifiedProfile.parent_id === parentId;
+      const isSideCorrect = verifiedProfile.side === finalSide;
+      
+      if (!isParentCorrect || !isSideCorrect) {
+        console.error(`Placement Mismatch! Expected: parent=${parentId}, side=${finalSide}. Got: parent=${verifiedProfile.parent_id}, side=${verifiedProfile.side}`);
+        // We could throw here, but the record is already inserted. 
+        // For now, we log it clearly for debug support (Requirement 6).
+      } else {
+        console.log(`Placement Verified: ${verifiedProfile.operator_id} is correctly placed under ${parentId} on ${finalSide} side.`);
+      }
+    }
+
+    // 6. Update binary counts (Requirement 2)
     try {
-      await supabase.rpc('update_binary_count', { p_user_id: user.id });
-    } catch (err) {
-      console.warn('Failed to update binary counts:', err);
+      console.log('Updating binary counts via sequential distribution...');
+      const startTime = new Date().toISOString();
+      // Use distributeTreeIncome with amount 0 to only update counts
+      await this.distributeTreeIncome(user.id, 0, true);
+      // Still trigger matching in case this placement qualifies any ancestors
+      await supabase.rpc('process_binary_matching');
+      
+      // Verify matching income generation (Requirement)
+      await this.verifyMatchingGenerated(startTime);
+    } catch (err: any) {
+      console.warn('Failed to update binary counts or process matching:', err);
+      if (err.message === 'matching not generated') {
+        throw err;
+      }
     }
 
     // Send Welcome Email
@@ -455,7 +489,7 @@ export const supabaseService = {
       console.warn('Failed to send welcome email:', err);
     }
 
-    return { ...profileData, uid: user.id };
+    return { ...profileData, uid: user.id, verifiedPlacement: verifiedProfile };
   },
 
   async registerUser(name: string, email: string) {
@@ -722,30 +756,40 @@ export const supabaseService = {
       // 5. Create Sub-Nodes in Team Collection and Profiles if package has multiple nodes
       const packageData = PACKAGES.find(p => p.price === amount);
       if (packageData && packageData.nodes > 1) {
-        // Get existing nodes count to offset indices
-        const { count: existingNodesCount } = await supabase
-          .from('team_collection')
-          .select('*', { count: 'exact', head: true })
-          .eq('uid', uid);
+        // Get all existing sub-nodes for this user to rebuild the tree structure
+        const { data: existingProfiles } = await supabase
+          .from('profiles')
+          .select('id, operator_id')
+          .like('operator_id', `${userProfile.operator_id}-%`)
+          .eq('sponsor_id', uid)
+          .order('operator_id', { ascending: true });
         
-        const offset = existingNodesCount || 0;
+        // Root node is always at index 0
+        const nodeIds = [uid];
+        
+        // Add existing sub-nodes to nodeIds in order
+        if (existingProfiles) {
+          existingProfiles.forEach(p => {
+            if (p.id !== uid) {
+              nodeIds.push(p.id);
+            }
+          });
+        }
+
         const numSubNodes = packageData.nodes - 1;
-        console.log(`Creating ${numSubNodes} sub-nodes for package ${packageData.name} with offset ${offset}`);
+        console.log(`Creating ${numSubNodes} sub-nodes for package ${packageData.name}. Existing nodes: ${nodeIds.length}`);
         
         const teamCollectionToInsert: any[] = [];
         const profilesToInsert: any[] = [];
-        const nodeIds = [uid]; // This is tricky for multiple packages, but let's assume they stack under main
         
-        for (let i = 1; i < packageData.nodes; i++) {
-          const subNodeIndex = offset + i;
+        for (let i = 0; i < numSubNodes; i++) {
+          const subNodeIndex = nodeIds.length; // Next available index in the binary tree
           const subNodeOperatorId = `${userProfile.operator_id}-${String(subNodeIndex + 1).padStart(2, '0')}`;
-          // For stacking, we'll just put them under the main node or find a free spot
-          // Simple approach: always under main node for now, or use the binary logic with offset
-          const parentIndex = Math.floor((i - 1) / 2);
-          const side = (i % 2 === 1) ? 'LEFT' : 'RIGHT';
+          
+          const parentIndex = Math.floor((subNodeIndex - 1) / 2);
+          const side = (subNodeIndex % 2 === 1) ? 'LEFT' : 'RIGHT';
           const parentId = nodeIds[parentIndex];
           const newNodeId = self.crypto.randomUUID();
-          nodeIds.push(newNodeId);
           
           // Add to team_collection
           teamCollectionToInsert.push({
@@ -791,6 +835,9 @@ export const supabaseService = {
             right_volume: 0,
             matched_pairs: 0
           });
+
+          // Add the new ID to nodeIds so it can be a parent for subsequent nodes in this loop
+          nodeIds.push(newNodeId);
         }
 
         // Batch Insert into profiles
@@ -808,9 +855,7 @@ export const supabaseService = {
         // Process counts and income for each sub-node
         for (const subProfile of profilesToInsert) {
           try {
-            // Update binary counts up the tree
-            await supabase.rpc('update_binary_count', { p_user_id: subProfile.id });
-            // Distribute business volume and matching income (each sub-node is $50)
+            // Distribute business volume and counts (each sub-node is $50)
             await this.distributeTreeIncome(subProfile.id, 50, true);
           } catch (subNodeError) {
             console.error(`Error processing sub-node ${subProfile.operator_id}:`, subNodeError);
@@ -840,6 +885,25 @@ export const supabaseService = {
       // 9. Update business and matching up the tree for the main node (total amount)
       console.log(`Distributing tree income for ${uid}, amount: ${amount}`);
       await this.distributeTreeIncome(uid, amount, isFirstPackage);
+
+      // 10. Trigger Backend Matching and Rank Logic (Requirement 2 & 3)
+      console.log('Triggering backend matching and rank updates...');
+      try {
+        const startTime = new Date().toISOString();
+        // First process matching income (Requirement 2)
+        await supabase.rpc('process_binary_matching');
+        
+        // Verify matching income generation (Requirement)
+        await this.verifyMatchingGenerated(startTime);
+
+        // Then update ranks based on new volumes/counts
+        await supabase.rpc('update_user_ranks');
+      } catch (rpcErr: any) {
+        console.warn('Backend income/rank processing failed:', rpcErr);
+        if (rpcErr.message === 'matching not generated') {
+          throw rpcErr;
+        }
+      }
 
       // 6. Log activation payment
       const paymentData = {
@@ -896,48 +960,35 @@ export const supabaseService = {
 
       const { data: parentProfile } = await supabase
         .from('profiles')
-        .select('left_business, right_business, left_count, right_count, left_volume, right_volume, matched_pairs')
+        .select('left_business, right_business, left_count, right_count, left_volume, right_volume')
         .eq('id', parentId)
         .single();
 
       if (parentProfile) {
         const updateData: any = {};
         
-        // Use left_volume and right_volume columns for unmatched balance
-        let leftVol = Number(parentProfile.left_volume || 0);
-        let rightVol = Number(parentProfile.right_volume || 0);
-        let matchingIncomeToAdd = 0;
-
         if (side === 'LEFT') {
           updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
-          leftVol += amount;
+          updateData.left_volume = (Number(parentProfile.left_volume) || 0) + amount;
+          if (isFirstPackage) {
+            updateData.left_count = (Number(parentProfile.left_count) || 0) + 1;
+          }
         } else if (side === 'RIGHT') {
           updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
-          rightVol += amount;
+          updateData.right_volume = (Number(parentProfile.right_volume) || 0) + amount;
+          if (isFirstPackage) {
+            updateData.right_count = (Number(parentProfile.right_count) || 0) + 1;
+          }
         }
-
-        const matchedAmount = Math.floor(Math.min(leftVol, rightVol) / 50) * 50;
-        if (matchedAmount > 0) {
-          matchingIncomeToAdd = matchedAmount * 0.10;
-          leftVol -= matchedAmount;
-          rightVol -= matchedAmount;
-          updateData.matched_pairs = (Number(parentProfile.matched_pairs) || 0) + matchedAmount;
-        }
-
-        updateData.left_volume = leftVol;
-        updateData.right_volume = rightVol;
 
         try {
-          // Update business volumes and matched pairs
+          // Update business volumes and counts via backend (Requirement 3)
           await this.systemQuery('profiles', 'update', updateData, { id: parentId });
-
-          // If matching income was generated, add it
-          if (matchingIncomeToAdd > 0) {
-            console.log(`Adding matching income to ${parentId}: ${matchingIncomeToAdd}`);
-            await this.addIncome(parentId, matchingIncomeToAdd, 'matching_income');
-          }
+          
+          // Log volume distribution for debug support (Requirement 6)
+          console.log(`Volume Distributed: ${amount} added to ${side} of ${parentId}`);
         } catch (updateErr) {
-          console.error(`Error updating tree income for parent ${parentId}:`, updateErr);
+          console.error(`Error updating tree volumes for parent ${parentId}:`, updateErr);
         }
 
         await this.checkAndUpdateRank(parentId);
@@ -1318,6 +1369,24 @@ export const supabaseService = {
 
   async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
+      // 0. Trigger backend income generation before collection (Requirement 3)
+      console.log('Triggering backend income generation before collection...');
+      try {
+        const startTime = new Date().toISOString();
+        await supabase.rpc('process_daily_yield');
+        await supabase.rpc('process_binary_matching');
+        
+        // Verify matching income generation (Requirement)
+        // Note: This might throw if no matching was generated, as per user requirement "do not proceed"
+        await this.verifyMatchingGenerated(startTime);
+      } catch (rpcErr) {
+        console.warn('Backend income generation verification failed:', rpcErr);
+        // If it's the specific "matching not generated" error, we might want to stop
+        if (rpcErr.message === 'matching not generated') {
+          throw rpcErr;
+        }
+      }
+
       // 1. Fetch nodes and user profile
       const [profile, { data: teamNodes }] = await Promise.all([
         this.getUserProfile(uid),
@@ -1329,7 +1398,7 @@ export const supabaseService = {
       // 2. Fetch sub-profiles
       const { data: subProfiles } = await supabase
         .from('profiles')
-        .select('id, operator_id, referral_income, matching_income, yield_income')
+        .select('id, operator_id, wallets, referral_income, matching_income, yield_income')
         .in('operator_id', nodeIds);
 
       const subProfilesMap = new Map();
@@ -1353,33 +1422,30 @@ export const supabaseService = {
         const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
         const accruedYield = secondsElapsed * earningPerNodePerSecond;
         
-        // Get sub-profile incomes
-        const referralIncome = Number(subProfile?.wallets?.referral?.balance) || 0;
-        const matchingIncome = Number(subProfile?.wallets?.matching?.balance) || 0;
-        const yieldIncome = Number(subProfile?.wallets?.yield?.balance) || 0;
-        const rankBonus = Number(subProfile?.wallets?.rankBonus?.balance) || 0;
-        const rewards = Number(subProfile?.wallets?.rewards?.balance) || 0;
+        // Get sub-profile incomes from wallets (Requirement 5)
+        const wallets = subProfile?.wallets || {};
+        const referralIncome = Number(wallets.referral?.balance) || 0;
+        const matchingIncome = Number(wallets.matching?.balance) || 0;
+        const yieldIncome = Number(wallets.yield?.balance) || 0;
+        const rankBonus = Number(wallets.rankBonus?.balance) || 0;
+        const rewards = Number(wallets.rewards?.balance) || 0;
         const manualBalance = Number(node.balance) || 0;
 
         const nodeTotal = accruedYield + referralIncome + matchingIncome + yieldIncome + rankBonus + rewards + manualBalance;
         totalCollected += nodeTotal;
 
-        // Reset sub-profile wallets in profiles table
+        // Reset sub-profile wallets in profiles table (Requirement 5)
         if (subProfile) {
-          const newWallets = { ...(subProfile.wallets || {}) };
+          const newWallets = { ...wallets };
           newWallets.referral = { balance: 0, currency: 'USDT' };
           newWallets.matching = { balance: 0, currency: 'USDT' };
           newWallets.yield = { balance: 0, currency: 'USDT' };
           newWallets.rankBonus = { balance: 0, currency: 'USDT' };
           newWallets.rewards = { balance: 0, currency: 'USDT' };
           
-          const resetData = {
-            wallets: newWallets
-          };
-          
           await supabase
             .from('profiles')
-            .update(resetData)
+            .update({ wallets: newWallets })
             .eq('id', subProfile.id);
         }
 
@@ -2506,5 +2572,32 @@ export const supabaseService = {
     return () => {
       supabase.removeChannel(channel);
     };
+  },
+
+  async verifyMatchingGenerated(startTime: string) {
+    console.log(`Verifying matching income generation since ${startTime}...`);
+    
+    // We check transactions table for new matching income rows
+    // User also mentioned team_collection, but transactions is the source of truth for income events
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('id, amount, description')
+      .eq('type', 'income')
+      .ilike('description', '%Matching%')
+      .gt('created_at', startTime);
+    
+    if (error) {
+      console.error('Error verifying matching income:', error);
+      return false;
+    }
+
+    if (!data || data.length === 0) {
+      console.error('matching not generated');
+      // Requirement: "do not proceed"
+      throw new Error('matching not generated');
+    }
+
+    console.log(`Verified: ${data.length} new matching income rows found.`);
+    return true;
   }
 };
