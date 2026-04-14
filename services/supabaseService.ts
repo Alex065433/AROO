@@ -19,25 +19,41 @@ export const supabaseService = {
 
   // Helper to find the bottom-most node on a specific side (Chain System)
   async findExtremeNode(rootId: string, side: 'LEFT' | 'RIGHT'): Promise<string> {
-    let currentId = rootId;
-    let depth = 0;
-    const MAX_DEPTH = 500; // Safety break
+    try {
+      const { data, error } = await supabase.rpc('find_binary_parent_extreme', {
+        p_start_node_id: rootId,
+        p_side: side.toUpperCase()
+      });
 
-    while (depth < MAX_DEPTH) {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('parent_id', currentId)
-        .eq('side', side)
-        .maybeSingle();
+      if (error) throw error;
       
-      if (error || !data) {
-        return currentId;
+      if (data && data.length > 0) {
+        return data[0].parent_id;
       }
-      currentId = data.id;
-      depth++;
+      return rootId;
+    } catch (err) {
+      console.error('Error in findExtremeNode RPC:', err);
+      // Fallback to JS logic if RPC fails
+      let currentId = rootId;
+      let depth = 0;
+      const MAX_DEPTH = 500;
+
+      while (depth < MAX_DEPTH) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('parent_id', currentId)
+          .eq('side', side)
+          .maybeSingle();
+        
+        if (error || !data) {
+          return currentId;
+        }
+        currentId = data.id;
+        depth++;
+      }
+      return currentId;
     }
-    return currentId;
   },
 
   // Helper for timeout

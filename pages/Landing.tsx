@@ -13,7 +13,8 @@ import {
   Lock,
   ChevronRight,
   Play,
-  Star
+  Star,
+  Accessibility
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ArowinLogo } from '../components/ArowinLogo';
@@ -456,6 +457,22 @@ const Landing: React.FC = () => {
           </div>
         </div>
       </footer>
+
+      {/* Accessibility Button */}
+      <button 
+        className="fixed bottom-6 right-6 w-12 h-12 bg-white/10 hover:bg-white/20 backdrop-blur-xl border border-white/10 rounded-full flex items-center justify-center text-white shadow-2xl transition-all hover:scale-110 active:scale-95 z-50 group"
+        title="Accessibility Settings"
+        onClick={() => {
+          const html = document.documentElement;
+          if (html.classList.contains('high-contrast')) {
+            html.classList.remove('high-contrast');
+          } else {
+            html.classList.add('high-contrast');
+          }
+        }}
+      >
+        <Accessibility size={24} className="group-hover:rotate-12 transition-transform" />
+      </button>
     </div>
   );
 };

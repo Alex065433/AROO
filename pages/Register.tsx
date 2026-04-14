@@ -36,16 +36,15 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     const hashParts = window.location.hash.split('?');
     const hashParams = new URLSearchParams(hashParts.length > 1 ? hashParts[1] : '');
     
-    const ref = params.get('ref') || hashParams.get('ref') || localStorage.getItem('arowin_ref');
-    const parentParam = params.get('parent') || hashParams.get('parent') || localStorage.getItem('arowin_parent');
-    const sideParam = params.get('side') || hashParams.get('side') || localStorage.getItem('arowin_side');
+    const ref = params.get('ref') || hashParams.get('ref');
+    const parentParam = params.get('parent') || hashParams.get('parent');
+    const sideParam = params.get('side') || hashParams.get('side');
     
     if (ref) {
       setSponsorId(ref);
       localStorage.setItem('arowin_ref', ref);
-    } else if (currentUser?.operator_id) {
-      // If logged in and no ref in URL, default to current user
-      setSponsorId(currentUser.operator_id);
+    } else {
+      setSponsorId('');
     }
 
     if (parentParam) {
