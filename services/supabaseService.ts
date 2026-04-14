@@ -17,6 +17,29 @@ export const supabaseService = {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   },
 
+  // Helper to find the bottom-most node on a specific side (Chain System)
+  async findExtremeNode(rootId: string, side: 'LEFT' | 'RIGHT'): Promise<string> {
+    let currentId = rootId;
+    let depth = 0;
+    const MAX_DEPTH = 500; // Safety break
+
+    while (depth < MAX_DEPTH) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('parent_id', currentId)
+        .eq('side', side)
+        .maybeSingle();
+      
+      if (error || !data) {
+        return currentId;
+      }
+      currentId = data.id;
+      depth++;
+    }
+    return currentId;
+  },
+
   // Helper for timeout
   async withTimeout<T>(promise: Promise<T>, ms: number = 25000, errorMessage: string = "Request timed out. The database might be waking up."): Promise<T> {
     const timeout = new Promise<never>((_, reject) => 
@@ -318,6 +341,14 @@ export const supabaseService = {
     return data;
   },
 
+  async loginWithGithub() {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'github',
+    });
+    if (error) throw error;
+    return data;
+  },
+
   formatError(err: any): string {
     if (typeof err === 'string') return err;
     if (err.message) {
@@ -367,7 +398,7 @@ export const supabaseService = {
     const { data: foundSponsor } = await sponsorQuery.maybeSingle();
     sponsor = foundSponsor;
 
-    // 2. Determine Placement Parent - STRICT DIRECT PLACEMENT
+    // 2. Determine Placement Parent - CHAIN SYSTEM PLACEMENT
     if (additionalData.parentId) {
       const isUuid = this.isUuid(additionalData.parentId);
       let parentQuery = supabase.from('profiles').select('id, operator_id');
@@ -376,13 +407,14 @@ export const supabaseService = {
       
       const { data: explicitParent } = await parentQuery.maybeSingle();
       if (explicitParent) {
-        parentId = explicitParent.id;
+        // Even with explicit parent, we follow the chain on the selected side
+        parentId = await this.findExtremeNode(explicitParent.id, finalSide);
       }
     }
 
-    // If no explicit parent, use sponsor as parent (Direct Placement)
+    // If no explicit parent, use sponsor as parent and find bottom of chain
     if (!parentId && sponsor) {
-      parentId = sponsor.id;
+      parentId = await this.findExtremeNode(sponsor.id, finalSide);
     }
 
     // If still no sponsor/parent, check if it's the first user
@@ -781,6 +813,7 @@ export const supabaseService = {
         
         const teamCollectionToInsert: any[] = [];
         const profilesToInsert: any[] = [];
+        const matrixIncomesToProcess: { parentId: string, childId: string }[] = [];
         
         for (let i = 0; i < numSubNodes; i++) {
           const subNodeIndex = nodeIds.length; // Next available index in the binary tree
@@ -790,6 +823,12 @@ export const supabaseService = {
           const side = (subNodeIndex % 2 === 1) ? 'LEFT' : 'RIGHT';
           const parentId = nodeIds[parentIndex];
           const newNodeId = self.crypto.randomUUID();
+
+          // Matrix Income Rule: When both child positions are filled, parent gets income
+          // In a binary tree (1->2,3), Node 1 earns when Node 3 (Right child) is filled
+          if (side === 'RIGHT') {
+            matrixIncomesToProcess.push({ parentId, childId: newNodeId });
+          }
           
           // Add to team_collection
           teamCollectionToInsert.push({
@@ -871,6 +910,19 @@ export const supabaseService = {
           if (teamInsertError) {
             console.error('Team collection insert failed, trying admin query:', teamInsertError);
             await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
+          }
+        }
+
+        // Process Matrix Incomes (Requirement: Team Collection Matrix Income)
+        // Rule: When both child positions are filled, parent gets income
+        for (const income of matrixIncomesToProcess) {
+          try {
+            // Matrix income is $10 per completed pair in the team matrix
+            await this.addIncome(uid, 10, 'matrix_income', { 
+              description: `Matrix Income: Node pair completed under parent ${income.parentId}` 
+            });
+          } catch (err) {
+            console.error('Error processing matrix income:', err);
           }
         }
       }
@@ -1877,8 +1929,8 @@ export const supabaseService = {
     }
   },
 
-  async addIncome(uid: string, amount: number, type: string, options: { skipNodeDistribution?: boolean, existingProfile?: any } = {}) {
-    const { skipNodeDistribution, existingProfile } = options;
+  async addIncome(uid: string, amount: number, type: string, options: { skipNodeDistribution?: boolean, existingProfile?: any, description?: string } = {}) {
+    const { skipNodeDistribution, existingProfile, description } = options;
     const profile = existingProfile || await this.getUserProfile(uid);
     if (!profile) return;
 
@@ -1892,12 +1944,12 @@ export const supabaseService = {
     else if (type === 'matching_bonus' || type === 'matching_income') walletKey = 'matching';
     else if (type === 'rank_bonus') walletKey = 'rankBonus';
     else if (type === 'rank_reward') walletKey = 'rewards';
+    else if (type === 'matrix_income' || type === 'incentive_accrual') walletKey = 'incentive';
     else if (type === 'team_collection' || type === 'team_collection_yield') walletKey = 'yield'; 
     else if (type === 'team_collection_balance' || type === 'team_collection_claim') {
       walletKey = 'master';
       shouldUpdateTotalIncome = false; // Already counted when distributed to nodes or earned by sub-nodes
     }
-    else if (type === 'incentive_accrual') walletKey = 'incentive';
 
     // Standard Wallet Update
     const newWallets = { ...profile.wallets };
@@ -1908,10 +1960,6 @@ export const supabaseService = {
       newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
     }
 
-    // Logic change: Don't add to master directly for bonuses/yields
-    // Only add to master if it's a direct deposit or a claim (which is handled elsewhere)
-    // or if it's a specific type that SHOULD go to master (like team_collection_balance)
-    
     let amountToMaster = 0;
     let amountToSpecific = 0;
 
@@ -1931,7 +1979,6 @@ export const supabaseService = {
 
     const updateData: any = {
       wallets: newWallets,
-      // wallet_balance only tracks what's in the master wallet (available for withdrawal)
       wallet_balance: (Number(profile.wallet_balance) || 0) + amountToMaster
     };
     
@@ -1945,6 +1992,7 @@ export const supabaseService = {
     else if (walletKey === 'yield') updateData.yield_income = (Number(profile.yield_income) || 0) + payableAmount;
     else if (walletKey === 'rankBonus') updateData.rank_income = (Number(profile.rank_income) || 0) + payableAmount;
     else if (walletKey === 'rewards') updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
+    else if (walletKey === 'incentive') updateData.incentive_income = (Number(profile.incentive_income) || 0) + payableAmount;
 
     try {
       await this.systemQuery('profiles', 'update', updateData, { id: uid });
@@ -1958,7 +2006,7 @@ export const supabaseService = {
       amount: payableAmount,
       type: type,
       method: 'INTERNAL',
-      description: `Income: ${type.replace('_', ' ').toUpperCase()}`,
+      description: description || `Income: ${type.replace('_', ' ').toUpperCase()}`,
       status: 'finished',
       currency: 'usdtbsc'
     };
