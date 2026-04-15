@@ -1,0 +1,562 @@
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2
+Raw data: {
+  "columns": [
+    {
+      "table": "notifications",
+      "column": "id"
+    },
+    {
+      "table": "notifications",
+      "column": "uid"
+    },
+    {
+      "table": "notifications",
+      "column": "title"
+    },
+    {
+      "table": "notifications",
+      "column": "message"
+    },
+    {
+      "table": "notifications",
+      "column": "type"
+    },
+    {
+      "table": "notifications",
+      "column": "is_new"
+    },
+    {
+      "table": "notifications",
+      "column": "created_at"
+    },
+    {
+      "table": "profiles",
+      "column": "id"
+    },
+    {
+      "table": "profiles",
+      "column": "email"
+    },
+    {
+      "table": "profiles",
+      "column": "username"
+    },
+    {
+      "table": "profiles",
+      "column": "sponsor_id"
+    },
+    {
+      "table": "profiles",
+      "column": "created_at"
+    },
+    {
+      "table": "profiles",
+      "column": "operator_id"
+    },
+    {
+      "table": "profiles",
+      "column": "matched_pairs"
+    },
+    {
+      "table": "profiles",
+      "column": "name"
+    },
+    {
+      "table": "profiles",
+      "column": "mobile"
+    },
+    {
+      "table": "profiles",
+      "column": "withdrawal_password"
+    },
+    {
+      "table": "profiles",
+      "column": "two_factor_pin"
+    },
+    {
+      "table": "profiles",
+      "column": "side"
+    },
+    {
+      "table": "profiles",
+      "column": "rank"
+    },
+    {
+      "table": "profiles",
+      "column": "wallets"
+    },
+    {
+      "table": "profiles",
+      "column": "team_size"
+    },
+    {
+      "table": "profiles",
+      "column": "role"
+    },
+    {
+      "table": "profiles",
+      "column": "parent_id"
+    },
+    {
+      "table": "profiles",
+      "column": "active_package"
+    },
+    {
+      "table": "profiles",
+      "column": "rank_name"
+    },
+    {
+      "table": "profiles",
+      "column": "package_amount"
+    },
+    {
+      "table": "profiles",
+      "column": "matching_volume"
+    },
+    {
+      "table": "profiles",
+      "column": "full_name"
+    },
+    {
+      "table": "profiles",
+      "column": "display_name"
+    },
+    {
+      "table": "profiles",
+      "column": "status"
+    },
+    {
+      "table": "profiles",
+      "column": "daily_income"
+    },
+    {
+      "table": "profiles",
+      "column": "total_income"
+    },
+    {
+      "table": "profiles",
+      "column": "real_email"
+    },
+    {
+      "table": "profiles",
+      "column": "cumulative_volume"
+    },
+    {
+      "table": "profiles",
+      "column": "left_volume"
+    },
+    {
+      "table": "profiles",
+      "column": "right_volume"
+    },
+    {
+      "table": "profiles",
+      "column": "is_processing"
+    },
+    {
+      "table": "profiles",
+      "column": "wallet_balance"
+    },
+    {
+      "table": "profiles",
+      "column": "referral_income"
+    },
+    {
+      "table": "profiles",
+      "column": "matching_income"
+    },
+    {
+      "table": "profiles",
+      "column": "total_deposit"
+    },
+    {
+      "table": "profiles",
+      "column": "rank_bonus_income"
+    },
+    {
+      "table": "profiles",
+      "column": "incentive_income"
+    },
+    {
+      "table": "profiles",
+      "column": "rewards_income"
+    },
+    {
+      "table": "profiles",
+      "column": "wallet_type"
+    },
+    {
+      "table": "profiles",
+      "column": "deposit_wallet"
+    },
+    {
+      "table": "profiles",
+      "column": "income_wallet"
+    },
+    {
+      "table": "profiles",
+      "column": "position"
+    },
+    {
+      "table": "profiles",
+      "column": "left_business"
+    },
+    {
+      "table": "profiles",
+      "column": "right_business"
+    },
+    {
+      "table": "profiles",
+      "column": "wallet"
+    },
+    {
+      "table": "profiles",
+      "column": "last_pair"
+    },
+    {
+      "table": "profiles",
+      "column": "rank_bonus"
+    },
+    {
+      "table": "profiles",
+      "column": "reward_income"
+    },
+    {
+      "table": "profiles",
+      "column": "is_active"
+    },
+    {
+      "table": "profiles",
+      "column": "daily_matching_income"
+    },
+    {
+      "table": "profiles",
+      "column": "last_matching_date"
+    },
+    {
+      "table": "profiles",
+      "column": "left_count"
+    },
+    {
+      "table": "profiles",
+      "column": "right_count"
+    },
+    {
+      "table": "profiles",
+      "column": "yield_income"
+    },
+    {
+      "table": "profiles",
+      "column": "paid_pairs"
+    },
+    {
+      "table": "profiles",
+      "column": "master_wallet"
+    },
+    {
+      "table": "profiles",
+      "column": "rank_income"
+    },
+    {
+      "table": "profiles",
+      "column": "activated_at"
+    },
+    {
+      "table": "profiles",
+      "column": "binary_qualified"
+    },
+    {
+      "table": "profiles",
+      "column": "team_business"
+    },
+    {
+      "table": "profiles",
+      "column": "referrer_id"
+    },
+    {
+      "table": "transactions",
+      "column": "id"
+    },
+    {
+      "table": "transactions",
+      "column": "uid"
+    },
+    {
+      "table": "transactions",
+      "column": "amount"
+    },
+    {
+      "table": "transactions",
+      "column": "type"
+    },
+    {
+      "table": "transactions",
+      "column": "description"
+    },
+    {
+      "table": "transactions",
+      "column": "created_at"
+    },
+    {
+      "table": "transactions",
+      "column": "user_id"
+    },
+    {
+      "table": "transactions",
+      "column": "status"
+    },
+    {
+      "table": "transactions",
+      "column": "processed"
+    },
+    {
+      "table": "payments",
+      "column": "id"
+    },
+    {
+      "table": "payments",
+      "column": "uid"
+    },
+    {
+      "table": "payments",
+      "column": "amount"
+    },
+    {
+      "table": "payments",
+      "column": "currency"
+    },
+    {
+      "table": "payments",
+      "column": "payment_id"
+    },
+    {
+      "table": "payments",
+      "column": "order_id"
+    },
+    {
+      "table": "payments",
+      "column": "order_description"
+    },
+    {
+      "table": "payments",
+      "column": "created_at"
+    },
+    {
+      "table": "payments",
+      "column": "updated_at"
+    },
+    {
+      "table": "payments",
+      "column": "method"
+    },
+    {
+      "table": "payments",
+      "column": "status"
+    },
+    {
+      "table": "payments",
+      "column": "type"
+    },
+    {
+      "table": "payments",
+      "column": "description"
+    }
+  ],
+  "triggers": [
+    {
+      "trigger": "welcome_email_trigger",
+      "action_statement": "EXECUTE FUNCTION send_welcome_email()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "withdraw_email_trigger",
+      "action_statement": "EXECUTE FUNCTION send_withdraw_email()",
+      "event_object_table": "transactions"
+    },
+    {
+      "trigger": "volume_update_trigger",
+      "action_statement": "EXECUTE FUNCTION update_volume_on_payment()",
+      "event_object_table": "payments"
+    },
+    {
+      "trigger": "trg_matching",
+      "action_statement": "EXECUTE FUNCTION trigger_matching()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "send-email",
+      "action_statement": "EXECUTE FUNCTION supabase_functions.http_request('https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email', 'POST', '{\"Content-type\":\"application/json\"}', '{}', '5000')",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "profiles_binary_trigger",
+      "action_statement": "EXECUTE FUNCTION profiles_binary_update()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "trg_payment_binary",
+      "action_statement": "EXECUTE FUNCTION on_payment_trigger()",
+      "event_object_table": "payments"
+    },
+    {
+      "trigger": "trigger_mlm_income",
+      "action_statement": "EXECUTE FUNCTION process_mlm_income()",
+      "event_object_table": "payments"
+    },
+    {
+      "trigger": "income_trigger",
+      "action_statement": "EXECUTE FUNCTION credit_income()",
+      "event_object_table": "transactions"
+    },
+    {
+      "trigger": "referral_income_trigger",
+      "action_statement": "EXECUTE FUNCTION referral_income_fn()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "tr_update_wallets_on_payment",
+      "action_statement": "EXECUTE FUNCTION update_wallets_on_payment()",
+      "event_object_table": "payments"
+    },
+    {
+      "trigger": "tr_update_wallets_on_payment",
+      "action_statement": "EXECUTE FUNCTION update_wallets_on_payment()",
+      "event_object_table": "payments"
+    },
+    {
+      "trigger": "trigger_place_user",
+      "action_statement": "EXECUTE FUNCTION place_user_binary()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "trg_place_user_binary",
+      "action_statement": "EXECUTE FUNCTION place_user_binary()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "trg_referral",
+      "action_statement": "EXECUTE FUNCTION trigger_referral()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "mlm_income_trigger",
+      "action_statement": "EXECUTE FUNCTION process_mlm_income()",
+      "event_object_table": "transactions"
+    },
+    {
+      "trigger": "profiles_income_trigger",
+      "action_statement": "EXECUTE FUNCTION profiles_income()",
+      "event_object_table": "transactions"
+    },
+    {
+      "trigger": "pair_income_trigger",
+      "action_statement": "EXECUTE FUNCTION handle_pair_income()",
+      "event_object_table": "profiles"
+    },
+    {
+      "trigger": "master_income_trigger",
+      "action_statement": "EXECUTE FUNCTION master_income_flow()",
+      "event_object_table": "payments"
+    }
+  ]
+}
+Tables: undefined
+Functions: undefined
+Has update_user_ranks: undefined
+Triggers: [
+  {
+    table: 'profiles',
+    name: 'welcome_email_trigger',
+    action: 'EXECUTE FUNCTION send_welcome_email()'
+  },
+  {
+    table: 'transactions',
+    name: 'withdraw_email_trigger',
+    action: 'EXECUTE FUNCTION send_withdraw_email()'
+  },
+  {
+    table: 'payments',
+    name: 'volume_update_trigger',
+    action: 'EXECUTE FUNCTION update_volume_on_payment()'
+  },
+  {
+    table: 'profiles',
+    name: 'trg_matching',
+    action: 'EXECUTE FUNCTION trigger_matching()'
+  },
+  {
+    table: 'profiles',
+    name: 'send-email',
+    action: `EXECUTE FUNCTION supabase_functions.http_request('https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email', 'POST', '{"Content-type":"application/json"}', '{}', '5000')`
+  },
+  {
+    table: 'profiles',
+    name: 'profiles_binary_trigger',
+    action: 'EXECUTE FUNCTION profiles_binary_update()'
+  },
+  {
+    table: 'payments',
+    name: 'trg_payment_binary',
+    action: 'EXECUTE FUNCTION on_payment_trigger()'
+  },
+  {
+    table: 'payments',
+    name: 'trigger_mlm_income',
+    action: 'EXECUTE FUNCTION process_mlm_income()'
+  },
+  {
+    table: 'transactions',
+    name: 'income_trigger',
+    action: 'EXECUTE FUNCTION credit_income()'
+  },
+  {
+    table: 'profiles',
+    name: 'referral_income_trigger',
+    action: 'EXECUTE FUNCTION referral_income_fn()'
+  },
+  {
+    table: 'payments',
+    name: 'tr_update_wallets_on_payment',
+    action: 'EXECUTE FUNCTION update_wallets_on_payment()'
+  },
+  {
+    table: 'payments',
+    name: 'tr_update_wallets_on_payment',
+    action: 'EXECUTE FUNCTION update_wallets_on_payment()'
+  },
+  {
+    table: 'profiles',
+    name: 'trigger_place_user',
+    action: 'EXECUTE FUNCTION place_user_binary()'
+  },
+  {
+    table: 'profiles',
+    name: 'trg_place_user_binary',
+    action: 'EXECUTE FUNCTION place_user_binary()'
+  },
+  {
+    table: 'profiles',
+    name: 'trg_referral',
+    action: 'EXECUTE FUNCTION trigger_referral()'
+  },
+  {
+    table: 'transactions',
+    name: 'mlm_income_trigger',
+    action: 'EXECUTE FUNCTION process_mlm_income()'
+  },
+  {
+    table: 'transactions',
+    name: 'profiles_income_trigger',
+    action: 'EXECUTE FUNCTION profiles_income()'
+  },
+  {
+    table: 'profiles',
+    name: 'pair_income_trigger',
+    action: 'EXECUTE FUNCTION handle_pair_income()'
+  },
+  {
+    table: 'payments',
+    name: 'master_income_trigger',
+    action: 'EXECUTE FUNCTION master_income_flow()'
+  }
+]

@@ -303,9 +303,23 @@ const MasterWallet: React.FC = () => {
                                   setExchangeAmount(amountStr);
                                   handleAction(amountStr);
                                 }}
-                                className="px-6 py-3 bg-white/5 group-hover:bg-orange-600 text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-white rounded-xl transition-all"
+                                disabled={isProcessing || userProfile?.active_package === pkg.price}
+                                className={`px-6 py-3 rounded-xl transition-all flex items-center justify-center gap-2 ${
+                                  userProfile?.active_package === pkg.price 
+                                    ? 'bg-emerald-600/20 text-emerald-500 cursor-default' 
+                                    : 'bg-white/5 group-hover:bg-orange-600 text-slate-400 group-hover:text-white active:scale-95 disabled:opacity-50'
+                                } text-[10px] font-black uppercase tracking-widest`}
                               >
-                                {userProfile?.active_package === pkg.price ? 'Active' : 'Activate'}
+                                {isProcessing && exchangeAmount === pkg.price.toString() ? (
+                                  <RefreshCw size={14} className="animate-spin" />
+                                ) : userProfile?.active_package === pkg.price ? (
+                                  <>
+                                    <CheckCircle2 size={14} />
+                                    Active
+                                  </>
+                                ) : (
+                                  'Activate'
+                                )}
                               </button>
                            </div>
                            <div className="mt-4 flex gap-4">

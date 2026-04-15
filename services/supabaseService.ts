@@ -305,7 +305,9 @@ export const supabaseService = {
         }
 
         // Persist to local storage for fast fallback
-        localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
+        }
         return profile;
       } catch (e: any) {
         lastError = e;
@@ -329,7 +331,7 @@ export const supabaseService = {
   },
 
   getCurrentUser() {
-    const saved = localStorage.getItem('arowin_supabase_user');
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('arowin_supabase_user') : null;
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -342,10 +344,12 @@ export const supabaseService = {
 
   async logout() {
     const user = this.getCurrentUser();
-    if (user?.id) {
+    if (user?.id && typeof window !== 'undefined') {
       localStorage.removeItem(`2fa_verified_${user.id}`);
     }
-    localStorage.removeItem('arowin_supabase_user');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('arowin_supabase_user');
+    }
     await supabase.auth.signOut();
   },
 
@@ -511,23 +515,8 @@ export const supabaseService = {
     }
 
     // 6. Update binary counts (Requirement 2)
-    try {
-      console.log('Updating binary counts via sequential distribution...');
-      const startTime = new Date().toISOString();
-      // Use distributeTreeIncome with amount 0 to only update counts
-      await this.distributeTreeIncome(user.id, 0, true);
-      // Still trigger matching in case this placement qualifies any ancestors
-      await this.processMatchingUplineTS(user.id);
-      
-      // Verify matching income generation (Requirement)
-      await this.verifyMatchingGenerated(startTime);
-    } catch (err: any) {
-      console.warn('Failed to update binary counts or process matching:', err);
-      if (err.message === 'matching not generated') {
-        throw err;
-      }
-    }
-
+    // Handled by SQL trigger trg_process_new_profile on 'profiles' table
+    
     // Send Welcome Email
     try {
       await this.sendWelcomeEmail(user.id);
@@ -600,7 +589,9 @@ export const supabaseService = {
 
   async sendWelcomeEmail(userId: string) {
     const functionUrl = 'https://jhlxehnwnlzftoylancq.supabase.co/functions/v1/send-email';
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const supabaseAnonKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
+                            (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_ANON_KEY) || 
+                            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
 
     try {
       // IMPORTANT: Add delay after insert to fix the "User not found" timing issue
@@ -638,7 +629,7 @@ export const supabaseService = {
 
   onAuthChange(callback: (user: any) => void) {
     // Combine Supabase Auth and our custom session
-    const localUser = localStorage.getItem('arowin_supabase_user');
+    const localUser = typeof window !== 'undefined' ? localStorage.getItem('arowin_supabase_user') : null;
     if (localUser) {
       callback(JSON.parse(localUser));
     }
@@ -720,332 +711,37 @@ export const supabaseService = {
           throw new Error(`Insufficient balance. Required: ${finalAmount} USDT, Available: ${masterBalance} USDT`);
         }
 
-        // Deduct balance from all sources to keep them in sync
+        // Deduct balance
+        const newWalletBalance = Math.max(0, Number(userProfile.wallet_balance || 0) - finalAmount);
         const newWallets = { ...userProfile.wallets };
         if (newWallets.master) {
           newWallets.master.balance = Math.max(0, Number(newWallets.master.balance || 0) - finalAmount);
         }
 
         const updateData: any = { 
-          wallets: newWallets,
-          wallet_balance: Math.max(0, Number(userProfile.wallet_balance || 0) - finalAmount)
+          wallet_balance: newWalletBalance,
+          wallets: newWallets
         };
         
         if (userProfile.deposit_wallet !== undefined) {
           updateData.deposit_wallet = Math.max(0, Number(userProfile.deposit_wallet || 0) - finalAmount);
         }
 
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update(updateData)
-          .eq('id', uid);
-        
-        if (updateError) throw updateError;
+        await this.adminQuery('profiles', 'update', updateData, { id: uid });
       }
 
-      const isFirstPackage = !userProfile.active_package || userProfile.active_package === 0;
-
-      // 3. Update active_package and total_deposit
-      const packageUpdateData = { 
-        active_package: amount, // Use the actual package amount
-        total_deposit: (Number(userProfile.total_deposit) || 0) + amount,
-        status: 'active'
+      // 3. Insert into purchases table - THIS TRIGGERS THE ENTIRE MLM FLOW
+      const purchaseData = {
+        uid: uid,
+        amount: amount,
+        package_name: `Package $${amount}`,
+        created_at: new Date().toISOString()
       };
+      
+      console.log('Inserting into purchases table to trigger MLM flow...');
+      await this.adminQuery('purchases', 'insert', purchaseData);
 
-      if (isAdmin) {
-        try {
-          await this.adminQuery('profiles', 'update', packageUpdateData, { id: uid });
-        } catch (packageError) {
-          throw packageError;
-        }
-      } else {
-        const { error: packageError } = await supabase
-          .from('profiles')
-          .update(packageUpdateData)
-          .eq('id', uid);
-
-        if (packageError) throw packageError;
-      }
-
-      // 4. Create Team Collection entry for the main node if it doesn't exist
-      const { data: existingMainNode } = await supabase
-        .from('team_collection')
-        .select('id')
-        .eq('uid', uid)
-        .eq('node_id', userProfile.operator_id)
-        .single();
-
-      if (!existingMainNode) {
-        const mainTeamNode = {
-          uid: uid,
-          node_id: userProfile.operator_id,
-          name: userProfile.name,
-          balance: 0,
-          eligible: true,
-          created_at: new Date().toISOString()
-        };
-        if (isAdmin) {
-          await this.adminQuery('team_collection', 'insert', mainTeamNode);
-        } else {
-          const { error: mainTeamError } = await supabase.from('team_collection').insert(mainTeamNode);
-          if (mainTeamError) {
-            console.error('Main team node insert failed, trying admin query:', mainTeamError);
-            await this.adminQuery('team_collection', 'insert', mainTeamNode);
-          }
-        }
-      }
-
-      // 5. Create Sub-Nodes in Team Collection and Profiles if package has multiple nodes
-      const packageData = PACKAGES.find(p => p.price === amount);
-      if (packageData && packageData.nodes > 1) {
-        // Get all existing sub-nodes for this user to rebuild the tree structure
-        let existingProfiles: any[] = [];
-        let existingTeamNodes: any[] = [];
-        
-        try {
-          const profilesResult = await this.systemQuery('profiles', 'select', 'id, operator_id', { sponsor_id: uid });
-          if (Array.isArray(profilesResult)) {
-            existingProfiles = profilesResult.filter(p => p.operator_id?.startsWith(`${userProfile.operator_id}-`));
-            existingProfiles.sort((a, b) => a.operator_id.localeCompare(b.operator_id));
-          }
-          
-          const teamResult = await this.systemQuery('team_collection', 'select', 'node_id', { uid: uid });
-          if (Array.isArray(teamResult)) {
-            existingTeamNodes = teamResult.filter(n => n.node_id?.startsWith(`${userProfile.operator_id}-`));
-          }
-        } catch (err) {
-          console.error("Failed to fetch existing nodes via systemQuery", err);
-        }
-        
-        // Root node is always at index 0
-        const nodeIds = [uid];
-        
-        // Add existing sub-nodes to nodeIds in order
-        existingProfiles.forEach(p => {
-          if (p.id !== uid) {
-            nodeIds.push(p.id);
-          }
-        });
-
-        let maxIndex = 0;
-        existingProfiles.forEach(p => {
-           const match = p.operator_id.match(/-(\d+)$/);
-           if (match) {
-             maxIndex = Math.max(maxIndex, parseInt(match[1], 10));
-           }
-        });
-        existingTeamNodes.forEach(n => {
-           const match = n.node_id.match(/-(\d+)$/);
-           if (match) {
-             maxIndex = Math.max(maxIndex, parseInt(match[1], 10));
-           }
-        });
-
-        const numSubNodesToCreate = Math.max(0, packageData.nodes - 1 - maxIndex);
-        
-        console.log(`Package ${packageData.name} requires ${packageData.nodes - 1} sub-nodes. User has max index ${maxIndex}. Creating ${numSubNodesToCreate} more.`);
-        
-        const teamCollectionToInsert: any[] = [];
-        const profilesToInsert: any[] = [];
-        const matrixIncomesToProcess: { parentId: string, childId: string }[] = [];
-        
-        for (let i = 0; i < numSubNodesToCreate; i++) {
-          const subNodeIndex = maxIndex + i + 1; // 1-based index for the new node (e.g., 2 for -02)
-          const subNodeOperatorId = `${userProfile.operator_id}-${String(subNodeIndex).padStart(2, '0')}`;
-          
-          // The parent index in the binary tree (0-based array where 0 is root, 1 is -01, 2 is -02)
-          const arrayIndex = subNodeIndex;
-          const parentIndex = Math.floor((arrayIndex - 1) / 2);
-          const side = (arrayIndex % 2 === 1) ? 'LEFT' : 'RIGHT';
-          
-          // If the parent doesn't exist in nodeIds (e.g. it failed to insert previously), fallback to root
-          const parentId = nodeIds[parentIndex] || uid;
-          const newNodeId = self.crypto.randomUUID();
-
-          // Matrix Income Rule: When both child positions are filled, parent gets income
-          if (side === 'RIGHT') {
-            matrixIncomesToProcess.push({ parentId, childId: newNodeId });
-          }
-          
-          // Add to team_collection
-          teamCollectionToInsert.push({
-            uid: uid,
-            node_id: subNodeOperatorId,
-            name: `${userProfile.name} Node ${subNodeIndex}`,
-            balance: 0,
-            eligible: true,
-            created_at: new Date().toISOString()
-          });
-
-          // Add to profiles
-          profilesToInsert.push({
-            id: newNodeId,
-            email: `${subNodeOperatorId.toLowerCase()}@arowin.internal`,
-            operator_id: subNodeOperatorId,
-            name: `${userProfile.name} Node ${subNodeIndex}`,
-            sponsor_id: uid,
-            parent_id: parentId,
-            side: side,
-            position: side.toLowerCase(),
-            status: 'active',
-            is_active: true,
-            active_package: 50, // Base package for sub-nodes
-            package_amount: 50,
-            role: 'user',
-            created_at: new Date().toISOString(),
-            wallets: {
-              master: { balance: 0, currency: 'USDT' },
-              referral: { balance: 0, currency: 'USDT' },
-              matching: { balance: 0, currency: 'USDT' },
-              yield: { balance: 0, currency: 'USDT' },
-              rankBonus: { balance: 0, currency: 'USDT' },
-              incentive: { balance: 0, currency: 'USDT' },
-              rewards: { balance: 0, currency: 'USDT' },
-            },
-            team_size: { left: 0, right: 0 },
-            left_count: 0,
-            right_count: 0,
-            left_business: 0,
-            right_business: 0,
-            left_volume: 0,
-            right_volume: 0,
-            matched_pairs: 0
-          });
-
-          // Add the new ID to nodeIds so it can be a parent for subsequent nodes in this loop
-          nodeIds[arrayIndex] = newNodeId;
-        }
-
-        // Insert sub-profiles one by one to handle potential trigger errors gracefully
-        console.log(`Inserting ${profilesToInsert.length} sub-profiles one by one...`);
-        for (const subProfile of profilesToInsert) {
-          try {
-            if (isAdmin) {
-              await this.adminQuery('profiles', 'insert', subProfile);
-            } else {
-              const { error: profileInsertError } = await supabase.from('profiles').insert(subProfile);
-              if (profileInsertError) {
-                if (profileInsertError.message.includes('unique_income_pair') || profileInsertError.message.includes('row-level security') || profileInsertError.message.includes('RLS')) {
-                  console.warn(`[Insert Conflict/RLS] Error for node ${subProfile.operator_id}: ${profileInsertError.message}. Attempting admin bypass...`);
-                  await this.adminQuery('profiles', 'insert', subProfile);
-                } else {
-                  throw profileInsertError;
-                }
-              }
-            }
-          } catch (err: any) {
-            if (err.message?.includes('unique_income_pair')) {
-              console.warn(`[Trigger Conflict] unique_income_pair for node ${subProfile.operator_id} (Admin). This usually means the pair income was already logged. Continuing...`);
-              // We still need the node in the tree, but the trigger failed.
-              // If the trigger failed, the node was NOT inserted.
-              // This is a critical issue. We'll try to delete the conflicting income record and retry once.
-              try {
-                console.log(`Attempting to clear conflicting income record for parent ${subProfile.parent_id}...`);
-                // We don't know the pair_no, so we'll try to find it or just log the failure
-                // For now, we'll just log it and move on, but this node will be missing.
-                // TODO: Implement a more robust fix if we can identify the pair_no
-              } catch (deleteErr) {
-                console.error('Failed to clear conflicting income record:', deleteErr);
-              }
-            } else {
-              throw err;
-            }
-          }
-        }
-
-        // Process counts and income for each sub-node (only for those that were successfully inserted)
-        // We'll check if they exist first
-        for (const subProfile of profilesToInsert) {
-          try {
-            const { data: exists } = await supabase.from('profiles').select('id').eq('id', subProfile.id).single();
-            if (exists) {
-              // Distribute business volume and counts (each sub-node is $50)
-              await this.distributeTreeIncome(subProfile.id, 50, true);
-            }
-          } catch (subNodeError) {
-            console.error(`Error processing sub-node ${subProfile.operator_id}:`, subNodeError);
-          }
-        }
-
-        // Batch Insert into team collection
-        console.log(`Batch inserting ${teamCollectionToInsert.length} sub-nodes into team collection...`);
-        if (isAdmin) {
-          await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
-        } else {
-          const { error: teamInsertError } = await supabase.from('team_collection').insert(teamCollectionToInsert);
-          if (teamInsertError) {
-            console.error('Team collection insert failed, trying admin query:', teamInsertError);
-            await this.adminQuery('team_collection', 'insert', teamCollectionToInsert);
-          }
-        }
-
-        // Process Matrix Incomes (Requirement: Team Collection Matrix Income)
-        // Rule: When both child positions are filled, parent gets income
-        for (const income of matrixIncomesToProcess) {
-          try {
-            // Matrix income is $10 per completed pair in the team matrix
-            await this.addIncome(uid, 10, 'matrix_income', { 
-              description: `Matrix Income: Node pair completed under parent ${income.parentId}` 
-            });
-          } catch (err) {
-            console.error('Error processing matrix income:', err);
-          }
-        }
-      }
-
-      // 8. Referral Bonus for the main node (5% of total amount to the external sponsor)
-      if (userProfile.sponsor_id && amount > 0) {
-        const mainNodeReferralBonus = amount * 0.05;
-        // We don't have the sponsor's profile handy, so we'll let addIncome fetch it
-        await this.addIncome(userProfile.sponsor_id, mainNodeReferralBonus, 'referral_bonus');
-      }
-
-      // 9. Update business and matching up the tree for the main node (total amount)
-      console.log(`Distributing tree income for ${uid}, amount: ${amount}`);
-      await this.distributeTreeIncome(uid, amount, isFirstPackage);
-
-      // 10. Trigger Backend Matching and Rank Logic (Requirement 2 & 3)
-      console.log('Triggering backend matching and rank updates...');
-      try {
-        const startTime = new Date().toISOString();
-        
-        // Use the more efficient upline processing instead of global matching
-        console.log(`Processing matching upline for ${uid}`);
-        await this.processMatchingUplineTS(uid, uid);
-        
-        // Verify matching income generation (Requirement)
-        await this.verifyMatchingGenerated(startTime);
-
-        // Then update ranks based on new volumes/counts
-        await supabase.rpc('update_user_ranks');
-      } catch (rpcErr: any) {
-        console.warn('Backend income/rank processing failed:', rpcErr);
-        if (rpcErr.message === 'matching not generated') {
-          // If it's a critical failure we want to know, but don't block the whole process
-          // unless explicitly required.
-        }
-      }
-
-      // 11. Requirement 4: Insert into purchases table
-      try {
-        const purchaseData = {
-          user_id: uid,
-          sponsor_id: userProfile.sponsor_id,
-          side: userProfile.side,
-          package_amount: amount,
-          created_at: new Date().toISOString()
-        };
-        
-        if (isAdmin) {
-          await this.adminQuery('purchases', 'insert', purchaseData);
-        } else {
-          await supabase.from('purchases').insert(purchaseData);
-        }
-      } catch (purchaseErr) {
-        console.warn('Failed to insert into purchases table (columns might be missing):', purchaseErr);
-      }
-
-      // 6. Log activation payment
+      // 4. Log activation payment for history
       const paymentData = {
         uid: uid,
         amount: finalAmount,
@@ -1056,15 +752,7 @@ export const supabaseService = {
         currency: 'usdtbsc'
       };
 
-      if (isAdmin) {
-        try {
-          await this.adminQuery('payments', 'insert', paymentData);
-        } catch (error) {
-          console.error('Failed to log payment via admin query:', error);
-        }
-      } else {
-        await supabase.from('payments').insert(paymentData);
-      }
+      await this.adminQuery('payments', 'insert', paymentData);
 
       // Final rank check for the user themselves
       await this.checkAndUpdateRank(uid);
@@ -1073,29 +761,6 @@ export const supabaseService = {
     } catch (error: any) {
       console.error('Error in activatePackage:', error);
       throw error;
-    }
-  },
-
-  async distributeTreeIncome(uid: string, amount: number, isFirstPackage: boolean = true) {
-    return this.distributeTreeIncomeSequential(uid, amount, isFirstPackage);
-  },
-
-  async processMatchingUplineTS(startUserId: string, triggerUserId?: string) {
-    let currentId: string | null = startUserId;
-    let loopDepth = 0;
-    const MAX_LOOP_DEPTH = 1000;
-    
-    while (currentId && loopDepth < MAX_LOOP_DEPTH) {
-      loopDepth++;
-      await this.processMatchingTS(currentId, triggerUserId);
-      
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('parent_id')
-        .eq('id', currentId)
-        .single();
-        
-      currentId = profile?.parent_id || null;
     }
   },
 
@@ -1457,64 +1122,6 @@ export const supabaseService = {
       }
     } catch (err) {
       console.error('Error in processAllMatchingTS:', err);
-    }
-  },
-
-  async distributeTreeIncomeSequential(uid: string, amount: number, isFirstPackage: boolean = true) {
-    let currentId = uid;
-    let loopDepth = 0;
-    const MAX_LOOP_DEPTH = 1000;
-    
-    while (loopDepth < MAX_LOOP_DEPTH) {
-      loopDepth++;
-      const { data: currentProfile, error } = await supabase
-        .from('profiles')
-        .select('parent_id, side')
-        .eq('id', currentId)
-        .single();
-      
-      if (error || !currentProfile || !currentProfile.parent_id) break;
-
-      const parentId = currentProfile.parent_id;
-      const side = currentProfile.side;
-
-      const { data: parentProfile } = await supabase
-        .from('profiles')
-        .select('left_business, right_business, left_count, right_count, left_volume, right_volume')
-        .eq('id', parentId)
-        .single();
-
-      if (parentProfile) {
-        const updateData: any = {};
-        
-        if (side === 'LEFT') {
-          updateData.left_business = (Number(parentProfile.left_business) || 0) + amount;
-          updateData.left_volume = (Number(parentProfile.left_volume) || 0) + amount;
-          if (isFirstPackage) {
-            updateData.left_count = (Number(parentProfile.left_count) || 0) + 1;
-          }
-        } else if (side === 'RIGHT') {
-          updateData.right_business = (Number(parentProfile.right_business) || 0) + amount;
-          updateData.right_volume = (Number(parentProfile.right_volume) || 0) + amount;
-          if (isFirstPackage) {
-            updateData.right_count = (Number(parentProfile.right_count) || 0) + 1;
-          }
-        }
-
-        try {
-          // Update business volumes and counts via backend (Requirement 3)
-          await this.systemQuery('profiles', 'update', updateData, { id: parentId });
-          
-          // Log volume distribution for debug support (Requirement 6)
-          console.log(`Volume Distributed: ${amount} added to ${side} of ${parentId}`);
-        } catch (updateErr) {
-          console.error(`Error updating tree volumes for parent ${parentId}:`, updateErr);
-        }
-
-        await this.checkAndUpdateRank(parentId);
-      }
-
-      currentId = parentId;
     }
   },
 

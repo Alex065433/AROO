@@ -98,7 +98,7 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
       if (!headers['authorization'] && !headers['Authorization']) {
         try {
           const { data: sessionData } = await getSession();
-          const token = sessionData.session?.access_token || localStorage.getItem('arowin_admin_token');
+          const token = sessionData.session?.access_token || (typeof window !== 'undefined' ? localStorage.getItem('arowin_admin_token') : null);
           if (token) {
             headers['authorization'] = `Bearer ${token}`;
           }

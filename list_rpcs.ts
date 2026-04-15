@@ -3,12 +3,41 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_ANON_KEY!);
+const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_SERVICE_KEY!);
 
 async function listRpcs() {
-  const { data, error } = await supabase.rpc('admin_query_rpc', { p_table: 'pg_proc', p_action: 'select', p_data: {}, p_query: { proname: 'admin_%' } });
-  // Wait, I know admin_query_rpc failed.
-  // I'll try to fetch from pg_proc using a generic select if possible.
+  const response = await fetch('http://localhost:3000/api/admin-query', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer CORE_SECURE_999'
+    },
+    body: JSON.stringify({
+      table: 'profiles', // Use profiles to get a valid response, then we'll try to guess the constraint table
+      operation: 'select',
+      data: 'id',
+      match: {}
+    })
+  });
   
-  // Actually, I'll just try to call a few common names.
+  // Actually, let's try to find the constraint by querying ALL tables we know
+  const tables = ['profiles', 'team_collection', 'income_logs', 'transactions', 'payments', 'purchases'];
+  for (const table of tables) {
+    const res = await fetch('http://localhost:3000/api/admin-query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer CORE_SECURE_999'
+      },
+      body: JSON.stringify({
+        table: table,
+        operation: 'select',
+        data: '*',
+        match: {}
+      })
+    });
+    const data = await res.json();
+    console.log(`Table ${table} data sample:`, Array.isArray(data) ? data.slice(0, 1) : data);
+  }
 }
+listRpcs();
