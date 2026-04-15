@@ -1152,16 +1152,23 @@ export const supabaseService = {
       throw new Error("No active session found. Please log in again.");
     }
 
-    const result = await apiFetch('admin-query', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ table, operation, data, match }),
-    });
+    console.log(`adminQuery: Requesting ${operation} on ${table} with token length: ${token.length}`);
 
-    return result;
+    try {
+      const result = await apiFetch('admin-query', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ table, operation, data, match }),
+      });
+      console.log(`adminQuery: Success for ${operation} on ${table}`);
+      return result;
+    } catch (err: any) {
+      console.error(`adminQuery: Failed for ${operation} on ${table}:`, err.message);
+      throw err;
+    }
   },
 
   async addFunds(uid: string, amount: number) {

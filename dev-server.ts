@@ -10,17 +10,35 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY;
+let supabaseAdmin: any = null;
 
-const supabaseAdmin = (supabaseUrl && supabaseServiceKey) 
-  ? createClient(supabaseUrl, supabaseServiceKey, {
+function getSupabaseAdmin() {
+  if (supabaseAdmin) return supabaseAdmin;
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  console.log("[Supabase Init] Attempting initialization...");
+  console.log("[Supabase Init] URL present:", !!supabaseUrl);
+  console.log("[Supabase Init] Service Key present:", !!supabaseServiceKey);
+
+  if (supabaseUrl && supabaseServiceKey) {
+    supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false
       }
-    })
-  : null;
+    });
+    console.log("[Supabase Init] Supabase Admin client initialized successfully.");
+  } else {
+    console.warn("[Supabase Init] Supabase Admin client NOT initialized. Missing environment variables.");
+  }
+
+  return supabaseAdmin;
+}
+
+// Initial attempt
+getSupabaseAdmin();
 
 async function startServer() {
   const app = express();
@@ -33,7 +51,21 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.post("/api/debug-env", (req, res) => {
+    const admin = getSupabaseAdmin();
+    res.json({
+      VITE_SUPABASE_URL: !!process.env.VITE_SUPABASE_URL,
+      VITE_SUPABASE_SERVICE_KEY: !!process.env.VITE_SUPABASE_SERVICE_KEY,
+      SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      supabaseAdminInitialized: !!admin
+    });
+  });
+
   app.post("/api/admin-query", async (req, res) => {
+    const admin = getSupabaseAdmin();
+    console.log(`[Admin Query] Request received for table: ${req.body.table}, operation: ${req.body.operation}`);
+    console.log(`[Admin Query] supabaseAdmin status: ${!!admin}`);
+    
     try {
       const { table, operation, data, match } = req.body;
       const authHeader = req.headers.authorization;
@@ -49,11 +81,18 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid token" });
       }
 
-      if (!supabaseAdmin) {
-        return res.status(500).json({ error: "Supabase Admin client not initialized" });
+      if (!admin) {
+        const missing = [];
+        if (!process.env.VITE_SUPABASE_URL) missing.push("VITE_SUPABASE_URL");
+        if (!process.env.VITE_SUPABASE_SERVICE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push("VITE_SUPABASE_SERVICE_KEY");
+        
+        return res.status(500).json({ 
+          error: "Supabase Admin client not initialized",
+          details: `Missing environment variables: ${missing.join(", ")}. Please add them in the app settings.`
+        });
       }
 
-      let query = supabaseAdmin.from(table);
+      let query = admin.from(table);
       let result;
 
       if (operation === 'select') {
@@ -92,8 +131,16 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid setup secret" });
       }
 
-      if (!supabaseAdmin) {
-        return res.status(500).json({ error: "Supabase Admin client not initialized" });
+      const admin = getSupabaseAdmin();
+      if (!admin) {
+        const missing = [];
+        if (!process.env.VITE_SUPABASE_URL) missing.push("VITE_SUPABASE_URL");
+        if (!process.env.VITE_SUPABASE_SERVICE_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) missing.push("VITE_SUPABASE_SERVICE_KEY");
+        
+        return res.status(500).json({ 
+          error: "Supabase Admin client not initialized",
+          details: `Missing environment variables: ${missing.join(", ")}. Please add them in the app settings.`
+        });
       }
 
       const adminEmail = 'admin@arowin.internal';
@@ -101,7 +148,7 @@ async function startServer() {
       const adminOperatorId = 'ARW-ADMIN-01';
 
       // 1. Create user in Auth
-      const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({
+      const { data: userData, error: userError } = await admin.auth.admin.createUser({
         email: adminEmail,
         password: adminPassword,
         email_confirm: true,
@@ -113,14 +160,14 @@ async function startServer() {
         return res.status(400).json({ error: userError.message });
       }
 
-      const userId = userData?.user?.id || (await supabaseAdmin.from('profiles').select('id').eq('email', adminEmail).single()).data?.id;
+      const userId = userData?.user?.id || (await admin.from('profiles').select('id').eq('email', adminEmail).single()).data?.id;
 
       if (!userId) {
         return res.status(400).json({ error: "Could not determine admin user ID" });
       }
 
       // 2. Create/Update profile
-      const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
+      const { error: profileError } = await admin.from('profiles').upsert({
         id: userId,
         operator_id: adminOperatorId,
         name: 'System Administrator',
