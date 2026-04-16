@@ -351,29 +351,24 @@ const Dashboard: React.FC = () => {
 
     const fetchRates = async () => {
       try {
-        const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'ADAUSDT', 'XRPUSDT', 'DOTUSDT'];
-        let data;
-        try {
-          data = await apiFetch('binance-rates');
-        } catch (err) {
-          // Fallback to direct Binance API call with specific symbols to save bandwidth and CPU
-          const symbolsQuery = encodeURIComponent(JSON.stringify(symbols));
-          const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=${symbolsQuery}`);
-          if (response.ok) {
-            data = await response.json();
-          } else {
-            throw new Error('Fallback fetch failed');
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/binance-rates`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
           }
-        }
+        });
+        const data = await response.json();
         
-        if (Array.isArray(data) && isMounted) {
-          // The API might return only the requested symbols if using the fallback, 
-          // but we filter anyway just in case the edge function returns all
-          const filtered = data.filter((item: any) => symbols.includes(item.symbol));
-          setBinanceRates(filtered);
+        if (isMounted) {
+          // Adapt the single price response to the expected array format if needed,
+          // or just set it if the UI handles it. 
+          // Based on line 372, it expects an array of {symbol, price}.
+          const formattedData = Array.isArray(data) ? data : [{ symbol: 'BTCUSDT', price: data.price.toString() }];
+          setBinanceRates(formattedData);
         }
       } catch (error) {
-        // Silently handle to avoid console spam if both fail
+        console.error('Failed to fetch rates:', error);
       }
     };
 
