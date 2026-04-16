@@ -20,25 +20,13 @@ export const supabaseService = {
   // Helper to find the bottom-most node on a specific side (Chain System)
   async findExtremeNode(rootId: string, side: 'LEFT' | 'RIGHT'): Promise<string> {
     try {
-      const { data, error } = await supabase.rpc('find_binary_parent_extreme', {
-        p_start_node_id: rootId,
-        p_side: side.toUpperCase()
-      });
-
-      if (error) throw error;
-      
-      if (data && data.length > 0) {
-        return data[0].parent_id;
-      }
-      return rootId;
-    } catch (err) {
-      console.error('Error in findExtremeNode RPC:', err);
-      // Fallback to JS logic if RPC fails
+      // Use robust JS logic to guarantee correctness and avoid RPC bugs
       let currentId = rootId;
       let depth = 0;
-      const MAX_DEPTH = 500;
+      const MAX_DEPTH = 5000;
 
       while (depth < MAX_DEPTH) {
+        // Check if currentId has a child on the given side
         const { data, error } = await supabase
           .from('profiles')
           .select('id')
@@ -47,12 +35,17 @@ export const supabaseService = {
           .maybeSingle();
         
         if (error || !data) {
+          // No child found on this side, so currentId is the extreme node (empty spot)
           return currentId;
         }
+        // Move down to the child
         currentId = data.id;
         depth++;
       }
       return currentId;
+    } catch (err) {
+      console.error('Error in findExtremeNode:', err);
+      return rootId;
     }
   },
 
@@ -730,18 +723,98 @@ export const supabaseService = {
         await this.adminQuery('profiles', 'update', updateData, { id: uid });
       }
 
-      // 3. Insert into purchases table - THIS TRIGGERS THE ENTIRE MLM FLOW
-      const purchaseData = {
-        uid: uid,
-        amount: amount,
-        package_name: `Package $${amount}`,
-        created_at: new Date().toISOString()
-      };
-      
-      console.log('Inserting into purchases table to trigger MLM flow...');
-      await this.adminQuery('purchases', 'insert', purchaseData);
+      // 3. Update user's active package and status
+      await this.adminQuery('profiles', 'update', {
+        active_package: amount,
+        package_amount: amount,
+        is_active: true,
+        status: 'active',
+        activated_at: new Date().toISOString()
+      }, { id: uid });
 
-      // 4. Log activation payment for history
+      // 4. Direct Referral Bonus (5%)
+      if (userProfile.sponsor_id) {
+        const refIncome = amount * 0.05;
+        const sponsor = await this.getUserProfile(userProfile.sponsor_id);
+        if (sponsor) {
+          const newRefIncome = Number(sponsor.referral_income || 0) + refIncome;
+          const newTotalIncome = Number(sponsor.total_income || 0) + refIncome;
+          const newWalletBalance = Number(sponsor.wallet_balance || 0) + refIncome;
+          
+          const newWallets = { ...sponsor.wallets };
+          if (newWallets.referral) {
+            newWallets.referral.balance = Number(newWallets.referral.balance || 0) + refIncome;
+          } else {
+            newWallets.referral = { balance: refIncome, currency: 'USDT' };
+          }
+          if (newWallets.master) {
+            newWallets.master.balance = Number(newWallets.master.balance || 0) + refIncome;
+          } else {
+            newWallets.master = { balance: refIncome, currency: 'USDT' };
+          }
+
+          await this.adminQuery('profiles', 'update', {
+            referral_income: newRefIncome,
+            total_income: newTotalIncome,
+            wallet_balance: newWalletBalance,
+            wallets: newWallets
+          }, { id: sponsor.id });
+
+          await this.adminQuery('transactions', 'insert', {
+            uid: sponsor.id,
+            user_id: sponsor.id,
+            amount: refIncome,
+            type: 'referral',
+            description: `Direct Referral Bonus from ${userProfile.operator_id}`,
+            status: 'completed'
+          });
+        }
+      }
+
+      // 5. Volume Distribution (Up the chain)
+      let currentId = userProfile.id;
+      const affectedParents = new Set<string>();
+      
+      while (true) {
+        const { data: currentProfile } = await supabase
+          .from('profiles')
+          .select('parent_id, side')
+          .eq('id', currentId)
+          .single();
+          
+        if (!currentProfile || !currentProfile.parent_id) break;
+        
+        const parentId = currentProfile.parent_id;
+        const side = currentProfile.side;
+        
+        const { data: parentProfile } = await supabase
+          .from('profiles')
+          .select('left_business, right_business')
+          .eq('id', parentId)
+          .single();
+          
+        if (parentProfile) {
+          const updateData: any = {};
+          
+          if (side === 'LEFT') {
+            updateData.left_business = Number(parentProfile.left_business || 0) + amount;
+          } else {
+            updateData.right_business = Number(parentProfile.right_business || 0) + amount;
+          }
+          
+          await this.adminQuery('profiles', 'update', updateData, { id: parentId });
+          affectedParents.add(parentId);
+        }
+        
+        currentId = parentId;
+      }
+
+      // 6. Process Matching for all affected parents
+      for (const parentId of affectedParents) {
+        await this.processMatchingTS(parentId, uid);
+      }
+
+      // 7. Log activation payment for history
       const paymentData = {
         uid: uid,
         amount: finalAmount,
@@ -788,18 +861,9 @@ export const supabaseService = {
         }, { id: userId });
       }
       
-      // Check Binary Qualification (1:2 or 2:1 for the first pair)
-      let isQualified = profile.binary_qualified;
-      if (!isQualified) {
-        const leftCount = Number(profile.left_count) || 0;
-        const rightCount = Number(profile.right_count) || 0;
-        if ((leftCount >= 1 && rightCount >= 2) || (leftCount >= 2 && rightCount >= 1)) {
-          isQualified = true;
-          await this.systemQuery('profiles', 'update', { binary_qualified: true }, { id: userId });
-        } else {
-          return; // Not qualified yet
-        }
-      }
+      // Removed 1:2 or 2:1 qualification rule as per user request
+      // Now it's a standard 1:1 matching from the first pair
+      let isQualified = true;
       
       const leftBusiness = Number(profile.left_business) || 0;
       const rightBusiness = Number(profile.right_business) || 0;
@@ -1167,6 +1231,9 @@ export const supabaseService = {
       return result;
     } catch (err: any) {
       console.error(`adminQuery: Failed for ${operation} on ${table}:`, err.message);
+      if (err.message.includes('Supabase Admin client not initialized')) {
+        throw new Error(`CRITICAL: The server-side Supabase Admin client is not initialized. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_SERVICE_KEY are set in Settings.`);
+      }
       throw err;
     }
   },

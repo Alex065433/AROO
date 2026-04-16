@@ -3,22 +3,12 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 dotenv.config();
 
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
 async function listConstraints() {
-  const response = await fetch(`${process.env.APP_URL || 'http://127.0.0.1:3000'}/api/admin-query`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer CORE_SECURE_999'
-    },
-    body: JSON.stringify({
-      table: 'information_schema.table_constraints',
-      operation: 'select',
-      data: 'table_name, constraint_name',
-      match: { constraint_name: 'unique_income_pair' }
-    })
-  });
-  
-  const data = await response.json();
-  console.log('Constraint info:', data);
+  const { data, error } = await supabase.from('profiles').select('id').limit(1);
+  console.log('Test query:', data, error);
 }
 listConstraints();

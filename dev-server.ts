@@ -10,6 +10,13 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import fs from "fs";
+
+function logToFile(message: string) {
+  const logMsg = `[${new Date().toISOString()}] ${message}\n`;
+  fs.appendFileSync("server-debug.log", logMsg);
+}
+
 let supabaseAdmin: any = null;
 
 function getSupabaseAdmin() {
@@ -18,9 +25,7 @@ function getSupabaseAdmin() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  console.log("[Supabase Init] Attempting initialization...");
-  console.log("[Supabase Init] URL present:", !!supabaseUrl);
-  console.log("[Supabase Init] Service Key present:", !!supabaseServiceKey);
+  logToFile(`Attempting initialization. URL: ${!!supabaseUrl}, Key: ${!!supabaseServiceKey}`);
 
   if (supabaseUrl && supabaseServiceKey) {
     supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
@@ -29,9 +34,9 @@ function getSupabaseAdmin() {
         persistSession: false
       }
     });
-    console.log("[Supabase Init] Supabase Admin client initialized successfully.");
+    logToFile("Supabase Admin client initialized successfully.");
   } else {
-    console.warn("[Supabase Init] Supabase Admin client NOT initialized. Missing environment variables.");
+    logToFile("Supabase Admin client NOT initialized. Missing environment variables.");
   }
 
   return supabaseAdmin;
@@ -53,18 +58,20 @@ async function startServer() {
 
   app.post("/api/debug-env", (req, res) => {
     const admin = getSupabaseAdmin();
+    const url = process.env.VITE_SUPABASE_URL || "";
+    const key = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    
     res.json({
-      VITE_SUPABASE_URL: !!process.env.VITE_SUPABASE_URL,
-      VITE_SUPABASE_SERVICE_KEY: !!process.env.VITE_SUPABASE_SERVICE_KEY,
-      SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      supabaseAdminInitialized: !!admin
+      VITE_SUPABASE_URL: url ? `${url.substring(0, 15)}...` : "MISSING",
+      VITE_SUPABASE_SERVICE_KEY: key ? `${key.substring(0, 10)}...` : "MISSING",
+      supabaseAdminInitialized: !!admin,
+      envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE'))
     });
   });
 
   app.post("/api/admin-query", async (req, res) => {
     const admin = getSupabaseAdmin();
-    console.log(`[Admin Query] Request received for table: ${req.body.table}, operation: ${req.body.operation}`);
-    console.log(`[Admin Query] supabaseAdmin status: ${!!admin}`);
+    logToFile(`Admin Query Request: table=${req.body.table}, op=${req.body.operation}, adminInit=${!!admin}`);
     
     try {
       const { table, operation, data, match } = req.body;
