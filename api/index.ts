@@ -9,21 +9,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-
 let supabaseAdmin: any = null;
 
 function getSupabaseAdmin() {
   if (supabaseAdmin) return supabaseAdmin;
   
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
   if (supabaseUrl && supabaseServiceKey) {
-    supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
+    try {
+      supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      });
+      console.log("Supabase Admin client initialized successfully.");
+    } catch (err: any) {
+      console.error(`Supabase Admin initialization FAILED: ${err.message}`);
+    }
+  } else {
+    const missing = [];
+    if (!supabaseUrl) missing.push("VITE_SUPABASE_URL");
+    if (!supabaseServiceKey) missing.push("VITE_SUPABASE_SERVICE_KEY/SUPABASE_SERVICE_ROLE_KEY");
+    console.warn(`Supabase Admin client NOT initialized. Missing: ${missing.join(", ")}`);
   }
   return supabaseAdmin;
 }

@@ -373,7 +373,23 @@ export const supabaseService = {
   },
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
-    const operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
+    // 0. Generate Unique Operator ID
+    let operatorId = '';
+    let isUnique = false;
+    let attempts = 0;
+    
+    while (!isUnique && attempts < 10) {
+      const candidateId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
+      const { data: existing } = await supabase.from('profiles').select('id').eq('operator_id', candidateId).maybeSingle();
+      if (!existing) {
+        operatorId = candidateId;
+        isUnique = true;
+      }
+      attempts++;
+    }
+    
+    if (!operatorId) throw new Error("Could not generate a unique Operator ID. Please try again.");
+
     const internalEmail = `${(operatorId || '').toLowerCase()}@arowin.internal`;
 
     // 1. Create Supabase Auth User with internal email to allow unlimited IDs per real email
@@ -411,7 +427,7 @@ export const supabaseService = {
     const { data: foundSponsor } = await sponsorQuery.maybeSingle();
     sponsor = foundSponsor;
 
-    // 2. Determine Placement Parent - CHAIN SYSTEM PLACEMENT
+    // 2. Determine Placement Parent - IMPROVED PLACEMENT (Direct if available, else Spillover)
     if (additionalData.parentId) {
       const isUuid = this.isUuid(additionalData.parentId);
       let parentQuery = supabase.from('profiles').select('id, operator_id');
@@ -420,8 +436,21 @@ export const supabaseService = {
       
       const { data: explicitParent } = await parentQuery.maybeSingle();
       if (explicitParent) {
-        // Even with explicit parent, we follow the chain on the selected side
-        parentId = await this.findExtremeNode(explicitParent.id, finalSide);
+        // Check if the spot is already taken
+        const { data: existingChild } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('parent_id', explicitParent.id)
+          .eq('side', finalSide)
+          .maybeSingle();
+          
+        if (!existingChild) {
+          // Spot is free, use it directly! (Requirement: Remove forced chain if spot is open)
+          parentId = explicitParent.id;
+        } else {
+          // Spot is taken, follow the chain (Spillover)
+          parentId = await this.findExtremeNode(explicitParent.id, finalSide);
+        }
       }
     }
 
@@ -479,7 +508,10 @@ export const supabaseService = {
       await this.adminQuery('profiles', 'insert', profileData);
     } catch (profileError: any) {
       if (profileError.message.includes('UNIQUE_BINARY_POSITION') || profileError.message.includes('idx_unique_binary_placement') || profileError.code === '23505') {
-        throw new Error(`The ${finalSide} position under this sponsor/parent is already taken. Please choose a different position or parent.`);
+        throw new Error(`The ${finalSide} position under this parent is already taken. This should not happen with our placement logic. Please try again.`);
+      }
+      if (profileError.message.includes('Supabase Admin client not initialized')) {
+        throw new Error(`CRITICAL: Backend Configuration Error. Please go to Settings and ensure VITE_SUPABASE_URL and VITE_SUPABASE_SERVICE_KEY are correctly set.`);
       }
       throw new Error(`Profile Sync Error: ${profileError.message}`);
     }

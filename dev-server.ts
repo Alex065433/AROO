@@ -25,18 +25,23 @@ function getSupabaseAdmin() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseServiceKey = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  logToFile(`Attempting initialization. URL: ${!!supabaseUrl}, Key: ${!!supabaseServiceKey}`);
-
   if (supabaseUrl && supabaseServiceKey) {
-    supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    });
-    logToFile("Supabase Admin client initialized successfully.");
+    try {
+      supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      });
+      logToFile("Supabase Admin client initialized successfully.");
+    } catch (err: any) {
+      logToFile(`Supabase Admin initialization FAILED: ${err.message}`);
+    }
   } else {
-    logToFile("Supabase Admin client NOT initialized. Missing environment variables.");
+    const missing = [];
+    if (!supabaseUrl) missing.push("VITE_SUPABASE_URL");
+    if (!supabaseServiceKey) missing.push("VITE_SUPABASE_SERVICE_KEY/SUPABASE_SERVICE_ROLE_KEY");
+    logToFile(`Supabase Admin client NOT initialized. Missing: ${missing.join(", ")}`);
   }
 
   return supabaseAdmin;

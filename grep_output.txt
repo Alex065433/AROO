@@ -1,0 +1,165 @@
+17:    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+33:          .eq('parent_id', currentId)
+53:  async withTimeout<T>(promise: Promise<T>, ms: number = 25000, errorMessage: string = "Request timed out. The database might be waking up."): Promise<T> {
+92:          20000,
+130:        if (isAdminId && secret === 'INITIALIZE_AROWIN_2026') {
+236:  async getUserProfile(userId: string, columns: string = "*", retries: number = 2) {
+312:          await new Promise(resolve => setTimeout(resolve, 2000));
+341:      localStorage.removeItem(`2fa_verified_${user.id}`);
+397:    let parentId = null;
+406:    const isSponsorUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSponsorId);
+414:    // 2. Determine Placement Parent - CHAIN SYSTEM PLACEMENT
+415:    if (additionalData.parentId) {
+416:      const isUuid = this.isUuid(additionalData.parentId);
+417:      let parentQuery = supabase.from('profiles').select('id, operator_id');
+418:      if (isUuid) parentQuery = parentQuery.eq('id', additionalData.parentId);
+419:      else parentQuery = parentQuery.eq('operator_id', additionalData.parentId);
+421:      const { data: explicitParent } = await parentQuery.maybeSingle();
+423:        // Even with explicit parent, we follow the chain on the selected side
+424:        parentId = await this.findExtremeNode(explicitParent.id, finalSide);
+428:    // If no explicit parent, use sponsor as parent and find bottom of chain
+429:    if (!parentId && sponsor) {
+430:      parentId = await this.findExtremeNode(sponsor.id, finalSide);
+433:    // If still no sponsor/parent, check if it's the first user
+434:    if (!sponsor && !parentId) {
+449:      parent_id: parentId,
+481:      if (profileError.message.includes('UNIQUE_BINARY_POSITION') || profileError.message.includes('idx_unique_binary_placement') || profileError.code === '23505') {
+482:        throw new Error(`The ${finalSide} position under this sponsor/parent is already taken. Please choose a different position or parent.`);
+488:    console.log(`Verifying placement for ${user.id}: parent=${parentId}, side=${finalSide}`);
+491:      .select('id, parent_id, side, operator_id')
+498:      const isParentCorrect = verifiedProfile.parent_id === parentId;
+502:        console.error(`Placement Mismatch! Expected: parent=${parentId}, side=${finalSide}. Got: parent=${verifiedProfile.parent_id}, side=${verifiedProfile.side}`);
+506:        console.log(`Placement Verified: ${verifiedProfile.operator_id} is correctly placed under ${parentId} on ${finalSide} side.`);
+510:    // 6. Update binary counts (Requirement 2)
+587:                            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
+691:      // 2. Check and deduct balance if not free
+694:                      currentUser?.operator_id === 'ADMIN_AROWIN_2026' || 
+781:          .select('parent_id, side')
+785:        if (!currentProfile || !currentProfile.parent_id) break;
+787:        const parentId = currentProfile.parent_id;
+790:        const { data: parentProfile } = await supabase
+793:          .eq('id', parentId)
+796:        if (parentProfile) {
+800:            updateData.left_business = Number(parentProfile.left_business || 0) + amount;
+802:            updateData.right_business = Number(parentProfile.right_business || 0) + amount;
+805:          await this.adminQuery('profiles', 'update', updateData, { id: parentId });
+806:          affectedParents.add(parentId);
+809:        currentId = parentId;
+812:      // 6. Process Matching for all affected parents
+813:      for (const parentId of affectedParents) {
+814:        await this.processMatchingTS(parentId, uid);
+864:      // Removed 1:2 or 2:1 qualification rule as per user request
+889:        let capping = 250;
+892:          case 12: pairIncome = 25; capping = 2500; break;
+897:          default: pairIncome = 5; capping = 250; break;
+923:          const newMatchingIncome = Number((Number(profile.matching_income || 0) + actualIncomeToPay).toFixed(2));
+924:          const newTotalIncome = Number((Number(profile.total_income || 0) + actualIncomeToPay).toFixed(2));
+928:          const newWalletBalance = Number((Number(profile.wallet_balance || 0) + actualIncomeToPay).toFixed(2));
+931:            newWallets.matching.balance = Number((Number(newWallets.matching.balance || 0) + actualIncomeToPay).toFixed(2));
+936:            newWallets.master.balance = Number((Number(newWallets.master.balance || 0) + actualIncomeToPay).toFixed(2));
+951:            const nodeIncome = Number((actualIncomeToPay / numEligibleNodes).toFixed(2));
+1010:            const newYieldIncome = Number((Number(profile.yield_income || 0) + yieldAmount).toFixed(2));
+1011:            const newDailyIncome = Number((Number(profile.daily_income || 0) + yieldAmount).toFixed(2));
+1012:            const newTotalIncome = Number((Number(profile.total_income || 0) + yieldAmount).toFixed(2));
+1013:            const newWalletBalance = Number((Number(profile.wallet_balance || 0) + yieldAmount).toFixed(2));
+1017:              newWallets.yield.balance = Number((Number(newWallets.yield.balance || 0) + yieldAmount).toFixed(2));
+1022:              newWallets.master.balance = Number((Number(newWallets.master.balance || 0) + yieldAmount).toFixed(2));
+1046:              const referralYield = Number((yieldAmount * 0.10).toFixed(2));
+1056:                  const newSponsorReferralIncome = Number((Number(sponsorProfile.referral_income || 0) + referralYield).toFixed(2));
+1057:                  const newSponsorTotalIncome = Number((Number(sponsorProfile.total_income || 0) + referralYield).toFixed(2));
+1058:                  const newSponsorWalletBalance = Number((Number(sponsorProfile.wallet_balance || 0) + referralYield).toFixed(2));
+1062:                    newSponsorWallets.referral.balance = Number((Number(newSponsorWallets.referral.balance || 0) + referralYield).toFixed(2));
+1067:                    newSponsorWallets.master.balance = Number((Number(newSponsorWallets.master.balance || 0) + referralYield).toFixed(2));
+1117:            case 2: weeklyBonus = 6; break;
+1122:            case 7: weeklyBonus = 125; break;
+1123:            case 8: weeklyBonus = 250; break;
+1126:            case 11: weeklyBonus = 2500; break;
+1127:            case 12: weeklyBonus = 10000; break;
+1131:            const newRankBonusIncome = Number((Number(profile.rank_bonus_income || 0) + weeklyBonus).toFixed(2));
+1132:            const newTotalIncome = Number((Number(profile.total_income || 0) + weeklyBonus).toFixed(2));
+1133:            const newWalletBalance = Number((Number(profile.wallet_balance || 0) + weeklyBonus).toFixed(2));
+1137:              newWallets.rankBonus.balance = Number((Number(newWallets.rankBonus.balance || 0) + weeklyBonus).toFixed(2));
+1142:              newWallets.master.balance = Number((Number(newWallets.master.balance || 0) + weeklyBonus).toFixed(2));
+1211:    } else if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
+1259:          if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01' || currentUser?.role === 'admin') {
+1337:        if (secret === 'INITIALIZE_AROWIN_2026') {
+1370:      // 2. Process Binary Matching (with capping logic)
+1514:      // Get direct children to separate left and right
+1515:      const { data: children } = await supabase
+1518:        .eq('parent_id', rootId);
+1520:      const leftRootId = children?.find(c => c.side === 'LEFT')?.id;
+1521:      const rightRootId = children?.find(c => c.side === 'RIGHT')?.id;
+1588:      // 2. Fetch sub-profiles
+1602:      const earningPerNodePerSecond = (totalWeeklyEarning / totalNodesInPackage) / (7 * 24 * 60 * 60);
+1668:    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+1731:        const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+1776:      const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+1922:      // 2. Create withdrawal transaction
+1930:          description: `Withdrawal to ${address} (Net: ${netAmount.toFixed(2)} USDT, Fee: ${fee.toFixed(2)} USDT)`,
+1944:  async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+1955:          .eq('parent_id', currentId)
+1962:          return { parentId: currentId, side };
+1969:      return { parentId: currentId, side };
+1972:      return { parentId: startNodeId, side };
+1977:  async findBinaryParentSimpleSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+1981:        .eq('parent_id', startNodeId)
+1986:      if (!directChild) return { parentId: startNodeId, side };
+1994:        const { data: children } = await supabase.from('profiles')
+1996:          .eq('parent_id', currentId);
+1998:        const leftChild = children?.find(c => (c.side || c.position || '').trim().toUpperCase() === 'LEFT');
+1999:        const rightChild = children?.find(c => (c.side || c.position || '').trim().toUpperCase() === 'RIGHT');
+2001:        if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+2002:        if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+2007:      return { parentId: startNodeId, side };
+2009:      return { parentId: startNodeId, side };
+2013:  async findBinaryParentSequential(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+2026:        .select('parent_id, side')
+2030:      if (error || !profile || !profile.parent_id) break;
+2032:      const parentId = profile.parent_id;
+2035:      // Fetch parent's current team size and counts
+2036:      const { data: parent, error: parentError } = await supabase
+2039:        .eq('id', parentId)
+2042:      if (parentError || !parent) break;
+2045:        left: Number(parent.team_size?.left || parent.left_count || 0), 
+2046:        right: Number(parent.team_size?.right || parent.right_count || 0) 
+2064:        .eq('id', parentId);
+2066:      currentId = parentId;
+2154:                    currentUser?.operator_id === 'ADMIN_AROWIN_2026' || 
+2174:    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rootUid);
+2196:      const fetchDownline = async (parentId: string, currentDepth: number = 0): Promise<any[]> => {
+2199:        const { data: children, error: childError } = await supabase
+2202:          .eq('parent_id', parentId);
+2204:        if (childError || !children) return [];
+2206:        let results = [...children];
+2207:        for (const child of children) {
+2227:    // Map nodes by parent ID and side for efficient binary tree construction
+2230:      if (p.parent_id) {
+2231:        if (!nodesByParent.has(p.parent_id)) {
+2232:          nodesByParent.set(p.parent_id, {});
+2234:        const parentChildren = nodesByParent.get(p.parent_id)!;
+2238:          if (!parentChildren[side]) {
+2239:            parentChildren[side] = p;
+2266:        leftBusiness: (Number(node.left_business) || 0).toFixed(2),
+2267:        rightBusiness: (Number(node.right_business) || 0).toFixed(2),
+2268:        parentId: node.parent_id,
+2276:      // Recursively process children
+2277:      const children = nodesByParent.get(node.id);
+2278:      if (children) {
+2279:        if (children.LEFT) buildNode(children.LEFT, `${path}-left`, depth + 1);
+2280:        if (children.RIGHT) buildNode(children.RIGHT, `${path}-right`, depth + 1);
+2302:  async getBinaryChildren(parentId: string, parentPath: string) {
+2303:    const { data: children, error } = await supabase
+2306:      .eq('parent_id', parentId);
+2311:    children?.forEach(child => {
+2312:      const childPath = `${parentPath}-${(child.side || 'LEFT').toLowerCase()}`;
+2320:        leftBusiness: (Number(child.left_business) || 0).toFixed(2),
+2321:        rightBusiness: (Number(child.right_business) || 0).toFixed(2),
+2322:        parentId: child.parent_id,
+2359:    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+2450:    // 2. Fetch from payments as well to ensure we have everything
+2477:      .is('parent_id', null)
+2524:      // 2. Process Daily Payouts (Capping Reset, Binary Matching, Rank Check)
+2616:    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+2638:    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+2660:    const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
+2696:      .limit(20);

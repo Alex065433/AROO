@@ -155,6 +155,7 @@ const Dashboard: React.FC = () => {
 
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawAddress, setWithdrawAddress] = useState('');
+  const [withdrawalPassword, setWithdrawalPassword] = useState('');
   const [binanceRates, setBinanceRates] = useState<{symbol: string, price: string}[]>([]);
 
   const [isDepositing, setIsDepositing] = useState(false);
@@ -458,9 +459,57 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  const handleWithdraw = async () => {
+    if (isProcessing) return;
+    if (!withdrawAmount || Number(withdrawAmount) < 10) {
+      setNotification("Minimum withdrawal is 10 USDT");
+      return;
+    }
+    if (!withdrawAddress) {
+      setNotification("Please enter a destination address");
+      return;
+    }
+    if (!withdrawalPassword) {
+      setNotification("Please enter your withdrawal password");
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      // 1. Verify password
+      const isPasswordValid = await supabaseService.verifyWithdrawalPassword(userData.id, withdrawalPassword);
+      if (!isPasswordValid) {
+        throw new Error("Invalid withdrawal password");
+      }
+
+      // 2. Create withdrawal
+      await supabaseService.createWithdrawal(userData.id, Number(withdrawAmount), withdrawAddress);
+      
+      setNotification("Withdrawal request submitted successfully");
+      setActiveModal(null);
+      setWithdrawAmount('');
+      setWithdrawAddress('');
+      setWithdrawalPassword('');
+      
+      // Refresh data
+      await fetchAllData(false);
+    } catch (err: any) {
+      console.error('Withdrawal Failed:', err);
+      setNotification("Withdrawal Failed: " + err.message);
+    } finally {
+      setIsProcessing(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
   const executeAction = () => {
     if (activeModal === 'deposit' && paymentData) {
       checkDepositStatus();
+      return;
+    }
+    
+    if (activeModal === 'withdraw') {
+      handleWithdraw();
       return;
     }
     
@@ -700,6 +749,20 @@ const Dashboard: React.FC = () => {
             <div className="flex justify-between items-center pt-1 px-1">
                <span className="text-[11px] font-bold text-[#848e9c] underline underline-offset-2 decoration-dotted">Available Balance</span>
                <span className="text-[11px] font-bold text-white">{(userWallets?.master?.balance || 0).toFixed(2)} USDT</span>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-[#848e9c]">Withdrawal Password</label>
+            </div>
+            <div className="relative">
+              <input 
+                type="password" 
+                value={withdrawalPassword}
+                onChange={(e) => setWithdrawalPassword(e.target.value)}
+                placeholder="Enter Security Key" 
+                className="w-full bg-[#1e2329] border-none rounded-lg px-4 py-4 text-white font-bold text-sm placeholder-[#474d57] focus:ring-1 focus:ring-amber-500/50" 
+              />
             </div>
           </div>
         </div>
