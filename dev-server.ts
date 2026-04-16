@@ -58,7 +58,11 @@ async function startServer() {
 
   // API routes
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    res.json({ 
+      status: "ok", 
+      adminInitialized: !!getSupabaseAdmin(),
+      environment: process.env.NODE_ENV || 'development'
+    });
   });
 
   app.post("/api/debug-env", (req, res) => {
