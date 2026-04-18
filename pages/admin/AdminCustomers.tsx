@@ -560,7 +560,7 @@ const AdminCustomers: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
                     <div className="w-16 h-16 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-xl">
-                      {selectedUser.name.charAt(0)}
+                      {selectedUser.name?.charAt(0) || 'U'}
                     </div>
                     <div>
                       <input 
@@ -686,7 +686,7 @@ const AdminCustomers: React.FC = () => {
                                   setConfirmDialog(prev => ({ ...prev, isOpen: false }));
                                   setIsProcessing(true);
                                   try {
-                                    await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage), { isFree: true });
+                                    await supabaseService.activatePackage(selectedUser.id, parseFloat(selectedPackage));
                                     toast.success('User activated successfully!');
                                     fetchUsers();
                                     setIsEditPanelOpen(false);

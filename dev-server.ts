@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
+import axios from "axios";
+
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -63,6 +65,20 @@ async function startServer() {
       adminInitialized: !!getSupabaseAdmin(),
       environment: process.env.NODE_ENV || 'development'
     });
+  });
+
+  app.get("/api/binance-rates", async (req, res) => {
+    try {
+      const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'TRXUSDT'];
+      const symbolsParam = JSON.stringify(symbols);
+      const url = `https://api.binance.com/api/v3/ticker/price?symbols=${symbolsParam}`;
+      
+      const response = await axios.get(url);
+      res.json(response.data);
+    } catch (error: any) {
+      console.error("Error fetching binance rates in proxy:", error.message);
+      res.status(500).json({ error: "Failed to fetch rates from Binance", details: error.message });
+    }
   });
 
   app.post("/api/debug-env", (req, res) => {

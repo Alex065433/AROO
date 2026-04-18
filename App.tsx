@@ -73,21 +73,6 @@ const ReferralCapturer: React.FC = () => {
 const App: React.FC = () => {
   const { user, profile, loading, profileLoading, logout, refreshProfile } = useUser();
   const [showSplash, setShowSplash] = useState(true);
-  const [isAdminClientReady, setIsAdminClientReady] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      try {
-        const response = await fetch('/api/health');
-        const data = await response.json();
-        setIsAdminClientReady(data.adminInitialized);
-      } catch (e) {
-        console.error('Backend health check failed:', e);
-        setIsAdminClientReady(false);
-      }
-    };
-    checkAdmin();
-  }, []);
 
   const isSupabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -110,11 +95,6 @@ const App: React.FC = () => {
       {!isSupabaseConfigured && (
         <div className="fixed top-0 left-0 right-0 z-[9999] bg-amber-500 text-white text-[10px] font-black uppercase tracking-widest py-2 px-4 text-center shadow-lg">
           Supabase Configuration Missing. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in AI Studio settings.
-        </div>
-      )}
-      {isAdminClientReady === false && (
-        <div className="fixed top-0 left-0 right-0 z-[9998] bg-red-600 text-white text-[10px] font-black uppercase tracking-widest py-2 px-4 text-center shadow-lg">
-          Backend Admin Client NOT Initialized. Please ensure VITE_SUPABASE_SERVICE_KEY is set in Settings.
         </div>
       )}
       <Routes>

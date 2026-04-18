@@ -372,7 +372,42 @@ export const supabaseService = {
     return "An unexpected error occurred.";
   },
 
-  async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT', additionalData: any = {}) {
+  // Find the next available spot in BFS (Level Order) inside a specific subtree
+  async findNextBFSSlot(rootId: string): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
+    const queue = [rootId];
+    const visited = new Set();
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (visited.has(currentId)) continue;
+      visited.has(currentId);
+
+      // Check Left
+      const { data: leftChild } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('parent_id', currentId)
+        .eq('side', 'LEFT')
+        .maybeSingle();
+
+      if (!leftChild) return { parentId: currentId, side: 'LEFT' };
+      queue.push(leftChild.id);
+
+      // Check Right
+      const { data: rightChild } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('parent_id', currentId)
+        .eq('side', 'RIGHT')
+        .maybeSingle();
+
+      if (!rightChild) return { parentId: currentId, side: 'RIGHT' };
+      queue.push(rightChild.id);
+    }
+    return { parentId: rootId, side: 'LEFT' }; // Fallback
+  },
+
+  async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
     // 0. Generate Unique Operator ID
     let operatorId = '';
     let isUnique = false;
@@ -398,22 +433,11 @@ export const supabaseService = {
       password,
     });
 
-    if (authError) {
-      if (authError.message.includes('Database error saving new user')) {
-        throw new Error('Supabase Trigger Error: Your "profiles" table or trigger is misconfigured. Please run the SQL fix in the Supabase SQL Editor.');
-      }
-      throw authError;
-    }
-    
+    if (authError) throw authError;
     if (!authData.user) throw new Error('User creation failed');
     const user = authData.user;
 
-    // 1. Find Sponsor and Parent
-    let sponsor = null;
-    let parentId = null;
-    let finalSide = (side || 'LEFT').toUpperCase() as 'LEFT' | 'RIGHT';
-    
-    // Always look up the sponsor first (the person who referred)
+    // 1. Find Sponsor
     let cleanSponsorId = sponsorId.trim();
     if (/^\d{6}$/.test(cleanSponsorId)) cleanSponsorId = `ARW-${cleanSponsorId}`;
     if (/^ARW\d{6}$/i.test(cleanSponsorId)) cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
@@ -425,44 +449,20 @@ export const supabaseService = {
     else sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
 
     const { data: foundSponsor } = await sponsorQuery.maybeSingle();
-    sponsor = foundSponsor;
-
-    // 2. Determine Placement Parent - IMPROVED PLACEMENT (Direct if available, else Spillover)
-    if (additionalData.parentId) {
-      const isUuid = this.isUuid(additionalData.parentId);
-      let parentQuery = supabase.from('profiles').select('id, operator_id');
-      if (isUuid) parentQuery = parentQuery.eq('id', additionalData.parentId);
-      else parentQuery = parentQuery.eq('operator_id', additionalData.parentId);
-      
-      const { data: explicitParent } = await parentQuery.maybeSingle();
-      if (explicitParent) {
-        // Check if the spot is already taken
-        const { data: existingChild } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('parent_id', explicitParent.id)
-          .eq('side', finalSide)
-          .maybeSingle();
-          
-        if (!existingChild) {
-          // Spot is free, use it directly! (Requirement: Remove forced chain if spot is open)
-          parentId = explicitParent.id;
-        } else {
-          // Spot is taken, follow the chain (Spillover)
-          parentId = await this.findExtremeNode(explicitParent.id, finalSide);
-        }
-      }
+    if (!foundSponsor) {
+        // Check if root exists
+        const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
+        if (count > 0) throw new Error('Invalid Sponsor ID');
     }
 
-    // If no explicit parent, use sponsor as parent and find bottom of chain
-    if (!parentId && sponsor) {
-      parentId = await this.findExtremeNode(sponsor.id, finalSide);
-    }
+    // 2. BFS PLACEMENT INSIDE SPONSOR TREE ONLY
+    let parentId = null;
+    let finalSide: 'LEFT' | 'RIGHT' = 'LEFT';
 
-    // If still no sponsor/parent, check if it's the first user
-    if (!sponsor && !parentId) {
-      const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
-      if (count !== 0) throw new Error('Invalid Sponsor ID');
+    if (foundSponsor) {
+        const slot = await this.findNextBFSSlot(foundSponsor.id);
+        parentId = slot.parentId;
+        finalSide = slot.side;
     }
 
     // 3. Prepare Profile Data
@@ -474,12 +474,12 @@ export const supabaseService = {
       mobile: additionalData.mobile || '',
       withdrawal_password: additionalData.withdrawalPassword || '',
       two_factor_pin: additionalData.twoFactorPin || '',
-      sponsor_id: sponsor?.id || null,
+      sponsor_id: foundSponsor?.id || null,
       parent_id: parentId,
       side: finalSide,
       position: finalSide.toLowerCase(),
       rank: 1,
-      package_amount: 0, // Start with 0 until activated
+      package_amount: 0, 
       total_income: 0,
       wallets: {
         master: { balance: 0, currency: 'USDT' },
@@ -499,57 +499,191 @@ export const supabaseService = {
       right_volume: 0,
       matched_pairs: 0,
       role: 'user',
-      status: 'active',
+      status: 'inactive',
       created_at: new Date().toISOString(),
     };
 
-    // 4. Insert Profile
+    await this.adminQuery('profiles', 'insert', profileData);
+    return { ...profileData, uid: user.id };
+  },
+
+  async activatePackage(uid: string, amount: number) {
     try {
-      await this.adminQuery('profiles', 'insert', profileData);
-    } catch (profileError: any) {
-      if (profileError.message.includes('UNIQUE_BINARY_POSITION') || profileError.message.includes('idx_unique_binary_placement') || profileError.code === '23505') {
-        throw new Error(`The ${finalSide} position under this parent is already taken. This should not happen with our placement logic. Please try again.`);
+      const userProfile = await this.getUserProfile(uid);
+      if (!userProfile) throw new Error("User not found");
+
+      // Balance check
+      const masterBalance = Number(userProfile.wallet_balance || (userProfile.wallets?.master?.balance || 0));
+      if (masterBalance < amount) {
+        throw new Error(`Insufficient balance. Required: ${amount} USDT, Available: ${masterBalance} USDT`);
       }
-      if (profileError.message.includes('Supabase Admin client not initialized')) {
-        throw new Error(`CRITICAL: Backend Configuration Error. Please go to Settings and ensure VITE_SUPABASE_URL and VITE_SUPABASE_SERVICE_KEY are correctly set.`);
+
+      // Deduct balance from Master
+      await this.adminQuery('profiles', 'update', {
+        wallet_balance: masterBalance - amount,
+        wallets: {
+            ...userProfile.wallets,
+            master: { ...userProfile.wallets.master, balance: masterBalance - amount }
+        }
+      }, { id: uid });
+
+      // Calculate ID count
+      const idCount = Math.floor(amount / 50);
+      if (idCount < 1) throw new Error("Invalid activation amount. Minimum $50 required.");
+
+      // 1. Activate Master ID
+      await this.processUnitActivation(uid, userProfile.sponsor_id);
+
+      // 2. Create and Activate Sub-IDs
+      if (idCount > 1) {
+        await this.createAndActivateSubIds(uid, userProfile.sponsor_id, idCount - 1);
       }
-      throw new Error(`Profile Sync Error: ${profileError.message}`);
+
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error in activatePackage:', error);
+      throw error;
     }
+  },
 
-    // 5. Verify Placement (Requirement 1)
-    console.log(`Verifying placement for ${user.id}: parent=${parentId}, side=${finalSide}`);
-    const { data: verifiedProfile, error: verifyError } = await supabase
-      .from('profiles')
-      .select('id, parent_id, side, operator_id')
-      .eq('id', user.id)
-      .single();
-
-    if (verifyError || !verifiedProfile) {
-      console.error('Placement verification failed:', verifyError);
-    } else {
-      const isParentCorrect = verifiedProfile.parent_id === parentId;
-      const isSideCorrect = verifiedProfile.side === finalSide;
-      
-      if (!isParentCorrect || !isSideCorrect) {
-        console.error(`Placement Mismatch! Expected: parent=${parentId}, side=${finalSide}. Got: parent=${verifiedProfile.parent_id}, side=${verifiedProfile.side}`);
-        // We could throw here, but the record is already inserted. 
-        // For now, we log it clearly for debug support (Requirement 6).
-      } else {
-        console.log(`Placement Verified: ${verifiedProfile.operator_id} is correctly placed under ${parentId} on ${finalSide} side.`);
-      }
-    }
-
-    // 6. Update binary counts (Requirement 2)
-    // Handled by SQL trigger trg_process_new_profile on 'profiles' table
-    
-    // Send Welcome Email
+  async processUnitActivation(id: string, sponsorId: string | null) {
     try {
-      await this.sendWelcomeEmail(user.id);
-    } catch (err) {
-      console.warn('Failed to send welcome email:', err);
-    }
+        const { error } = await supabase.rpc('activate_unit_id_v2', { 
+            p_user_id: id, 
+            p_sponsor_id: sponsorId 
+        });
+        if (error) throw error;
+    } catch (err: any) {
+        console.warn('RPC activate_unit_id_v2 failed, falling back to manual processing...', err.message);
+        
+        // Manual fallback for count increment and basic activation
+        const user = await this.getUserProfile(id);
+        if (!user) return;
 
-    return { ...profileData, uid: user.id, verifiedPlacement: verifiedProfile };
+        await this.adminQuery('profiles', 'update', {
+            is_active: true,
+            status: 'active',
+            active_package: 50,
+            package_amount: 50,
+            activated_at: new Date().toISOString()
+        }, { id });
+
+        if (sponsorId) {
+            const income = 2.50; // 5% of $50
+            const sponsor = await this.getUserProfile(sponsorId);
+            if (sponsor) {
+                const newWallets = { ...sponsor.wallets };
+                if (newWallets.master) {
+                    newWallets.master.balance = (Number(newWallets.master.balance || 0) + income);
+                }
+                await this.adminQuery('profiles', 'update', {
+                    wallet_balance: (Number(sponsor.wallet_balance || 0) + income),
+                    total_income: (Number(sponsor.total_income || 0) + income),
+                    wallets: newWallets
+                }, { id: sponsorId });
+                
+                await this.adminQuery('transactions', 'insert', {
+                    uid: sponsorId,
+                    user_id: sponsorId,
+                    amount: income,
+                    type: 'referral',
+                    description: `Direct Referral Bonus from ${user.operator_id}`,
+                    status: 'completed'
+                });
+            }
+        }
+        
+        // Recursive matching logic in JS as fallback
+        await this.updateBinaryCountsAndMatchingJS(id);
+    }
+  },
+
+  async updateBinaryCountsAndMatchingJS(nodeId: string) {
+    let currentId = nodeId;
+    while (true) {
+        const { data: node } = await supabase.from('profiles').select('parent_id, side').eq('id', currentId).single();
+        if (!node || !node.parent_id) break;
+        
+        const parentId = node.parent_id;
+        const side = node.side;
+        
+        const { data: parent } = await supabase.from('profiles').select('left_count, right_count, matched_pairs, wallets, wallet_balance, total_income').eq('id', parentId).single();
+        if (parent) {
+            let leftCount = Number(parent.left_count || 0);
+            let rightCount = Number(parent.right_count || 0);
+            
+            if (side === 'LEFT') leftCount++;
+            else rightCount++;
+            
+            let matchedUpdate: any = { left_count: leftCount, right_count: rightCount };
+            
+            // Matching Logic
+            const match = Math.min(leftCount, rightCount);
+            if (match > 0) {
+                const income = match * 5; // $5 per pair
+                const newWallets = { ...parent.wallets };
+                if (newWallets.master) {
+                    newWallets.master.balance = (Number(newWallets.master.balance || 0) + income);
+                }
+                matchedUpdate = {
+                    left_count: leftCount - match,
+                    right_count: rightCount - match,
+                    matched_pairs: (Number(parent.matched_pairs || 0) + match),
+                    wallet_balance: (Number(parent.wallet_balance || 0) + income),
+                    total_income: (Number(parent.total_income || 0) + income),
+                    wallets: newWallets
+                };
+                
+                await this.adminQuery('transactions', 'insert', {
+                    uid: parentId,
+                    user_id: parentId,
+                    amount: income,
+                    type: 'matching',
+                    description: `Matching Income: ${match} pair(s)`,
+                    status: 'completed'
+                });
+            }
+            
+            await this.adminQuery('profiles', 'update', matchedUpdate, { id: parentId });
+        }
+        currentId = parentId;
+    }
+  },
+
+  async createAndActivateSubIds(masterId: string, sponsorId: string | null, count: number) {
+    const mainProfile = await this.getUserProfile(masterId);
+    if (!mainProfile) return;
+
+    for (let i = 1; i <= count; i++) {
+        // 1. Find next BFS slot under masterId
+        const slot = await this.findNextBFSSlot(masterId);
+        
+        // 2. Create Profile (no Auth record for sub-IDs to keep it clean, or use dummy)
+        const subOperatorId = `${mainProfile.operator_id}-${i}`;
+        const subId = crypto.randomUUID();
+        
+        const subProfile = {
+            id: subId,
+            email: `sub-${i}-${mainProfile.email}`,
+            operator_id: subOperatorId,
+            name: `${mainProfile.name} (ID ${i+1})`,
+            sponsor_id: sponsorId, // Sponsor remains same as master
+            parent_id: slot.parentId,
+            side: slot.side,
+            position: slot.side.toLowerCase(),
+            status: 'inactive',
+            is_active: false,
+            package_amount: 0,
+            wallets: mainProfile.wallets, // Copy structure
+            role: 'user',
+            created_at: new Date().toISOString()
+        };
+
+        await this.adminQuery('profiles', 'insert', subProfile);
+        
+        // 3. Activate
+        await this.processUnitActivation(subId, sponsorId);
+    }
   },
 
   async registerUser(name: string, email: string) {
@@ -706,168 +840,7 @@ export const supabaseService = {
     if (error) throw error;
   },
 
-  // Package Activation
-  /**
-   * Activates a package for a user by calling the Supabase RPC directly.
-   * This bypasses frontend balance checks and relies on the backend as the source of truth.
-   */
-  async activatePackage(uid: string, amount: number, options: { isFree?: boolean } = {}) {
-    const { isFree } = options;
-    const finalAmount = isFree ? 0 : amount;
-
-    try {
-      // 1. Get user profile
-      const userProfile = await this.getUserProfile(uid);
-      if (!userProfile) throw new Error("User not found");
-
-      // 2. Check and deduct balance if not free
-      const currentUser = this.getCurrentUser();
-      const isAdmin = currentUser?.role === 'admin' || 
-                      currentUser?.operator_id === 'ADMIN_AROWIN_2026' || 
-                      currentUser?.operator_id === 'ARW-ADMIN-01' ||
-                      currentUser?.email === 'admin@arowin.internal';
-      const shouldSkipBalanceCheck = isFree || isAdmin;
-
-      if (finalAmount > 0 && !shouldSkipBalanceCheck) {
-        // Check all possible balance sources
-        const masterBalance = Number(userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0));
-        
-        if (masterBalance < finalAmount) {
-          throw new Error(`Insufficient balance. Required: ${finalAmount} USDT, Available: ${masterBalance} USDT`);
-        }
-
-        // Deduct balance
-        const newWalletBalance = Math.max(0, Number(userProfile.wallet_balance || 0) - finalAmount);
-        const newWallets = { ...userProfile.wallets };
-        if (newWallets.master) {
-          newWallets.master.balance = Math.max(0, Number(newWallets.master.balance || 0) - finalAmount);
-        }
-
-        const updateData: any = { 
-          wallet_balance: newWalletBalance,
-          wallets: newWallets
-        };
-        
-        if (userProfile.deposit_wallet !== undefined) {
-          updateData.deposit_wallet = Math.max(0, Number(userProfile.deposit_wallet || 0) - finalAmount);
-        }
-
-        await this.adminQuery('profiles', 'update', updateData, { id: uid });
-      }
-
-      // 3. Update user's active package and status
-      await this.adminQuery('profiles', 'update', {
-        active_package: amount,
-        package_amount: amount,
-        is_active: true,
-        status: 'active',
-        activated_at: new Date().toISOString()
-      }, { id: uid });
-
-      // 4. Direct Referral Bonus (5%)
-      if (userProfile.sponsor_id) {
-        const refIncome = amount * 0.05;
-        const sponsor = await this.getUserProfile(userProfile.sponsor_id);
-        if (sponsor) {
-          const newRefIncome = Number(sponsor.referral_income || 0) + refIncome;
-          const newTotalIncome = Number(sponsor.total_income || 0) + refIncome;
-          const newWalletBalance = Number(sponsor.wallet_balance || 0) + refIncome;
-          
-          const newWallets = { ...sponsor.wallets };
-          if (newWallets.referral) {
-            newWallets.referral.balance = Number(newWallets.referral.balance || 0) + refIncome;
-          } else {
-            newWallets.referral = { balance: refIncome, currency: 'USDT' };
-          }
-          if (newWallets.master) {
-            newWallets.master.balance = Number(newWallets.master.balance || 0) + refIncome;
-          } else {
-            newWallets.master = { balance: refIncome, currency: 'USDT' };
-          }
-
-          await this.adminQuery('profiles', 'update', {
-            referral_income: newRefIncome,
-            total_income: newTotalIncome,
-            wallet_balance: newWalletBalance,
-            wallets: newWallets
-          }, { id: sponsor.id });
-
-          await this.adminQuery('transactions', 'insert', {
-            uid: sponsor.id,
-            user_id: sponsor.id,
-            amount: refIncome,
-            type: 'referral',
-            description: `Direct Referral Bonus from ${userProfile.operator_id}`,
-            status: 'completed'
-          });
-        }
-      }
-
-      // 5. Volume Distribution (Up the chain)
-      let currentId = userProfile.id;
-      const affectedParents = new Set<string>();
-      
-      while (true) {
-        const { data: currentProfile } = await supabase
-          .from('profiles')
-          .select('parent_id, side')
-          .eq('id', currentId)
-          .single();
-          
-        if (!currentProfile || !currentProfile.parent_id) break;
-        
-        const parentId = currentProfile.parent_id;
-        const side = currentProfile.side;
-        
-        const { data: parentProfile } = await supabase
-          .from('profiles')
-          .select('left_business, right_business')
-          .eq('id', parentId)
-          .single();
-          
-        if (parentProfile) {
-          const updateData: any = {};
-          
-          if (side === 'LEFT') {
-            updateData.left_business = Number(parentProfile.left_business || 0) + amount;
-          } else {
-            updateData.right_business = Number(parentProfile.right_business || 0) + amount;
-          }
-          
-          await this.adminQuery('profiles', 'update', updateData, { id: parentId });
-          affectedParents.add(parentId);
-        }
-        
-        currentId = parentId;
-      }
-
-      // 6. Process Matching for all affected parents
-      for (const parentId of affectedParents) {
-        await this.processMatchingTS(parentId, uid);
-      }
-
-      // 7. Log activation payment for history
-      const paymentData = {
-        uid: uid,
-        amount: finalAmount,
-        type: 'package_activation',
-        method: isFree ? 'FREE' : 'WALLET',
-        description: `Package Activation: $${amount}${isFree ? ' (FREE)' : ''}`,
-        status: 'finished',
-        currency: 'usdtbsc'
-      };
-
-      await this.adminQuery('payments', 'insert', paymentData);
-
-      // Final rank check for the user themselves
-      await this.checkAndUpdateRank(uid);
-
-      return { success: true };
-    } catch (error: any) {
-      console.error('Error in activatePackage:', error);
-      throw error;
-    }
-  },
+  // End of previous function
 
   async processMatchingTS(userId: string, triggerUserId?: string) {
     try {
@@ -1763,32 +1736,56 @@ export const supabaseService = {
         const isAdmin = currentUser?.role === 'admin' || currentUser?.operator_id === 'ADMIN_AROWIN_2026';
 
         if (isAdmin) {
-          // Use adminQuery to bypass RLS and get joined data
-          const payments = await this.adminQuery('payments', 'select', '*, profiles(name, email)');
-          const transactions = await this.adminQuery('transactions', 'select', '*, profiles(name, email)');
+          // Fetch data separately and join in memory for robustness
+          // This avoids "Could not find a relationship" errors in Supabase
+          const payments = await this.adminQuery('payments', 'select', '*');
+          const transactions = await this.adminQuery('transactions', 'select', '*');
+          const profiles = await this.adminQuery('profiles', 'select', 'id, name, email');
           
+          const profileMap = new Map();
+          if (Array.isArray(profiles)) {
+            profiles.forEach(p => profileMap.set(p.id, p));
+          }
+
           const combinedData = [];
-          if (Array.isArray(payments)) combinedData.push(...payments);
-          if (Array.isArray(transactions)) combinedData.push(...transactions);
+          if (Array.isArray(payments)) {
+            combinedData.push(...payments.map(p => ({
+              ...p,
+              profiles: profileMap.get(p.uid) || { name: 'Unknown', email: 'unknown@arowin.internal' }
+            })));
+          }
+          if (Array.isArray(transactions)) {
+            combinedData.push(...transactions.map(t => ({
+              ...t,
+              profiles: profileMap.get(t.uid) || { name: 'Unknown', email: 'unknown@arowin.internal' }
+            })));
+          }
           
           combinedData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
           return combinedData;
         }
 
         // Fallback for non-admin
-        const { data: directPayments } = await supabase
-          .from('payments')
-          .select('*, profiles(name, email)')
-          .order('created_at', { ascending: false });
-          
-        const { data: directTransactions } = await supabase
-          .from('transactions')
-          .select('*, profiles(name, email)')
-          .order('created_at', { ascending: false });
+        const { data: directPayments } = await supabase.from('payments').select('*').order('created_at', { ascending: false });
+        const { data: directTransactions } = await supabase.from('transactions').select('*').order('created_at', { ascending: false });
+        const { data: profiles } = await supabase.from('profiles').select('id, name, email');
+
+        const profileMap = new Map();
+        if (profiles) profiles.forEach(p => profileMap.set(p.id, p));
 
         const combinedData = [];
-        if (directPayments) combinedData.push(...directPayments);
-        if (directTransactions) combinedData.push(...directTransactions);
+        if (directPayments) {
+          combinedData.push(...directPayments.map(p => ({
+            ...p,
+            profiles: profileMap.get(p.uid) || { name: 'Unknown' }
+          })));
+        }
+        if (directTransactions) {
+          combinedData.push(...directTransactions.map(t => ({
+            ...t,
+            profiles: profileMap.get(t.uid) || { name: 'Unknown' }
+          })));
+        }
 
         combinedData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         return combinedData;

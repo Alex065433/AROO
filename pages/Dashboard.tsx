@@ -351,20 +351,35 @@ const Dashboard: React.FC = () => {
 
     const fetchRates = async () => {
       try {
-        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/binance-rates`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        // Use local proxy to avoid CORS "Failed to fetch" errors
+        const response = await fetch('/api/binance-rates');
+        
+        if (!response.ok) {
+          // Fallback to Supabase function if local proxy fails
+          const sbResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/binance-rates`, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+              "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+            }
+          });
+          if (sbResponse.ok) {
+            const data = await sbResponse.json();
+            if (isMounted) {
+              const formattedData = Array.isArray(data) ? data : [{ symbol: 'BTCUSDT', price: data.price?.toString() || "0" }];
+              setBinanceRates(formattedData);
+            }
+            return;
           }
-        });
+          throw new Error(`Failed to fetch from both proxy and Supabase: ${response.status}`);
+        }
+
         const data = await response.json();
         
         if (isMounted) {
-          // Adapt the single price response to the expected array format if needed,
-          // or just set it if the UI handles it. 
-          // Based on line 372, it expects an array of {symbol, price}.
-          const formattedData = Array.isArray(data) ? data : [{ symbol: 'BTCUSDT', price: data.price.toString() }];
+          // Data is expected to be an array [{symbol: 'BTCUSDT', price: '1.23'}, ...]
+          const formattedData = Array.isArray(data) ? data : (data.price ? [{ symbol: 'BTCUSDT', price: data.price.toString() }] : []);
           setBinanceRates(formattedData);
         }
       } catch (error) {
