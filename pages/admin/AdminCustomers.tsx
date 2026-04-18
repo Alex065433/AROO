@@ -147,7 +147,7 @@ const AdminCustomers: React.FC = () => {
         setConfirmDialog(prev => ({ ...prev, isOpen: false }));
         setIsProcessing(true);
         try {
-          await supabaseService.activatePackage(selectedUser.id, amount);
+          await supabaseService.activatePackage(`NODE-${amount}`, amount, selectedUser.id);
           toast.success('Package activated successfully');
           const updatedUsers = await fetchUsers();
           if (updatedUsers && selectedUser) {

@@ -196,23 +196,22 @@ const MasterWallet: React.FC = () => {
 
     if (activeTab === 'package') {
       try {
-        if (userProfile?.id) {
-          const cost = Number(amountToUse);
-          setIsProcessing(true);
-          
-          await supabaseService.activatePackage(userProfile.id, cost);
-          
-          // Refresh profile from backend to sync state
-          await refreshProfile();
-          
-          setSuccess(true);
-          setTimeout(() => {
-            setSuccess(false);
-            setActiveTab(null);
-            setExchangeAmount('');
-          }, 2500);
-          return;
-        }
+        const cost = Number(amountToUse);
+        setIsProcessing(true);
+        
+        // Use Node + amount as a generic package ID if specific one isn't passed
+        await supabaseService.activatePackage(`NODE-${cost}`, cost);
+        
+        // Refresh profile from backend to sync state
+        await refreshProfile();
+        
+        setSuccess(true);
+        setTimeout(() => {
+          setSuccess(false);
+          setActiveTab(null);
+          setExchangeAmount('');
+        }, 2500);
+        return;
       } catch (err: any) {
         console.error('Error activating package:', err);
         setError(err.message || 'Activation failed. Please try again.');

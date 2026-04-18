@@ -1,5 +1,8 @@
+
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
+
+console.log("Health Function Initialized.");
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -15,7 +18,9 @@ serve(async (req) => {
       JSON.stringify({ 
         status: "ok", 
         timestamp: new Date().toISOString(),
-        service: "Arowin Backend Node"
+        service: "Arowin-Edge-Network",
+        version: "v1.0.4",
+        node: "Synchronized"
       }),
       { 
         status: 200, 
@@ -26,6 +31,7 @@ serve(async (req) => {
       }
     );
   } catch (error) {
+    console.error(`[HEALTH ERROR]: ${error.message}`);
     return new Response(
       JSON.stringify({ error: error.message }),
       { 

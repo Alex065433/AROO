@@ -507,41 +507,41 @@ export const supabaseService = {
     return { ...profileData, uid: user.id };
   },
 
-  async activatePackage(uid: string, amount: number) {
+  async activatePackage(packageId: string, amount: number, targetUserId?: string) {
     try {
-      const userProfile = await this.getUserProfile(uid);
-      if (!userProfile) throw new Error("User not found");
-
-      // Balance check
-      const masterBalance = Number(userProfile.wallet_balance || (userProfile.wallets?.master?.balance || 0));
-      if (masterBalance < amount) {
-        throw new Error(`Insufficient balance. Required: ${amount} USDT, Available: ${masterBalance} USDT`);
+      // 1. Get current session for the JWT token
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        throw new Error('Authentication REQUIRED: No active session found. Please log in again.');
       }
 
-      // Deduct balance from Master
-      await this.adminQuery('profiles', 'update', {
-        wallet_balance: masterBalance - amount,
-        wallets: {
-            ...userProfile.wallets,
-            master: { ...userProfile.wallets.master, balance: masterBalance - amount }
-        }
-      }, { id: uid });
+      const token = session.access_token;
+      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/activate-package`;
 
-      // Calculate ID count
-      const idCount = Math.floor(amount / 50);
-      if (idCount < 1) throw new Error("Invalid activation amount. Minimum $50 required.");
+      // 2. Transmit Secure Request to Edge Function
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          packageId,
+          amount,
+          targetUserId // Optional, only if admin
+        })
+      });
 
-      // 1. Activate Master ID
-      await this.processUnitActivation(uid, userProfile.sponsor_id);
+      const result = await response.json();
 
-      // 2. Create and Activate Sub-IDs
-      if (idCount > 1) {
-        await this.createAndActivateSubIds(uid, userProfile.sponsor_id, idCount - 1);
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Server Protocol Error during Node Activation.');
       }
 
-      return { success: true };
+      return result;
     } catch (error: any) {
-      console.error('Error in activatePackage:', error);
+      console.error('Core Logic Failure in activatePackage:', error);
       throw error;
     }
   },

@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS members (
     right_pv NUMERIC(20, 2) DEFAULT 0,
     carry_forward_pv NUMERIC(20, 2) DEFAULT 0,
     total_earned NUMERIC(20, 2) DEFAULT 0,
+    total_investment NUMERIC(20, 2) DEFAULT 0,
+    is_active BOOLEAN DEFAULT false,
     rank_level INTEGER DEFAULT 0,
     weeks_paid INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
