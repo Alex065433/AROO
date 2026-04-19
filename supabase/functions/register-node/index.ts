@@ -3,7 +3,7 @@ import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 import { corsHeaders } from "../_shared/cors.ts";
 
-console.log("[REGISTER-NODE] Logic Initialized.");
+console.log("[REGISTER-NODE] Infrastructure Protocol v3.0 Initialized.");
 
 serve(async (req) => {
   // Handle CORS
@@ -21,56 +21,82 @@ serve(async (req) => {
     const { 
       email, 
       password, 
-      sponsor_id, 
-      placement_id, 
-      position, 
+      sponsor_id, // Frontend might send 'ARW-XXXXXX'
+      placement_id, // Frontend might send 'ARW-XXXXXX'
+      placement_side = 'LEFT',
       metadata = {} 
     } = body;
 
     if (!email || !password) {
-      throw new Error("Email and password are required.");
+      throw new Error("PROTOCOL REJECTION: Email and password are mandatory.");
     }
 
-    // 1. Resolve Sponsor ID (Handle ARW-XXXXXX or UUID)
-    let finalSponsorUuid = null;
-    if (sponsor_id) {
-        if (sponsor_id.startsWith('ARW-')) {
-            const { data: sponsorProfile, error: sponsorError } = await supabaseAdmin
+    // --- HELPER: RESOLVE OPERATOR ID TO UUID ---
+    const resolveToUuid = async (input: string) => {
+      if (!input) return null;
+      // If already UUID, return it
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(input)) return input;
+
+      // Search by operator_id
+      const { data, error } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('operator_id', input)
+        .maybeSingle();
+      
+      if (error || !data) return null;
+      return data.id;
+    };
+
+    // 1. Resolve Sponsor & Placement
+    const finalSponsorUuid = await resolveToUuid(sponsor_id);
+    let finalPlacementUuid = await resolveToUuid(placement_id);
+
+    // Bootstrap check: If no sponsor found, check if this is the system's first user
+    if (!finalSponsorUuid) {
+        const { count } = await supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true });
+        if (count > 0) throw new Error("INVALID PROTOCOL: Sponsor ID could not be resolved to a valid UUID.");
+    }
+
+    // 2. Extreme Spillover Search (If placement_id not explicitly provided or needs validation)
+    // "Start from sponsor_id... recursive search to find the absolute bottom-most empty spot on the extreme side edge"
+    if (finalSponsorUuid && !finalPlacementUuid) {
+        console.log(`[PLACEMENT] Performing EXTREME SPILLOVER check from sponsor ${finalSponsorUuid} on ${placement_side} side`);
+        let currentId = finalSponsorUuid;
+        while (true) {
+            const { data: child } = await supabaseAdmin
                 .from('profiles')
                 .select('id')
-                .eq('operator_id', sponsor_id)
+                .eq('parent_id', currentId)
+                .eq('side', placement_side)
                 .maybeSingle();
-            
-            if (sponsorError || !sponsorProfile) {
-                // If not found, check if this is the first user
-                const { count } = await supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true });
-                if (count > 0) throw new Error("Invalid Sponsor Protocol ID.");
-            } else {
-                finalSponsorUuid = sponsorProfile.id;
+
+            if (!child) {
+                // Found empty slot
+                finalPlacementUuid = currentId;
+                break;
             }
-        } else {
-            finalSponsorUuid = sponsor_id;
+            currentId = child.id;
+            
+            // Safety depth guard
+            if (currentId === null) break; 
         }
     }
 
-    // 2. Generate Unique Operator ID
+    // 3. Generate Unique Operator Protocol ID
     let operatorId = '';
     let isUnique = false;
-    let attempts = 0;
-    while (!isUnique && attempts < 15) {
+    while (!isUnique) {
       const candidateId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
       const { data: existing } = await supabaseAdmin.from('profiles').select('id').eq('operator_id', candidateId).maybeSingle();
       if (!existing) {
         operatorId = candidateId;
         isUnique = true;
       }
-      attempts++;
     }
-    if (!operatorId) throw new Error("Could not generate a unique Protocol ID. Please try again.");
 
-    // 3. Create Supabase Auth User
-    // We use internal email format to allow multiple IDs per real email if ever needed,
-    // and to standardize login via Operator ID.
+    // 4. Create Supabase Auth Layer
     const internalEmail = `${operatorId.toLowerCase()}@arowin.internal`;
     const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: internalEmail,
@@ -87,71 +113,7 @@ serve(async (req) => {
     if (authError) throw authError;
     const userId = userData.user.id;
 
-    // 4. MLM Placement Logic (Spillover)
-    let finalParentUuid = placement_id;
-    let finalPosition = position || 'LEFT';
-
-    if (finalSponsorUuid && !finalParentUuid) {
-        // BFS Placement Logic (Level-Order)
-        console.log(`[PLACEMENT] Performing spillover search from sponsor ${finalSponsorUuid}`);
-        const queue = [finalSponsorUuid];
-        const visited = new Set();
-        let found = false;
-
-        while (queue.length > 0 && !found) {
-            const currentId = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-
-            // Check Left Slot
-            const { data: leftChild } = await supabaseAdmin
-                .from('profiles')
-                .select('id')
-                .eq('parent_id', currentId)
-                .eq('side', 'LEFT')
-                .maybeSingle();
-
-            if (!leftChild) {
-                finalParentUuid = currentId;
-                finalPosition = 'LEFT';
-                found = true;
-                break;
-            }
-            queue.push(leftChild.id);
-
-            // Check Right Slot
-            const { data: rightChild } = await supabaseAdmin
-                .from('profiles')
-                .select('id')
-                .eq('parent_id', currentId)
-                .eq('side', 'RIGHT')
-                .maybeSingle();
-
-            if (!rightChild) {
-                finalParentUuid = currentId;
-                finalPosition = 'RIGHT';
-                found = true;
-                break;
-            }
-            queue.push(rightChild.id);
-            
-            // Safety break for extremely large trees in Edge Environment
-            if (visited.size > 200) break; 
-        }
-    }
-
-    // 5. Build Initial Data Objects
-    const wallets = {
-      master: { balance: 0, currency: 'USDT' },
-      referral: { balance: 0, currency: 'USDT' },
-      matching: { balance: 0, currency: 'USDT' },
-      yield: { balance: 0, currency: 'USDT' },
-      rankBonus: { balance: 0, currency: 'USDT' },
-      incentive: { balance: 0, currency: 'USDT' },
-      rewards: { balance: 0, currency: 'USDT' },
-    };
-
-    // Profile Record
+    // 5. Database Synchronization
     const profileInsert = {
       id: userId,
       email: email,
@@ -161,54 +123,38 @@ serve(async (req) => {
       withdrawal_password: metadata.withdrawalPassword || '',
       two_factor_pin: metadata.twoFactorPin || '',
       sponsor_id: finalSponsorUuid,
-      parent_id: finalParentUuid,
-      side: finalPosition,
-      position: finalPosition.toLowerCase(),
+      parent_id: finalPlacementUuid,
+      side: placement_side,
+      position: placement_side.toLowerCase(),
       rank: 1,
-      wallet_balance: 0,
-      total_income: 0,
-      wallets: wallets,
       status: 'inactive',
       role: 'user',
       created_at: new Date().toISOString()
     };
 
-    // Member Record (Enterprise MLM Table)
     const memberInsert = {
       id: userId,
       sponsor_id: finalSponsorUuid,
-      placement_id: finalParentUuid,
-      position: finalPosition,
-      left_pv: 0,
-      right_pv: 0,
-      carry_forward_pv: 0,
-      total_earned: 0,
-      total_investment: 0,
+      placement_id: finalPlacementUuid,
+      position: placement_side,
       is_active: false,
-      rank_level: 0,
       created_at: new Date().toISOString()
     };
 
-    // 6. Database Synchronization
-    const [{ error: profError }, { error: memError }] = await Promise.all([
-        supabaseAdmin.from('profiles').insert(profileInsert),
-        supabaseAdmin.from('members').insert(memberInsert)
-    ]);
+    const { error: profError } = await supabaseAdmin.from('profiles').insert(profileInsert);
+    const { error: memError } = await supabaseAdmin.from('members').insert(memberInsert);
 
-    if (profError) throw new Error(`Profile Sync Error: ${profError.message}`);
-    if (memError) throw new Error(`MLM Member Sync Error: ${memError.message}`);
+    if (profError || memError) {
+        // Cleanup on fail
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        throw new Error(`DATABASE SYNC FAILURE: ${profError?.message || memError?.message}`);
+    }
 
-    console.log(`[REGISTER-NODE] User ${operatorId} (${userId}) successfully enrolled.`);
+    console.log(`[REGISTER-NODE] Protocol ID ${operatorId} successfully registered and placed.`);
 
     return new Response(JSON.stringify({ 
       success: true, 
-      user: { 
-        id: userId, 
-        operator_id: operatorId,
-        email: email,
-        name: profileInsert.name,
-        internal_email: internalEmail
-      } 
+      user: { id: userId, operator_id: operatorId, email: email, internal_email: internalEmail } 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
@@ -216,10 +162,7 @@ serve(async (req) => {
 
   } catch (error) {
     console.error(`[REGISTER-NODE FATAL]: ${error.message}`);
-    return new Response(JSON.stringify({ 
-      error: error.message,
-      success: false 
-    }), {
+    return new Response(JSON.stringify({ error: error.message, success: false }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
