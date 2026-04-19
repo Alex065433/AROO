@@ -8,7 +8,6 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -20,147 +19,114 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    
-    // 1. Flexible Parsing (Handle both snake_case and camelCase)
-    const rawSponsor = body.sponsor_id || body.sponsorId || body.referred_by || body.referrer_id;
-    const rawSide = body.placement_side || body.placementSide || body.position || body.side;
-    const rawEmail = body.email || body.userEmail;
-    const rawPassword = body.password || body.userPassword;
+    const { email, password, sponsor_id: rawSponsorId, placement_side: rawSide } = body;
 
-    // 2. Auto-Generate Missing Auth Fields
-    // If email is missing, we generate a unique internal placeholder
-    const email = rawEmail || `node_${crypto.randomUUID()}@arowintrading.com`;
-    // If password is missing, we use a random string
-    const password = rawPassword || crypto.randomUUID();
-
-    if (!rawSponsor || !rawSide) {
-      throw new Error("PROTOCOL REJECTION: Sponsor ID and Placement Side are mandatory.");
+    if (!rawSponsorId || !rawSide) {
+      throw new Error("Sponsor ID and Placement Side are mandatory.");
     }
 
-    // Resolve Sponsor ID (Handle ARW-XXXXXX or UUID)
-    let sponsor_id = rawSponsor;
-    if (String(rawSponsor).startsWith('ARW-')) {
-        const { data: sponsorProf, error: sErr } = await supabaseAdmin
-            .from('profiles')
-            .select('id')
-            .eq('operator_id', rawSponsor)
-            .maybeSingle();
-        
-        if (sErr || !sponsorProf) {
-            throw new Error(`INVALID SPONSOR: Protocol ID ${rawSponsor} not found.`);
-        }
-        sponsor_id = sponsorProf.id;
+    // 1. Resolve Sponsor & Side
+    let sponsorId = rawSponsorId;
+    if (String(rawSponsorId).startsWith('ARW-')) {
+      const { data: sProf } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('operator_id', rawSponsorId)
+        .single();
+      if (sProf) sponsorId = sProf.id;
     }
 
-    const side = (String(rawSide).toUpperCase() === 'LEFT') ? 'LEFT' : 'RIGHT';
+    const { data: sponsorProfile, error: sponsorError } = await supabaseAdmin
+      .from('profiles')
+      .select('name')
+      .eq('id', sponsorId)
+      .single();
 
-    // 3. Extreme Spillover Logic
-    // Logic: Start from sponsor_id, traverse down the extreme side edge until an empty spot is found.
-    let currentParentId = sponsor_id;
+    if (sponsorError || !sponsorProfile) {
+      throw new Error("Invalid Sponsor.");
+    }
+
+    const side = String(rawSide).toUpperCase() === 'LEFT' ? 'LEFT' : 'RIGHT';
+
+    // 2. Strict Power-Leg Placement (Extreme Edge)
+    let currentId = sponsorId;
     let finalPlacementId = null;
 
-    console.log(`[PLACEMENT] Initiating Extreme Spillover from ${sponsor_id} for side ${side}`);
-
     while (true) {
-      const { data: child, error: childError } = await supabaseAdmin
+      const { data: child } = await supabaseAdmin
         .from('members')
         .select('id')
-        .eq('placement_id', currentParentId)
+        .eq('placement_id', currentId)
         .eq('position', side)
         .maybeSingle();
 
-      if (childError) throw childError;
-
       if (!child) {
-        // Empty spot found at currentParentId on the side edge
-        finalPlacementId = currentParentId;
+        finalPlacementId = currentId;
         break;
       }
-
-      currentParentId = child.id;
+      currentId = child.id;
     }
 
-    // 4. Create Auth User with Uniqueness Check for operatorId
-    let operatorId = '';
-    let isUnique = false;
-    while (!isUnique) {
-      operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-      const { data: existing } = await supabaseAdmin.from('profiles').select('id').eq('operator_id', operatorId).maybeSingle();
-      if (!existing) isUnique = true;
-    }
-    
-    const internalEmail = `${operatorId.toLowerCase()}@arowin.internal`;
+    // 3. Generate 'ARW-' ID from Sequence
+    // We use RPC to get the nextval safely
+    const { data: seqVal } = await supabaseAdmin.rpc('get_next_operator_id');
+    const operatorId = `ARW-${seqVal || Math.floor(100000 + Math.random() * 900000)}`;
 
-    const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    // 4. Create Auth User
+    const internalEmail = email || `${operatorId.toLowerCase()}@arowin.internal`;
+    const userPassword = password || crypto.randomUUID();
+
+    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: internalEmail,
-      password: password,
+      password: userPassword,
       email_confirm: true,
       user_metadata: { 
-        real_email: email,
         operator_id: operatorId,
-        name: email.split('@')[0],
-        is_auto_generated: !rawEmail
+        name: email ? email.split('@')[0] : `User ${operatorId}`
       }
     });
 
     if (authError) throw authError;
+    const userId = userData.user.id;
 
-    const userId = authUser.user.id;
-
-    // 5. Database Sync: profiles and members
-    const { error: profileError } = await supabaseAdmin.from('profiles').insert({
+    // 5. Database Sync
+    await supabaseAdmin.from('profiles').insert({
       id: userId,
-      email: email,
+      email: internalEmail,
       operator_id: operatorId,
-      name: email.split('@')[0],
-      sponsor_id: sponsor_id,
+      name: email ? email.split('@')[0] : `User ${operatorId}`,
+      sponsor_id: sponsorId,
       parent_id: finalPlacementId,
       side: side,
       position: side.toLowerCase(),
-      status: 'inactive',
-      role: 'user',
-      created_at: new Date().toISOString()
+      status: 'inactive'
     });
 
-    if (profileError) {
-      // Rollback auth
-      await supabaseAdmin.auth.admin.deleteUser(userId);
-      throw new Error(`Profile Sync Failed: ${profileError.message}`);
-    }
-
-    const { error: memberError } = await supabaseAdmin.from('members').insert({
+    await supabaseAdmin.from('members').insert({
       id: userId,
-      sponsor_id: sponsor_id,
+      sponsor_id: sponsorId,
       placement_id: finalPlacementId,
       position: side,
-      is_active: false,
-      created_at: new Date().toISOString()
+      is_active: false
     });
-
-    if (memberError) {
-      throw new Error(`Member Sync Failed: ${memberError.message}`);
-    }
-
-    console.log(`[SUCCESS] Registered node ${operatorId} under parent ${finalPlacementId} (${side})`);
 
     return new Response(JSON.stringify({ 
       success: true, 
-      user: { 
-        id: userId, 
-        operator_id: operatorId,
-        email: email,
-        password: rawPassword ? '******' : password // Return password only if we generated it
-      } 
+      sponsor_name: sponsorProfile.name,
+      placed_side: side,
+      user: { id: userId, operator_id: operatorId, email: internalEmail } 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error: any) {
-    console.error("[REGISTER-NODE FATAL]:", error.message);
     return new Response(JSON.stringify({ error: error.message, success: false }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
   }
 });
+
+// Note: Ensure the RPC 'get_next_operator_id' is defined in your SQL:
+// CREATE OR REPLACE FUNCTION get_next_operator_id() RETURNS INT AS $$ BEGIN RETURN nextval('operator_id_seq'); END; $$ LANGUAGE plpgsql;
