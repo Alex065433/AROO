@@ -408,103 +408,44 @@ export const supabaseService = {
   },
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
-    // 0. Generate Unique Operator ID
-    let operatorId = '';
-    let isUnique = false;
-    let attempts = 0;
-    
-    while (!isUnique && attempts < 10) {
-      const candidateId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-      const { data: existing } = await supabase.from('profiles').select('id').eq('operator_id', candidateId).maybeSingle();
-      if (!existing) {
-        operatorId = candidateId;
-        isUnique = true;
+    try {
+      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/register-node`;
+      
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          sponsor_id: sponsorId,
+          position: side === 'AUTO' ? null : side,
+          metadata: {
+            name: additionalData.name,
+            mobile: additionalData.mobile,
+            withdrawalPassword: additionalData.withdrawalPassword,
+            twoFactorPin: additionalData.twoFactorPin
+          },
+          placement_id: additionalData.parentId
+        })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Registration failed. Internal Server Protocol Error.');
       }
-      attempts++;
+
+      return {
+        ...result.user,
+        uid: result.user.id
+      };
+    } catch (error: any) {
+      console.error('Registration core failure:', error);
+      throw error;
     }
-    
-    if (!operatorId) throw new Error("Could not generate a unique Operator ID. Please try again.");
-
-    const internalEmail = `${(operatorId || '').toLowerCase()}@arowin.internal`;
-
-    // 1. Create Supabase Auth User with internal email to allow unlimited IDs per real email
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: internalEmail,
-      password,
-    });
-
-    if (authError) throw authError;
-    if (!authData.user) throw new Error('User creation failed');
-    const user = authData.user;
-
-    // 1. Find Sponsor
-    let cleanSponsorId = sponsorId.trim();
-    if (/^\d{6}$/.test(cleanSponsorId)) cleanSponsorId = `ARW-${cleanSponsorId}`;
-    if (/^ARW\d{6}$/i.test(cleanSponsorId)) cleanSponsorId = `ARW-${cleanSponsorId.substring(3).toUpperCase()}`;
-    if (/^ARW-\d{6}$/i.test(cleanSponsorId)) cleanSponsorId = `ARW-${cleanSponsorId.substring(4).toUpperCase()}`;
-
-    const isSponsorUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSponsorId);
-    let sponsorQuery = supabase.from('profiles').select('id, operator_id');
-    if (isSponsorUuid) sponsorQuery = sponsorQuery.eq('id', cleanSponsorId);
-    else sponsorQuery = sponsorQuery.ilike('operator_id', cleanSponsorId);
-
-    const { data: foundSponsor } = await sponsorQuery.maybeSingle();
-    if (!foundSponsor) {
-        // Check if root exists
-        const { count } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
-        if (count > 0) throw new Error('Invalid Sponsor ID');
-    }
-
-    // 2. BFS PLACEMENT INSIDE SPONSOR TREE ONLY
-    let parentId = null;
-    let finalSide: 'LEFT' | 'RIGHT' = 'LEFT';
-
-    if (foundSponsor) {
-        const slot = await this.findNextBFSSlot(foundSponsor.id);
-        parentId = slot.parentId;
-        finalSide = slot.side;
-    }
-
-    // 3. Prepare Profile Data
-    const profileData = {
-      id: user.id,
-      email: email.toLowerCase(),
-      operator_id: operatorId,
-      name: additionalData.name || email.split('@')[0],
-      mobile: additionalData.mobile || '',
-      withdrawal_password: additionalData.withdrawalPassword || '',
-      two_factor_pin: additionalData.twoFactorPin || '',
-      sponsor_id: foundSponsor?.id || null,
-      parent_id: parentId,
-      side: finalSide,
-      position: finalSide.toLowerCase(),
-      rank: 1,
-      package_amount: 0, 
-      total_income: 0,
-      wallets: {
-        master: { balance: 0, currency: 'USDT' },
-        referral: { balance: 0, currency: 'USDT' },
-        matching: { balance: 0, currency: 'USDT' },
-        yield: { balance: 0, currency: 'USDT' },
-        rankBonus: { balance: 0, currency: 'USDT' },
-        incentive: { balance: 0, currency: 'USDT' },
-        rewards: { balance: 0, currency: 'USDT' },
-      },
-      team_size: { left: 0, right: 0 },
-      left_count: 0,
-      right_count: 0,
-      left_business: 0,
-      right_business: 0,
-      left_volume: 0,
-      right_volume: 0,
-      matched_pairs: 0,
-      role: 'user',
-      status: 'inactive',
-      created_at: new Date().toISOString(),
-    };
-
-    await this.adminQuery('profiles', 'insert', profileData);
-    return { ...profileData, uid: user.id };
   },
 
   async activatePackage(packageId: string, amount: number, targetUserId?: string) {

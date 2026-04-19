@@ -99,48 +99,31 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     setError(null);
 
     try {
-      // 1. Convert sponsor operator_id → UUID
-      let sponsorUser = await supabaseService.findUserByOperatorId(sponsorId);
-      let sponsorUUID = sponsorUser?.id || null;
-
-      if (!sponsorUser) {
-        // Check if this is the first user (bootstrap)
-        const { count } = await supabaseService.getUserCount();
-        if (count !== 0) {
-          setError('Invalid Sponsor ID');
-          setIsSubmitting(false);
-          return;
-        }
-        // If first user, allow null sponsor
-      }
-
-      // 2. Convert parent operator_id → UUID (if exists)
-      let parentUUID = null;
-
-      if (parentId) {
-        const parentUser = await supabaseService.findUserByOperatorId(parentId);
-        if (!parentUser) {
-          setError('Invalid Parent ID');
-          setIsSubmitting(false);
-          return;
-        }
-        parentUUID = parentUser.id;
-      }
-
-      // 3. Register with UUIDs
+      // Direct call to registration service (now powered by secure Edge Function)
       const user = await supabaseService.register(
         email,
         password,
-        sponsorUUID || '', // Pass empty string if null, register will handle it
-        side || 'LEFT',
+        sponsorId, // Service handles resolution of IDs
+        side || 'AUTO',
         {
           name: name || 'New Operator',
           mobile: mobile || '',
           withdrawalPassword: withdrawalPassword,
           twoFactorPin: twoFactorPin,
-          parentId: parentUUID
+          parentId: parentId // Pass directly
         }
       );
+
+      // Auto-Login after registration
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email: user.internal_email || `${user.operator_id.toLowerCase()}@arowin.internal`,
+        password: password
+      });
+
+      if (loginError) {
+        console.warn('Registration successful but auto-login failed. Redirecting to manual login.');
+        setTimeout(() => navigate('/login'), 3000);
+      }
 
       setRegisteredUser(user);
       setIsSubmitting(false);
@@ -159,7 +142,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
     } catch (err: any) {
       console.error('Registration failed:', err);
-      setError(supabaseService.formatError(err));
+      setError(err.message || 'Registration failed. Please check your data and try again.');
       setIsSubmitting(false);
     }
   };
