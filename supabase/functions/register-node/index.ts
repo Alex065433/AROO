@@ -20,33 +20,46 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    const { email, password, sponsor_id: sponsorIdInput, placement_side } = body;
+    
+    // 1. Flexible Parsing (Handle both snake_case and camelCase)
+    const rawSponsor = body.sponsor_id || body.sponsorId || body.referred_by || body.referrer_id;
+    const rawSide = body.placement_side || body.placementSide || body.position || body.side;
+    const rawEmail = body.email || body.userEmail;
+    const rawPassword = body.password || body.userPassword;
 
-    if (!email || !password || !sponsorIdInput || !placement_side) {
-      throw new Error("Missing required fields: email, password, sponsor_id, placement_side");
+    // 2. Auto-Generate Missing Auth Fields
+    // If email is missing, we generate a unique internal placeholder
+    const email = rawEmail || `node_${crypto.randomUUID()}@arowintrading.com`;
+    // If password is missing, we use a random string
+    const password = rawPassword || crypto.randomUUID();
+
+    if (!rawSponsor || !rawSide) {
+      throw new Error("PROTOCOL REJECTION: Sponsor ID and Placement Side are mandatory.");
     }
 
     // Resolve Sponsor ID (Handle ARW-XXXXXX or UUID)
-    let sponsor_id = sponsorIdInput;
-    if (sponsorIdInput.startsWith('ARW-')) {
+    let sponsor_id = rawSponsor;
+    if (String(rawSponsor).startsWith('ARW-')) {
         const { data: sponsorProf, error: sErr } = await supabaseAdmin
             .from('profiles')
             .select('id')
-            .eq('operator_id', sponsorIdInput)
+            .eq('operator_id', rawSponsor)
             .maybeSingle();
         
         if (sErr || !sponsorProf) {
-            throw new Error(`INVALID SPONSOR: Protocol ID ${sponsorIdInput} not found.`);
+            throw new Error(`INVALID SPONSOR: Protocol ID ${rawSponsor} not found.`);
         }
         sponsor_id = sponsorProf.id;
     }
 
-    const side = (placement_side.toUpperCase() === 'LEFT') ? 'LEFT' : 'RIGHT';
+    const side = (String(rawSide).toUpperCase() === 'LEFT') ? 'LEFT' : 'RIGHT';
 
-    // 1. Extreme Spillover Logic
+    // 3. Extreme Spillover Logic
     // Logic: Start from sponsor_id, traverse down the extreme side edge until an empty spot is found.
     let currentParentId = sponsor_id;
     let finalPlacementId = null;
+
+    console.log(`[PLACEMENT] Initiating Extreme Spillover from ${sponsor_id} for side ${side}`);
 
     while (true) {
       const { data: child, error: childError } = await supabaseAdmin
@@ -67,7 +80,7 @@ serve(async (req) => {
       currentParentId = child.id;
     }
 
-    // 2. Create Auth User with Uniqueness Check for operatorId
+    // 4. Create Auth User with Uniqueness Check for operatorId
     let operatorId = '';
     let isUnique = false;
     while (!isUnique) {
@@ -85,7 +98,8 @@ serve(async (req) => {
       user_metadata: { 
         real_email: email,
         operator_id: operatorId,
-        name: email.split('@')[0]
+        name: email.split('@')[0],
+        is_auto_generated: !rawEmail
       }
     });
 
@@ -93,7 +107,7 @@ serve(async (req) => {
 
     const userId = authUser.user.id;
 
-    // 3. Database Sync: profiles and members
+    // 5. Database Sync: profiles and members
     const { error: profileError } = await supabaseAdmin.from('profiles').insert({
       id: userId,
       email: email,
@@ -111,7 +125,7 @@ serve(async (req) => {
     if (profileError) {
       // Rollback auth
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      throw profileError;
+      throw new Error(`Profile Sync Failed: ${profileError.message}`);
     }
 
     const { error: memberError } = await supabaseAdmin.from('members').insert({
@@ -124,16 +138,18 @@ serve(async (req) => {
     });
 
     if (memberError) {
-      // This is harder to rollback perfectly but we do our best
-      throw memberError;
+      throw new Error(`Member Sync Failed: ${memberError.message}`);
     }
+
+    console.log(`[SUCCESS] Registered node ${operatorId} under parent ${finalPlacementId} (${side})`);
 
     return new Response(JSON.stringify({ 
       success: true, 
       user: { 
         id: userId, 
         operator_id: operatorId,
-        email: email
+        email: email,
+        password: rawPassword ? '******' : password // Return password only if we generated it
       } 
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
