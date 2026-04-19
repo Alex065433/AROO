@@ -1,14 +1,14 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
-import { corsHeaders } from "../_shared/cors.ts";
 
-console.log("[ACTIVATE-PACKAGE] Protocol v4.0 Multi-Node Engine Booted.");
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
     const supabaseAdmin = createClient(
@@ -16,274 +16,271 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    const body = await req.json();
+    const { amount, userId: passedUserId } = body;
+
+    // Use passed userId or get from auth token
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) throw new Error('Authorization required');
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    if (authError || !user) throw new Error('Invalid session validation');
-
-    const { amount, targetUserId } = await req.json();
-    const finalTargetUid = targetUserId || user.id;
-
-    if (!amount || amount < 50 || amount % 50 !== 0) {
-      throw new Error("PROTOCOL ERROR: Activation amount must be a multiple of 50 USDT.");
+    let userId = passedUserId;
+    if (!userId && authHeader) {
+      const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.replace('Bearer ', ''));
+      if (!authError && user) userId = user.id;
     }
+
+    if (!userId) throw new Error("User ID is required for activation.");
+    if (!amount || amount < 50) throw new Error("Invalid activation amount.");
 
     const numberOfNodes = Math.floor(amount / 50);
     const PV_PER_NODE = 50;
 
-    // 1. Fetch Master Node Profile
-    const { data: masterProfile, error: masterErr } = await supabaseAdmin
+    console.log(`[ACTIVATE] Activating ${numberOfNodes} nodes for User ID: ${userId}`);
+
+    // 1. Fetch Master Profile & Member
+    const { data: masterProf, error: masterProfError } = await supabaseAdmin
       .from('profiles')
       .select('*')
-      .eq('id', finalTargetUid)
+      .eq('id', userId)
       .single();
 
-    if (masterErr || !masterProfile) throw new Error("INFRASTRUCTURE FAILURE: Target node signature not found.");
+    if (masterProfError || !masterProf) throw new Error("Master profile not found.");
 
-    // Balance Verification
-    const currentBalance = Number(masterProfile.wallet_balance || 0);
+    // Balance check (optional, usually handled by caller, but good for safety)
+    const currentBalance = Number(masterProf.wallet_balance || 0);
     if (currentBalance < amount) {
-      throw new Error(`LIQUIDITY REJECTION: Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
+      throw new Error(`Insufficient balance. Required: ${amount}, Available: ${currentBalance}`);
     }
 
-    // --- INTERNAL ENGINES ---
+    // --- INCOME ENGINE HELPER ---
+    const processIncomes = async (nodeId: string, sponsorId: string, earnedByNodeUid: string) => {
+      if (!sponsorId) return;
 
-    /**
-     * Engine A: Extreme Spillover Search
-     */
-    const findExtremePlacement = async (rootId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> => {
-      let currentId = rootId;
-      while (true) {
-        const { data: child } = await supabaseAdmin
-          .from('profiles')
-          .select('id')
-          .eq('parent_id', currentId)
-          .eq('side', side)
-          .maybeSingle();
-
-        if (!child) return { parentId: currentId, side: side };
-        currentId = child.id;
-      }
-    };
-
-    /**
-     * Engine B: Income Distribution with Master Rollup & Precise Categorization
-     */
-    const processIncomes = async (nodeId: string, sponsorId: string, volume: number) => {
-      // Robust Null Check for Sponsor
-      if (!sponsorId) {
-        console.log(`[INCOME] Node ${nodeId} has no sponsor (SYSTEM ROOT). Skipping income distribution.`);
-        return;
-      }
-
-      // 1. Direct Referral Bonus (5%)
-      const directBonus = volume * 0.05;
+      // Master Account is the owner of the earning node (if it's a sub-node)
+      // We look up the masterId of the sponsor
+      const { data: sponsorMember } = await supabaseAdmin
+        .from('members')
+        .select('master_account_id')
+        .eq('id', sponsorId)
+        .maybeSingle();
       
-      // Credit Sponsor (ALWAYS Rollup to Sponsor's Master Account if sponsor is a sub-node)
-      const { data: sponsorProfile } = await supabaseAdmin.from('profiles').select('id, master_id').eq('id', sponsorId).maybeSingle();
-      if (sponsorProfile) {
-        const walletTargetId = sponsorProfile.master_id || sponsorProfile.id;
-        
-        const { data: walletOwner } = await supabaseAdmin.from('profiles').select('wallet_balance, total_income').eq('id', walletTargetId).single();
-        if (walletOwner) {
-          await supabaseAdmin.from('profiles').update({
-            wallet_balance: Number(walletOwner.wallet_balance) + directBonus,
-            total_income: Number(walletOwner.total_income) + directBonus
-          }).eq('id', walletTargetId);
+      const sponsorMasterId = sponsorMember?.master_account_id || sponsorId;
 
-          // Categorized Transaction
-          await supabaseAdmin.from('transactions').insert({
-            user_id: walletTargetId, uid: walletTargetId, amount: directBonus,
-            type: 'direct_referral', 
-            description: `Direct Referral Dividend from Node Activation: ${nodeId}`, 
-            status: 'completed',
-            created_at: new Date().toISOString()
-          });
-        }
+      // A. Direct Referral (5%)
+      const directBonus = 50 * 0.05; // $2.50
+      await supabaseAdmin.from('incomes').insert({
+        user_id: sponsorMasterId,
+        earned_by_node_id: sponsorId, // Note: The sponsorId earned this referral bonus
+        amount: directBonus,
+        type: 'direct_referral',
+        description: `Direct Referral from node ${earnedByNodeUid}`,
+        status: 'pending'
+      });
+
+      // Update team_collection balance for the earning node
+      const { data: currentTc } = await supabaseAdmin
+        .from('team_collection')
+        .select('balance')
+        .eq('node_id_uuid', sponsorId)
+        .maybeSingle();
+      
+      if (currentTc) {
+        await supabaseAdmin
+          .from('team_collection')
+          .update({ balance: Number(currentTc.balance || 0) + directBonus })
+          .eq('node_id_uuid', sponsorId);
       }
 
-      // 2. Binary Matching PV Flow (10% on Match)
+      // B. Binary Matching (10%)
+      // Flow 50 PV upwards
       let currentId = nodeId;
       while (true) {
-        const { data: member } = await supabaseAdmin.from('members').select('placement_id, position').eq('id', currentId).maybeSingle();
-        if (!member || !member.placement_id) break;
+        const { data: currentMember } = await supabaseAdmin
+          .from('members')
+          .select('placement_id, position')
+          .eq('id', currentId)
+          .maybeSingle();
+        
+        if (!currentMember || !currentMember.placement_id) break;
 
-        const parentId = member.placement_id;
-        const side = member.position;
+        const parentId = currentMember.placement_id;
+        const side = currentMember.position;
 
-        const { data: parentMember } = await supabaseAdmin.from('members').select('*').eq('id', parentId).single();
-        if (!parentMember) break;
+        const { data: parentMember, error: pError } = await supabaseAdmin
+          .from('members')
+          .select('*')
+          .eq('id', parentId)
+          .single();
+
+        if (pError || !parentMember) break;
 
         let leftPV = Number(parentMember.left_pv || 0);
         let rightPV = Number(parentMember.right_pv || 0);
 
-        if (side === 'LEFT') leftPV += volume;
-        else rightPV += volume;
+        if (side === 'LEFT') leftPV += 50;
+        else rightPV += 50;
 
-        // Auto-Matching logic (1:1)
+        // Matching logic
         const match = Math.min(leftPV, rightPV);
-        let matchingCommission = 0;
+        let bonus = 0;
         if (match > 0) {
-          matchingCommission = match * 0.10;
+          bonus = match * 0.10; // 10% match
           leftPV -= match;
           rightPV -= match;
 
-          // Wallet Rollup for Match
-          const { data: parentProfile } = await supabaseAdmin.from('profiles').select('id, master_id').eq('id', parentId).maybeSingle();
-          const pWalletId = parentProfile?.master_id || parentId;
-          
-          const { data: pWallet } = await supabaseAdmin.from('profiles').select('wallet_balance, total_income').eq('id', pWalletId).maybeSingle();
-          if (pWallet) {
-              await supabaseAdmin.from('profiles').update({
-                wallet_balance: Number(pWallet.wallet_balance) + matchingCommission,
-                total_income: Number(pWallet.total_income) + matchingCommission
-              }).eq('id', pWalletId);
+          // Resolve parent's master account
+          const { data: pMemInfo } = await supabaseAdmin
+            .from('members')
+            .select('master_account_id')
+            .eq('id', parentId)
+            .maybeSingle();
+          const pMasterId = pMemInfo?.master_account_id || parentId;
 
-              // Categorized Transaction
-              await supabaseAdmin.from('transactions').insert({
-                user_id: pWalletId, uid: pWalletId, amount: matchingCommission,
-                type: 'binary_matching', 
-                description: `Binary Matching Dividend (Matched ${match} PV)`, 
-                status: 'completed',
-                created_at: new Date().toISOString()
-              });
+          await supabaseAdmin.from('incomes').insert({
+            user_id: pMasterId,
+            earned_by_node_id: parentId,
+            amount: bonus,
+            type: 'binary_matching',
+            description: `Binary matching bonus of 10% on matched PV ${match}`,
+            status: 'pending'
+          });
+
+          // Update team_collection balance for the parent node
+          const { data: pTc } = await supabaseAdmin
+            .from('team_collection')
+            .select('balance')
+            .eq('node_id_uuid', parentId)
+            .maybeSingle();
+          
+          if (pTc) {
+            await supabaseAdmin
+              .from('team_collection')
+              .update({ balance: Number(pTc.balance || 0) + bonus })
+              .eq('node_id_uuid', parentId);
           }
         }
 
-        // Update Member Record
+        // Update parent volume
         await supabaseAdmin.from('members').update({
           left_pv: leftPV,
           right_pv: rightPV,
-          total_earned: Number(parentMember.total_earned || 0) + matchingCommission
+          total_earned: Number(parentMember.total_earned || 0) + bonus
         }).eq('id', parentId);
 
         currentId = parentId;
       }
     };
 
-    // --- EXECUTION PHASE ---
-
-    // 1. Activate Master Node (Node 1)
-    const protocolNodes = [finalTargetUid];
-    const newBalance = currentBalance - amount;
+    // --- MULTI-NODE GENERATION ---
+    const generatedNodeIds = [userId]; // Node 1 at index 0 (if we using 0-based for array storage)
     
-    await supabaseAdmin.from('profiles').update({
-      wallet_balance: newBalance,
-      is_active: true,
-      status: 'active',
-      active_package: amount,
-      activated_at: new Date().toISOString()
-    }).eq('id', finalTargetUid);
+    // 2. Activate Master Node (Node 1)
+    await supabaseAdmin.from('profiles').update({ is_active: true, status: 'active', active_package: amount }).eq('id', userId);
+    await supabaseAdmin.from('members').update({ is_active: true, total_investment: 50 }).eq('id', userId);
 
-    await supabaseAdmin.from('members').update({
-      is_active: true,
-      total_investment: amount
-    }).eq('id', finalTargetUid);
-
-    // Initial Master Collection Entry
-    await supabaseAdmin.from('team_collection').insert({
-        uid: finalTargetUid,
-        node_id: masterProfile.operator_id,
-        name: `${masterProfile.name} (MASTER)`,
+    // Ensure Master Node (Node 1) is in team_collection
+    await supabaseAdmin.from('team_collection').upsert({
+        uid: userId,
+        node_id: masterProf.operator_id,
+        node_id_uuid: userId,
+        name: `${masterProf.name} (MASTER)`,
         balance: 0,
         eligible: true
-    });
+    }, { onConflict: 'node_id_uuid' });
 
-    // Master Node Income Distribution
-    const { data: masterMember } = await supabaseAdmin.from('members').select('sponsor_id').eq('id', finalTargetUid).single();
-    await processIncomes(finalTargetUid, masterMember?.sponsor_id, PV_PER_NODE);
-
-    // 2. Multi-Node Generation (Triangle Build)
-    if (numberOfNodes > 1) {
-        console.log(`[MULTI-NODE] Generating ${numberOfNodes - 1} sub-nodes for ${masterProfile.operator_id}`);
-        
-        for (let i = 1; i < numberOfNodes; i++) {
-            // Find Sponsor (Immediate parent in generated triangle)
-            const parentIdx = Math.floor((i - 1) / 2);
-            const triangleSponsorId = protocolNodes[parentIdx];
-            const triangleSide: 'LEFT' | 'RIGHT' = (i % 2 === 1) ? 'LEFT' : 'RIGHT';
-
-            // Find Physical Placement (Extreme Spillover)
-            const placement = await findExtremePlacement(triangleSponsorId, triangleSide);
-
-            const subOperatorId = `${masterProfile.operator_id}-${i}`;
-            const subEmail = `${subOperatorId.toLowerCase()}@arowin.internal`;
-
-            // Create Sub-node Auth Record
-            const { data: subAuth } = await supabaseAdmin.auth.admin.createUser({
-              email: subEmail,
-              password: 'PROTO_SUB_' + Math.random(),
-              email_confirm: true,
-              user_metadata: { master_id: finalTargetUid, is_node: true }
-            });
-
-            if (subAuth?.user) {
-               const subUid = subAuth.user.id;
-               protocolNodes.push(subUid);
-
-               // Profile
-               await supabaseAdmin.from('profiles').insert({
-                 id: subUid,
-                 master_id: finalTargetUid,
-                 operator_id: subOperatorId,
-                 name: `${masterProfile.name} (ID-${i})`,
-                 email: subEmail,
-                 sponsor_id: triangleSponsorId,
-                 parent_id: placement.parentId,
-                 side: placement.side,
-                 position: placement.side.toLowerCase(),
-                 is_active: true,
-                 status: 'active',
-                 rank: 1
-               });
-
-               // Member
-               await supabaseAdmin.from('members').insert({
-                 id: subUid,
-                 sponsor_id: triangleSponsorId,
-                 placement_id: placement.parentId,
-                 position: placement.side,
-                 is_active: true,
-                 total_investment: 50,
-                 master_account_id: finalTargetUid // Link to master account
-               });
-
-               // Team Collection Entry
-               await supabaseAdmin.from('team_collection').insert({
-                   uid: finalTargetUid, // Link to MASTER profile
-                   node_id: subOperatorId,
-                   name: `${masterProfile.name} (Sub-${i})`,
-                   balance: 0,
-                   eligible: true
-               });
-
-               // Income processing for each node
-               await processIncomes(subUid, triangleSponsorId, PV_PER_NODE);
-            }
-        }
+    // Initial income for Master (Node 1)
+    const { data: masterMember } = await supabaseAdmin.from('members').select('sponsor_id').eq('id', userId).single();
+    if (masterMember?.sponsor_id) {
+        await processIncomes(userId, masterMember.sponsor_id, userId);
     }
 
-    // Ledger Transaction for original purchase
+    // 3. Generate and Place Sub-nodes
+    for (let k = 2; k <= numberOfNodes; k++) {
+        const parentIdxInArray = Math.floor(k / 2) - 1;
+        const parentId = generatedNodeIds[parentIdxInArray];
+        const side: 'LEFT' | 'RIGHT' = (k % 2 === 0) ? 'LEFT' : 'RIGHT';
+
+        const nodeOpId = `${masterProf.operator_id}-${k-1}`;
+        const internalEmail = `${nodeOpId.toLowerCase()}@arowin.internal`;
+
+        // Create Auth
+        const { data: subAuth, error: subAuthError } = await supabaseAdmin.auth.admin.createUser({
+            email: internalEmail,
+            password: `NODE_SECURE_${Math.random().toString(36).slice(-8)}`,
+            email_confirm: true,
+            user_metadata: { master_account_id: userId, operator_id: nodeOpId, is_sub_node: true }
+        });
+
+        if (subAuthError) throw subAuthError;
+        const subUserId = subAuth.user.id;
+        generatedNodeIds.push(subUserId);
+
+        // Profile insert
+        await supabaseAdmin.from('profiles').insert({
+            id: subUserId,
+            operator_id: nodeOpId,
+            name: `${masterProf.name} ID-${k-1}`,
+            email: internalEmail,
+            sponsor_id: parentId,
+            parent_id: parentId,
+            side: side,
+            position: side.toLowerCase(),
+            is_active: true,
+            status: 'active',
+            role: 'user',
+            created_at: new Date().toISOString()
+        });
+
+        // Member insert with master_account_id
+        await supabaseAdmin.from('members').insert({
+            id: subUserId,
+            sponsor_id: parentId,
+            placement_id: parentId,
+            position: side,
+            is_active: true,
+            total_investment: 50,
+            master_account_id: userId,
+            created_at: new Date().toISOString()
+        });
+
+        // Team Collection Sync (if table exists)
+        await supabaseAdmin.from('team_collection').insert({
+            uid: userId,
+            node_id: nodeOpId,
+            node_id_uuid: subUserId,
+            name: `${masterProf.name} ID-${k-1}`,
+            balance: 0,
+            eligible: true
+        });
+
+        // Process income for this individual sub-node
+        await processIncomes(subUserId, parentId, subUserId);
+    }
+
+    // 4. Update Wallet Balance for Master Node (minus total package cost)
+    await supabaseAdmin.from('profiles').update({
+        wallet_balance: currentBalance - amount
+    }).eq('id', userId);
+
+    // Log Global Activation
     await supabaseAdmin.from('transactions').insert({
-      user_id: finalTargetUid, uid: finalTargetUid, amount: -amount,
-      type: 'package_activation',
-      description: `Package Activation: Family Pack (${numberOfNodes} Nodes)`,
-      status: 'completed',
-      created_at: new Date().toISOString()
+        uid: userId,
+        user_id: userId,
+        amount: -amount,
+        type: 'package_activation',
+        description: `Package Activation $${amount} (${numberOfNodes} IDs generated)`,
+        status: 'completed'
     });
 
     return new Response(JSON.stringify({ 
       success: true, 
-      nodes_active: numberOfNodes,
-      new_balance: newBalance
+      message: `Successfully activated package with ${numberOfNodes} nodes.`,
+      nodes: generatedNodeIds
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
-  } catch (error) {
-    console.error(`[ACTIVATE-PACKAGE FATAL]: ${error.message}`);
+  } catch (error: any) {
+    console.error("[ACTIVATE-PACKAGE FATAL]:", error.message);
     return new Response(JSON.stringify({ error: error.message, success: false }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
