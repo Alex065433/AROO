@@ -77,6 +77,7 @@ export const supabaseService = {
 
     // Normalize Operator ID format if it's not an email
     if (!cleanId.includes('@') && !isAdminId) {
+      // Basic formatting to match ARW-XXXXXX
       if (/^\d{6}$/.test(cleanId)) {
         cleanId = `ARW-${cleanId}`;
       } else if (/^ARW\d{6}$/i.test(cleanId)) {
@@ -85,36 +86,43 @@ export const supabaseService = {
         cleanId = `ARW-${cleanId.substring(4).toUpperCase()}`;
       }
 
-      // Resolve email from Operator ID
+      // 1. ATTEMPT TO RESOLVE OPERATOR ID
       try {
         const { data: profile, error } = await this.withTimeout(
           supabase.from("profiles").select("email").ilike("operator_id", cleanId).single(),
-          20000,
-          "Database is waking up. Please wait a moment and try again."
+          15000
         );
-        
-        if (error) {
-          // If it's a real error (not just not found), throw it
-          if (error.code !== 'PGRST116') throw error; 
-          // PGRST116 is "JSON object requested, but no rows were returned"
-        }
         
         if (profile) {
           email = profile.email;
-          console.log(`Resolved Operator ID ${cleanId} to real email: ${email}`);
+          console.log(`Resolved Operator ID ${cleanId} to: ${email}`);
         } else {
-          // Fallback to internal email format if not found in profiles
-          email = `${cleanId.toLowerCase()}@arowin.internal`;
-          console.log(`Resolved Operator ID ${cleanId} to internal email: ${email}`);
+          // Fallback to strict internal format
+          email = `${cleanId.toLowerCase()}@arowintrading.com`;
+          console.log(`Fallback login ID: ${email}`);
+        }
+      } catch (e) {
+        email = `${cleanId.toLowerCase()}@arowintrading.com`;
+      }
+    } else if (cleanId.includes('@') && !isAdminId) {
+      // 2. CHECK IF EMAIL HAS MULTIPLE IDs
+      try {
+        const { data: profiles, error } = await supabase
+          .from("profiles")
+          .select("operator_id")
+          .ilike("real_email", cleanId)
+          .limit(2);
+        
+        if (profiles && profiles.length > 1) {
+          throw new Error("This email is linked to multiple accounts. Please login using your Operator ID instead.");
+        } else if (profiles && profiles.length === 1) {
+          // Resolve to the only account's internal email
+          const operatorId = profiles[0]?.operator_id?.toString() || 'unknown';
+          email = `${operatorId.toLowerCase()}@arowintrading.com`;
         }
       } catch (e: any) {
-        // If it's a timeout, propagate it
-        if (e.message?.includes('waking up') || e.message?.includes('timed out')) {
-          throw e;
-        }
-        // Otherwise fallback to internal format
-        email = `${cleanId.toLowerCase()}@arowin.internal`;
-        console.log(`Resolved Operator ID ${cleanId} to internal email (fallback): ${email}`);
+        if (e.message?.includes('Operator ID')) throw e;
+        // Proceed with original email for single-account or legacy users
       }
     }
 
@@ -164,7 +172,8 @@ export const supabaseService = {
                   // Multiple profiles found for this email, tell user to use Operator ID
                   throw new Error(`Multiple accounts found for ${cleanId}. Please use your Operator ID (e.g. ARW-XXXXXX) to log in.`);
                 }
-                internalEmailsToTry.push(`${profiles[0].operator_id.toLowerCase()}@arowin.internal`);
+                const opId = profiles[0]?.operator_id?.toString() || 'unknown';
+                internalEmailsToTry.push(`${opId.toLowerCase()}@arowin.internal`);
               } else {
                 // No profile found for this email
                 console.warn(`No profile found for email: ${cleanId}`);
@@ -284,6 +293,21 @@ export const supabaseService = {
           throw new Error("Your account has been blocked. Please contact system administration.");
         }
 
+        // REQUIREMENT 4: Fetch wallet balances from the new user_wallets table
+        const { data: walletData } = await supabase
+          .from('user_wallets')
+          .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
+          .eq('user_id', userId)
+          .maybeSingle();
+        
+        if (walletData) {
+          profile.master_vault = walletData.master_vault || 0;
+          profile.referral_box = walletData.referral_box || 0;
+          profile.matching_box = walletData.matching_box || 0;
+          profile.network_yield_box = walletData.network_yield_box || 0;
+          profile.rank_bonus_box = walletData.rank_bonus_box || 0;
+        }
+
         // Force admin role for Administrative Protocol
         if (profile.email === 'admin@arowin.internal') {
           profile.role = 'admin';
@@ -319,7 +343,7 @@ export const supabaseService = {
     }
 
     // If we get here, all retries failed or we hit a non-timeout error
-    console.warn("Background profile fetch failed, using cache if available:", lastError.message);
+    console.warn("Background profile fetch failed, using cache if available:", lastError?.message || 'Unknown error');
     throw lastError;
   },
 
@@ -409,39 +433,26 @@ export const supabaseService = {
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
     try {
-      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/register-node`;
-      
-      const response = await fetch(functionUrl, {
+      const result = await apiFetch('register-node', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
         body: JSON.stringify({
           email,
           password,
           sponsor_id: sponsorId,
           position: side === 'AUTO' ? null : side,
-          metadata: {
-            name: additionalData.name,
-            mobile: additionalData.mobile,
-            withdrawalPassword: additionalData.withdrawalPassword,
-            twoFactorPin: additionalData.twoFactorPin
-          },
-          placement_id: additionalData.parentId
+          name: additionalData.name,
+          mobile: additionalData.mobile,
+          withdrawalPassword: additionalData.withdrawalPassword,
+          twoFactorPin: additionalData.twoFactorPin,
+          parentId: additionalData.parentId
         })
       });
 
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Registration failed. Internal Server Protocol Error.');
+      if (!result || !result.success) {
+        throw new Error(result?.error || 'Registration failed. Internal Server Protocol Error.');
       }
 
-      return {
-        ...result.user,
-        uid: result.user.id
-      };
+      return result;
     } catch (error: any) {
       console.error('Registration core failure:', error);
       throw error;
@@ -450,34 +461,18 @@ export const supabaseService = {
 
   async activatePackage(packageId: string, amount: number, targetUserId?: string) {
     try {
-      // 1. Get current session for the JWT token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        throw new Error('Authentication REQUIRED: No active session found. Please log in again.');
-      }
-
-      const token = session.access_token;
-      const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/activate-package`;
-
-      // 2. Transmit Secure Request to Edge Function
-      const response = await fetch(functionUrl, {
+      // Use apiFetch for unified CORS and header handling
+      const result = await apiFetch('activate-package', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({
           packageId,
           amount,
-          targetUserId // Optional, only if admin
+          targetUserId 
         })
       });
 
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Server Protocol Error during Node Activation.');
+      if (!result || !result.success) {
+        throw new Error(result?.error || 'Server Protocol Error during Node Activation.');
       }
 
       return result;
@@ -611,7 +606,7 @@ export const supabaseService = {
             sponsor_id: sponsorId, // Sponsor remains same as master
             parent_id: slot.parentId,
             side: slot.side,
-            position: slot.side.toLowerCase(),
+            position: (slot?.side || 'LEFT').toString().toLowerCase(),
             status: 'inactive',
             is_active: false,
             package_amount: 0,
@@ -1357,30 +1352,56 @@ export const supabaseService = {
       console.warn('RPC claim_wallet failed, falling back to client-side claim:', error);
       // Client-side fallback
       const profile = await this.getUserProfile(user.id);
+      const userWallets = await this.getUserWallets(user.id);
       if (!profile) throw new Error('User not found');
       
-      const wallets = profile.wallets || {};
-      const wallet = wallets[walletKey];
-      if (!wallet || !wallet.balance || wallet.balance <= 0) {
+      let claimAmount = 0;
+      if (walletKey === 'referral') {
+          claimAmount = Number(userWallets?.referral_box || 0);
+      } else if (walletKey === 'yield') {
+          claimAmount = Number(userWallets?.network_yield_box || 0);
+      } else {
+          const wallets = profile.wallets || {};
+          claimAmount = Number(wallets[walletKey]?.balance || 0);
+      }
+
+      if (claimAmount <= 0) {
         throw new Error('No balance to claim');
       }
       
-      const claimAmount = Number(wallet.balance);
+      const newMasterVault = Number(userWallets?.master_vault || 0) + claimAmount;
+      const newWalletBalance = Number(profile.wallet_balance || 0) + claimAmount;
+      
+      // Update Table Data
+      if (walletKey === 'referral') {
+          await supabase.from('user_wallets').update({ referral_box: 0, master_vault: newMasterVault }).eq('id', user.id);
+      } else if (walletKey === 'yield') {
+          await supabase.from('user_wallets').update({ network_yield_box: 0, master_vault: newMasterVault }).eq('id', user.id);
+      } else {
+          await supabase.from('user_wallets').update({ master_vault: newMasterVault }).eq('id', user.id);
+      }
+
+      // Update JSONB Legacy Data
+      const wallets = profile.wallets || {};
       const newWallets = { ...wallets };
-      newWallets[walletKey] = { ...wallet, balance: 0 };
+      newWallets[walletKey] = { ...(wallets[walletKey] || {}), balance: 0 };
       newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
       newWallets.master.balance = Number(newWallets.master.balance) + claimAmount;
       
-      const newWalletBalance = Number(profile.wallet_balance || 0) + claimAmount;
-      
-      const { error: updateError } = await supabase.from('profiles').update({
+      await supabase.from('profiles').update({
         wallets: newWallets,
         wallet_balance: newWalletBalance
       }).eq('id', user.id);
       
-      if (updateError) throw updateError;
-      
-      // Log transaction
+      // Log transaction to BOTH tables
+      await supabase.from('transactions').insert({
+        user_id: user.id,
+        amount: claimAmount,
+        type: 'claim',
+        description: `Claimed ${walletKey} to Master Vault`,
+        status: 'COMPLETED'
+      });
+
       await supabase.from('payments').insert({
         uid: user.id,
         amount: claimAmount,
@@ -1414,31 +1435,53 @@ export const supabaseService = {
     return true;
   },
 
+  async getIncomeSummary(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('income_ledger')
+        .select('type, amount')
+        .eq('user_id', userId);
+      
+      if (error) throw error;
+      
+      return (data || []).reduce((acc: any, curr: any) => {
+        const typeMap: Record<string, string> = {
+          'DIRECT_REFERRAL': 'referral',
+          'BINARY_MATCHING': 'matching',
+          'DAILY_ROI': 'yield'
+        };
+        const type = typeMap[curr.type] || (curr.type || '').toString().toLowerCase();
+        acc[type] = (Number(acc[type]) || 0) + Number(curr.amount);
+        acc.total = (Number(acc.total) || 0) + Number(curr.amount);
+        return acc;
+      }, { referral: 0, matching: 0, yield: 0, rank: 0, rewards: 0, total: 0 });
+    } catch (err) {
+      console.error('Error in getIncomeSummary:', err);
+      return { referral: 0, matching: 0, yield: 0, rank: 0, rewards: 0, total: 0 };
+    }
+  },
+
   // Team Collection
   async getTeamCollection(uid: string) {
     try {
-      const { data: team, error } = await supabase
-        .from('team_collection')
-        .select('*')
-        .eq('uid', uid)
-        .order('created_at', { ascending: true });
+      // 1. Fetch from profiles (STRICT VIRTUAL FILTER)
+      const { data: virtualNodes, error: tcErr } = await supabase
+        .from('profiles')
+        .select('id, operator_id, active_package, created_at, status')
+        .eq('is_virtual', true)
+        .eq('sponsor_id', uid);
 
-      if (error || !team) return [];
-      
-      // Get user profile to show package info
-      const { data: profile } = await supabase.from('profiles').select('active_package').eq('id', uid).single();
-      
-      return team.map((p: any) => ({
-        id: p.id,
-        node_id: p.node_id,
-        name: p.name,
-        package_name: profile?.active_package ? `Package $${profile.active_package}` : 'Pending',
-        package_amount: profile?.active_package || 0,
-        daily_yield: 0,
-        balance: p.balance || 0,
-        last_collection: p.created_at,
-        status: 'active',
-        created_at: p.created_at,
+      if (tcErr) throw tcErr;
+
+      return (virtualNodes || []).map((vn: any) => ({
+        id: vn.id,
+        node_id: vn.operator_id,
+        name: `Virtual Node`,
+        package_name: `Internal Stake`,
+        package_amount: vn.active_package || 50,
+        balance: 0,
+        status: vn.status || 'active',
+        created_at: vn.created_at
       }));
     } catch (err) {
       console.error('Error in getTeamCollection:', err);
@@ -1503,102 +1546,11 @@ export const supabaseService = {
     }
   },
 
-  async collectFromNodes(uid: string, nodeIds: string[]) {
+  async collectFromNodes(uid: string, _nodeIds: string[]) {
     try {
-      // 0. Trigger backend income generation before collection (Requirement 3)
-      console.log('Triggering backend income generation before collection...');
-      try {
-        const startTime = new Date().toISOString();
-        await this.processDailyYieldTS();
-        await this.processAllMatchingTS();
-        
-        // Verify matching income generation (Requirement)
-        // Note: This might throw if no matching was generated, as per user requirement "do not proceed"
-        await this.verifyMatchingGenerated(startTime);
-      } catch (rpcErr) {
-        console.warn('Backend income generation verification failed:', rpcErr);
-        // If it's the specific "matching not generated" error, we might want to stop
-        if (rpcErr.message === 'matching not generated') {
-          throw rpcErr;
-        }
-      }
-
-      // 1. Fetch nodes and user profile
-      const [profile, { data: teamNodes }] = await Promise.all([
-        this.getUserProfile(uid),
-        supabase.from('team_collection').select('*').in('node_id', nodeIds).eq('uid', uid)
-      ]);
-
-      if (!profile || !teamNodes || teamNodes.length === 0) return 0;
-
-      // 2. Fetch sub-profiles
-      const { data: subProfiles } = await supabase
-        .from('profiles')
-        .select('id, operator_id, wallets, referral_income, matching_income, yield_income')
-        .in('operator_id', nodeIds);
-
-      const subProfilesMap = new Map();
-      if (subProfiles) {
-        subProfiles.forEach(p => subProfilesMap.set(p.operator_id, p));
-      }
-
-      const packageData = PACKAGES.find(p => p.price === profile.active_package);
-      const totalWeeklyEarning = packageData?.weeklyEarning || 0;
-      const totalNodesInPackage = packageData?.nodes || 1;
-      const earningPerNodePerSecond = (totalWeeklyEarning / totalNodesInPackage) / (7 * 24 * 60 * 60);
-
-      let totalCollected = 0;
-      const now = new Date();
-
-      for (const node of teamNodes) {
-        const subProfile = subProfilesMap.get(node.node_id);
-        
-        // Calculate yield
-        const lastUpdate = new Date(node.created_at);
-        const secondsElapsed = Math.max(0, (now.getTime() - lastUpdate.getTime()) / 1000);
-        const accruedYield = secondsElapsed * earningPerNodePerSecond;
-        
-        // Get sub-profile incomes from wallets (Requirement 5)
-        const wallets = subProfile?.wallets || {};
-        const referralIncome = Number(wallets.referral?.balance) || 0;
-        const matchingIncome = Number(wallets.matching?.balance) || 0;
-        const yieldIncome = Number(wallets.yield?.balance) || 0;
-        const rankBonus = Number(wallets.rankBonus?.balance) || 0;
-        const rewards = Number(wallets.rewards?.balance) || 0;
-        const manualBalance = Number(node.balance) || 0;
-
-        const nodeTotal = accruedYield + referralIncome + matchingIncome + yieldIncome + rankBonus + rewards + manualBalance;
-        totalCollected += nodeTotal;
-
-        // Reset sub-profile wallets in profiles table (Requirement 5)
-        if (subProfile) {
-          const newWallets = { ...wallets };
-          newWallets.referral = { balance: 0, currency: 'USDT' };
-          newWallets.matching = { balance: 0, currency: 'USDT' };
-          newWallets.yield = { balance: 0, currency: 'USDT' };
-          newWallets.rankBonus = { balance: 0, currency: 'USDT' };
-          newWallets.rewards = { balance: 0, currency: 'USDT' };
-          
-          await supabase
-            .from('profiles')
-            .update({ wallets: newWallets })
-            .eq('id', subProfile.id);
-        }
-
-        // Reset team_collection node and update timestamp
-        await supabase
-          .from('team_collection')
-          .update({ balance: 0, created_at: now.toISOString() })
-          .eq('node_id', node.node_id);
-      }
-
-      if (totalCollected > 0) {
-        // 3. Add to main user's master wallet
-        // We use 'team_collection_claim' which should go directly to master wallet balance
-        await this.addIncome(uid, totalCollected, 'team_collection_claim');
-      }
-
-      return totalCollected;
+      const { data, error } = await supabase.rpc('claim_all_yield', { p_user_id: uid });
+      if (error) throw error;
+      return Number(data) || 0;
     } catch (err) {
       console.error('Error in collectFromNodes:', err);
       throw err;
@@ -1910,11 +1862,41 @@ export const supabaseService = {
     }
   },
 
-  // MLM Logic
+  async getUserWallets(id: string) {
+    try {
+      const { data, error } = await supabase
+        .from('user_wallets')
+        .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
+        .eq('user_id', id)
+        .maybeSingle();
+        
+      if (error) throw error;
+
+      if (!data) {
+        // If row doesn't exist, create it
+        const { data: newData, error: insertError } = await supabase
+          .from('user_wallets')
+          .insert({ 
+            user_id: id, 
+            master_vault: 0, 
+            referral_box: 0,
+            matching_box: 0,
+            network_yield_box: 0,
+            rank_bonus_box: 0 
+          })
+          .select()
+          .single();
+        if (insertError) throw insertError;
+        return newData;
+      }
+      return data;
+    } catch (err) {
+      console.error('Error fetching/creating wallets:', err);
+      return null;
+    }
+  },
   async findBinaryParent(startNodeId: string, side: 'LEFT' | 'RIGHT'): Promise<{ parentId: string, side: 'LEFT' | 'RIGHT' }> {
     try {
-      // EXTREME PLACEMENT LOGIC (as requested by user "LEFT REFFERAL IS GOING TO RIGHT")
-      // This ensures that if they choose LEFT, they always stay on the LEFT branch of the subtree.
       let currentId = startNodeId;
       let depth = 0;
       const maxDepth = 1000;
@@ -1923,7 +1905,7 @@ export const supabaseService = {
         const { data: child, error } = await supabase.from('profiles')
           .select('id')
           .eq('parent_id', currentId)
-          .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
+          .or(`side.eq.${side},position.eq.${(side || '').toString().toLowerCase()}`)
           .limit(1)
           .maybeSingle();
 
@@ -1949,7 +1931,7 @@ export const supabaseService = {
       const { data: directChild } = await supabase.from('profiles')
         .select('id')
         .eq('parent_id', startNodeId)
-        .or(`side.eq.${side},position.eq.${side.toLowerCase()}`)
+        .or(`side.eq.${side},position.eq.${(side || '').toString().toLowerCase()}`)
         .limit(1)
         .maybeSingle();
 
@@ -2059,15 +2041,6 @@ export const supabaseService = {
       shouldUpdateTotalIncome = false; // Already counted when distributed to nodes or earned by sub-nodes
     }
 
-    // Standard Wallet Update
-    const newWallets = { ...profile.wallets };
-    
-    // Initialize wallets if missing
-    newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
-    if (walletKey !== 'master') {
-      newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
-    }
-
     let amountToMaster = 0;
     let amountToSpecific = 0;
 
@@ -2075,6 +2048,33 @@ export const supabaseService = {
       amountToMaster = payableAmount;
     } else {
       amountToSpecific = payableAmount;
+    }
+
+    // Update user_wallets table (NEW SYSTEM)
+    const walletUpdate: any = {};
+    if (walletKey === 'master') walletUpdate.master_vault = (Number(profile.wallet_balance) || 0) + amountToMaster;
+    else if (walletKey === 'referral') walletUpdate.referral_box = (Number(profile.referral_box) || 0) + amountToSpecific;
+    else if (walletKey === 'matching') walletUpdate.matching_box = (Number(profile.matching_box) || 0) + amountToSpecific;
+    else if (walletKey === 'yield') walletUpdate.network_yield_box = (Number(profile.network_yield_box) || 0) + amountToSpecific;
+    else if (walletKey === 'rankBonus') walletUpdate.rank_bonus_box = (Number(profile.rank_bonus_box) || 0) + amountToSpecific;
+
+    try {
+      await this.systemQuery('user_wallets', 'upsert', { 
+        user_id: uid, 
+        ...walletUpdate,
+        last_updated: new Date().toISOString()
+      }, { user_id: uid });
+    } catch (err) {
+       console.error('Failed to update user_wallets:', err);
+    }
+
+    // Standard Wallet Update (Maintain JSON for backward compatibility)
+    const newWallets = { ...profile.wallets };
+    
+    // Initialize wallets if missing
+    newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
+    if (walletKey !== 'master') {
+      newWallets[walletKey] = newWallets[walletKey] || { balance: 0, currency: 'USDT' };
     }
 
     if (amountToMaster > 0) {
@@ -2140,126 +2140,89 @@ export const supabaseService = {
   },
 
   async getBinaryTree(rootUid: string) {
-    // Check if rootUid is a UUID or an operator ID
+    // 1. Resolve Root ID to UUID
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rootUid);
     let rootId = rootUid;
-    
     if (!isUuid) {
-      const { data: rootProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('operator_id', rootUid)
-        .single();
-      if (rootProfile) rootId = rootProfile.id;
+      const { data } = await supabase.from('profiles').select('id').eq('operator_id', rootUid).single();
+      if (data) rootId = data.id;
       else return {};
     }
-    
-    // Fetch the entire downline in one recursive query
-    const { data: downline, error } = await supabase.rpc('get_binary_downline', { root_id: rootId });
-    
-    let finalDownline: any[] = [];
 
-    if (error || !downline || downline.length === 0) {
-      console.warn('RPC get_binary_downline failed or returned empty, falling back to recursive JS fetch:', error);
-      
-      // Recursive JS Fallback
-      const fetchDownline = async (parentId: string, currentDepth: number = 0): Promise<any[]> => {
-        if (currentDepth > 10) return []; // Limit depth for safety
-        
-        const { data: children, error: childError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('parent_id', parentId);
-          
-        if (childError || !children) return [];
-        
-        let results = [...children];
-        for (const child of children) {
-          const descendants = await fetchDownline(child.id, currentDepth + 1);
-          results = [...results, ...descendants];
-        }
-        return results;
-      };
+    // 2. Fetch from members table (STRICT PLACEMENT TREE)
+    const { data: treeNodes, error } = await supabase
+      .from('members')
+      .select(`
+        id,
+        sponsor_id,
+        placement_id,
+        position,
+        left_points:left_pv,
+        right_points:right_pv,
+        profiles:id (
+          operator_id,
+          name,
+          email,
+          status,
+          created_at,
+          active_package,
+          rank_name,
+          left_business,
+          right_business,
+          is_virtual
+        ),
+        sponsor:sponsor_id (
+          operator_id
+        )
+      `)
+      .eq('profiles.is_virtual', false);
 
-      const { data: rootNode } = await supabase.from('profiles').select('*').eq('id', rootId).single();
-      if (rootNode) {
-        const descendants = await fetchDownline(rootId);
-        finalDownline = [rootNode, ...descendants];
-      } else {
-        return {};
-      }
-    } else {
-      finalDownline = downline;
-    }
+    if (error || !treeNodes) return {};
 
     const tree: Record<string, any> = {};
-    
-    // Map nodes by parent ID and side for efficient binary tree construction
-    const nodesByParent = new Map<string, Record<string, any>>();
-    finalDownline.forEach((p: any) => {
-      if (p.parent_id) {
-        if (!nodesByParent.has(p.parent_id)) {
-          nodesByParent.set(p.parent_id, {});
-        }
-        const parentChildren = nodesByParent.get(p.parent_id)!;
-        const side = (p.side || '').trim().toUpperCase();
-        
-        if (side === 'LEFT' || side === 'RIGHT') {
-          if (!parentChildren[side]) {
-            parentChildren[side] = p;
-          }
-        }
+    const nodesByPlacement = new Map<string, any[]>();
+    treeNodes.forEach(node => {
+      if (node.placement_id) {
+        const existing = nodesByPlacement.get(node.placement_id) || [];
+        nodesByPlacement.set(node.placement_id, [...existing, node]);
       }
     });
 
-    const rootProfile = finalDownline.find((p: any) => p.id === rootId);
-    if (!rootProfile) return {};
+    const rootNode = treeNodes.find(n => n.id === rootId);
+    if (!rootNode) return {};
 
     const visited = new Set<string>();
-    const MAX_DEPTH = 100;
-
-    const buildNode = (node: any, path: string, depth: number = 0) => {
-      if (visited.has(node.id) || depth > MAX_DEPTH) return;
+    const processNode = (node: any, path: string) => {
+      if (visited.has(node.id)) return;
       visited.add(node.id);
 
-      const leftCount = parseInt(node.left_count || node.team_size?.left || '0');
-      const rightCount = parseInt(node.right_count || node.team_size?.right || '0');
+      const p = node.profiles || {};
+      const s = node.sponsor || {};
       
       tree[path] = {
-        id: node.operator_id,
-        name: node.name || node.operator_id,
-        rank: node.rank_name || 'Partner',
-        status: node.status === 'active' ? 'Active' : 'Pending',
-        joinDate: node.created_at?.split('T')[0] || 'N/A',
-        totalTeam: leftCount + rightCount,
-        team_size: { left: leftCount, right: rightCount },
-        leftBusiness: (Number(node.left_business) || 0).toFixed(2),
-        rightBusiness: (Number(node.right_business) || 0).toFixed(2),
-        parentId: node.parent_id,
-        sponsorId: node.sponsor_id,
-        email: node.email,
-        side: node.side || 'ROOT',
+        id: p.operator_id || 'ARW-000000',
+        name: p.name || 'Unknown',
+        rank: p.rank_name || 'Partner',
+        status: p.status === 'active' ? 'Active' : 'Pending',
+        joinDate: p.created_at?.split('T')[0] || 'N/A',
+        team_size: { left: node.left_points || 0, right: node.right_points || 0 },
+        leftBusiness: (Number(p.left_business) || 0).toFixed(2),
+        rightBusiness: (Number(p.right_business) || 0).toFixed(2),
+        side: node.position || 'ROOT',
         uid: node.id,
-        nodeCount: 0 // Removed team_collection node count
+        sponsorId: s.operator_id || 'N/A',
+        email: p.email || 'N/A'
       };
 
-      // Recursively process children
-      const children = nodesByParent.get(node.id);
-      if (children) {
-        if (children.LEFT) buildNode(children.LEFT, `${path}-left`, depth + 1);
-        if (children.RIGHT) buildNode(children.RIGHT, `${path}-right`, depth + 1);
-      }
+      const children = nodesByPlacement.get(node.id) || [];
+      const leftChild = children.find(c => c.position === 'LEFT');
+      const rightChild = children.find(c => c.position === 'RIGHT');
+
+      if (leftChild) processNode(leftChild, `${path}-left`);
+      if (rightChild) processNode(rightChild, `${path}-right`);
     };
 
-    buildNode(rootProfile, 'root');
-
-    // Add any "orphaned" nodes that were returned by the RPC but not connected in the tree
-    finalDownline.forEach((node: any) => {
-      if (!visited.has(node.id) && node.id !== rootId) {
-        buildNode(node, `orphan-${node.id}`);
-      }
-    });
-
+    processNode(rootNode, 'root');
     return tree;
   },
 
@@ -2279,7 +2242,8 @@ export const supabaseService = {
 
     const nodes: Record<string, any> = {};
     children?.forEach(child => {
-      const childPath = `${parentPath}-${(child.side || 'LEFT').toLowerCase()}`;
+      const sideSuffix = (child?.side || 'LEFT').toString().toLowerCase();
+      const childPath = `${parentPath}-${sideSuffix}`;
       nodes[childPath] = {
         id: child.operator_id,
         name: child.name,
@@ -2417,7 +2381,7 @@ export const supabaseService = {
       .or(`uid.eq.${uid},user_id.eq.${uid}`)
       .order('created_at', { ascending: false });
     
-    // 2. Fetch from payments as well to ensure we have everything
+    // 2. Fetch from payments
     const { data: payments, error: pError } = await supabase
       .from('payments')
       .select('*')
@@ -2425,13 +2389,29 @@ export const supabaseService = {
       .in('type', ['referral_bonus', 'matching_bonus', 'matching_income', 'rank_bonus', 'rank_reward', 'reward_income', 'team_collection', 'incentive_accrual', 'claim', 'withdrawal', 'deposit', 'package_activation'])
       .order('created_at', { ascending: false });
 
-    // 3. Combine and deduplicate if necessary, or just return the most complete set
+    // 3. Fetch from income_ledger - CRITICAL for "Ledger" reflection
+    const { data: ledgerEntries, error: lError } = await supabase
+      .from('income_ledger')
+      .select('*')
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false });
+
+    // 4. Combine and deduplicate
     const combined = [];
     if (!tError && transactions) {
       combined.push(...transactions);
     }
     if (!pError && payments) {
       combined.push(...payments);
+    }
+    if (!lError && ledgerEntries) {
+      // Map ledger entries to transaction-like format if necessary
+      const mappedLedger = ledgerEntries.map(l => ({
+        ...l,
+        user_id: l.user_id,
+        // Ensure amount is positive for income ledger normally, but we keep it as is
+      }));
+      combined.push(...mappedLedger);
     }
 
     // Sort combined by created_at descending

@@ -51,7 +51,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       setParentId(parentParam);
       localStorage.setItem('arowin_parent', parentParam);
     }
-    if (sideParam && (sideParam.toLowerCase() === 'left' || sideParam.toLowerCase() === 'right')) {
+    if (sideParam && (sideParam.toString().toLowerCase() === 'left' || sideParam.toString().toLowerCase() === 'right')) {
       const normalizedSide = sideParam.toUpperCase() as 'LEFT' | 'RIGHT';
       setSide(normalizedSide);
       localStorage.setItem('arowin_side', normalizedSide.toLowerCase());
@@ -60,7 +60,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
   useEffect(() => {
     const fetchSponsor = async () => {
-      if (sponsorId.length >= 6) {
+      if (sponsorId && sponsorId.length >= 6) {
         const sponsor = await supabaseService.findUserByOperatorId(sponsorId);
         if (sponsor) {
           setSponsorName(sponsor.name);
@@ -90,8 +90,37 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // 1. STRICT FRONTEND VALIDATION
+    if (!email?.trim()) {
+      setError('Electronic Mail is required');
+      return;
+    }
+    if (!name?.trim()) {
+      setError('Full Legal Name is required');
+      return;
+    }
+    if (!password || password.length < 6) {
+      setError('Security Key must be at least 6 characters');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match');
+      return;
+    }
+    if (!sponsorId?.trim()) {
+      setError('Sponsor Protocol ID is required');
+      return;
+    }
+    if (!side) {
+      setError('Please select a placement side (LEFT or RIGHT)');
+      return;
+    }
+    if (!withdrawalPassword?.trim()) {
+      setError('Withdrawal Password is required');
+      return;
+    }
+    if (!twoFactorPin || twoFactorPin.length !== 6) {
+      setError('Setup a 6-digit 2FA PIN');
       return;
     }
 
@@ -99,42 +128,60 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     setError(null);
 
     try {
-      // Direct call to registration service (now powered by secure Edge Function)
-      const user = await supabaseService.register(
-        email,
+      // 2. SAFE STRING TRANSFORMATIONS
+      const cleanEmail = email?.trim()?.toLowerCase() || '';
+      const cleanSponsorId = sponsorId?.trim()?.toUpperCase() || '';
+      const cleanSide = side || 'AUTO';
+
+      // Call "dumb" service layer
+      const res = await supabaseService.register(
+        cleanEmail,
         password,
-        sponsorId, // Service handles resolution of IDs
-        side || 'AUTO',
+        cleanSponsorId,
+        cleanSide,
         {
-          name: name || 'New Operator',
-          mobile: mobile || '',
-          withdrawalPassword: withdrawalPassword,
-          twoFactorPin: twoFactorPin,
-          parentId: parentId // Pass directly
+          name: name?.trim() || 'New Operator',
+          mobile: mobile?.trim() || '',
+          withdrawalPassword: withdrawalPassword?.trim() || '',
+          twoFactorPin: twoFactorPin?.trim() || '',
+          parentId: parentId 
         }
       );
 
+      // 3. SAFE ID EXTRACTION (Multi-format payload support)
+      const userId = res?.userId || res?.id || res?.user?.id;
+      
+      if (!userId) {
+        throw new Error('Registry failed: System could not generate a secure unique identifier.');
+      }
+
+      const operatorId = (res?.operator_id || 'ARW-NEW').toString();
+
       // Auto-Login after registration
+      const authEmail = res?.internal_email || `${(operatorId || 'unknown').toString().toLowerCase()}@arowin.internal`;
+      
       const { error: loginError } = await supabase.auth.signInWithPassword({
-        email: user.internal_email || `${user.operator_id.toLowerCase()}@arowin.internal`,
+        email: authEmail,
         password: password
       });
 
       if (loginError) {
-        console.warn('Registration successful but auto-login failed. Redirecting to manual login.');
-        setTimeout(() => navigate('/login'), 3000);
+        console.warn('Registration successful but auto-login failed.');
       }
 
-      setRegisteredUser(user);
+      setRegisteredUser({
+        id: userId,
+        operator_id: operatorId,
+        name: name?.trim() || 'New Operator'
+      });
+      
       setIsSubmitting(false);
       setIsSuccess(true);
       
-      // Clear stored referral params
       localStorage.removeItem('arowin_ref');
       localStorage.removeItem('arowin_parent');
       localStorage.removeItem('arowin_side');
 
-      // 5. Redirect
       setTimeout(() => {
         onLogin();
         navigate('/dashboard');
@@ -142,7 +189,7 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
     } catch (err: any) {
       console.error('Registration failed:', err);
-      setError(err.message || 'Registration failed. Please check your data and try again.');
+      setError(err.message || 'Registration failed. Please check your network connection.');
       setIsSubmitting(false);
     }
   };

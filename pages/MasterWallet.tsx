@@ -55,13 +55,13 @@ const MasterWallet: React.FC = () => {
     if (userProfile?.id) {
       fetchTransactions();
       
-      // Update wallets based on profile
-      const masterBalance = userProfile.wallet_balance ?? userProfile.deposit_wallet ?? (userProfile.wallets?.master?.balance || 0);
-      const referralBalance = userProfile.wallets?.referral?.balance || 0;
-      const matchingBalance = userProfile.wallets?.matching?.balance || 0;
-      const rankBalance = userProfile.wallets?.rankBonus?.balance || 0;
-      const rewardsBalance = userProfile.wallets?.rewards?.balance || 0;
-      const yieldBalance = userProfile.wallets?.yield?.balance || 0;
+      // Update wallets based on profile (centralized logic)
+      const masterBalance = userProfile.master_vault ?? userProfile.wallet_balance ?? (userProfile.wallets?.master?.balance || 0);
+      const referralBalance = userProfile.referral_box ?? (userProfile.wallets?.referral?.balance || 0);
+      const matchingBalance = userProfile.matching_box ?? (userProfile.wallets?.matching?.balance || 0);
+      const yieldBalance = userProfile.network_yield_box ?? (userProfile.wallets?.yield?.balance || 0);
+      const rankBalance = userProfile.rank_bonus_box ?? (userProfile.wallets?.rankBonus?.balance || 0);
+      const rewardsBalance = userProfile.rewards_box ?? (userProfile.wallets?.rewards?.balance || 0);
       
       setUserWallets({ 
         ...MOCK_USER.wallets, 
@@ -703,7 +703,7 @@ const MasterWallet: React.FC = () => {
                         </div>
                         <div>
                           <p className="text-sm font-bold text-white group-hover:text-orange-500 transition-colors">
-                            {tx.order_description || tx.description || tx.type?.replace(/_/g, ' ').toUpperCase() || 'Inbound Deposit'}
+                            {tx.order_description || tx.description || (tx.type || '').toString().replace(/_/g, ' ').toUpperCase() || 'Inbound Deposit'}
                           </p>
                           <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest mt-0.5">
                             {tx.created_at ? new Date(tx.created_at).toLocaleString() : 'Recent'}

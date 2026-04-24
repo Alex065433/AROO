@@ -5,7 +5,7 @@ import {
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
   DollarSign, Copy, Check, ChevronDown, HelpCircle, 
   User, Scan, ArrowLeft, Zap, BellRing, Megaphone, ShieldCheck, AlertCircle,
-  QrCode, Search, ShieldAlert, Package
+  QrCode, Search, ShieldAlert, Package, History, ArrowUpRight, ArrowDownLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MOCK_USER, RANKS, PACKAGES, RANK_NAMES } from '../constants';
@@ -114,6 +114,7 @@ const Dashboard: React.FC = () => {
   const [adminFundAmount, setAdminFundAmount] = useState('');
   const [adminFoundUser, setAdminFoundUser] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [transactions, setTransactions] = useState<any[]>([]);
 
   const handleAdminSearch = async () => {
     if (!adminSearchId) return;
@@ -178,24 +179,28 @@ const Dashboard: React.FC = () => {
 
       const userId = user.id;
 
-      // 2. Fetch profile and transactions in parallel
-      const [profileResponse, transactionsData] = await Promise.all([
+      // 2. Fetch profile, income summary, user wallets, and transactions in parallel
+      const [profileResponse, incomeSummary, userWalletsData, transactionsData] = await Promise.all([
         supabaseService.getUserProfile(userId),
+        supabaseService.getIncomeSummary(userId),
+        supabaseService.getUserWallets(userId),
         supabaseService.getTransactions(userId)
       ]);
 
       // 3. Handle profile data
       if (profileResponse) {
         const profile = profileResponse as any;
-        console.log('profileResponse:', profile);
         setUserData(profile);
 
-        const masterBalance = Number(profile.wallets?.master?.balance ?? profile.wallet_balance ?? profile.deposit_wallet ?? 0);
-        const referralBalance = Number(profile.wallets?.referral?.balance || 0);
-        const matchingBalance = Number(profile.wallets?.matching?.balance || 0);
-        const rankBalance = Number(profile.wallets?.rankBonus?.balance || 0);
-        const incentiveBalance = Number(profile.wallets?.rewards?.balance || 0);
-        const yieldBalance = Number(profile.wallets?.yield?.balance || 0);
+        // Fetch from user_wallets explicitly as per new architecture
+        const masterBalance = Number(userWalletsData?.master_vault ?? profile.wallets?.master?.balance ?? 0);
+        
+        // Use income summary for specific boxes to ensure DB consistency with ledger
+        const referralBalance = Number(incomeSummary?.referral || userWalletsData?.referral_box || 0);
+        const yieldBalance = Number(incomeSummary?.yield || userWalletsData?.network_yield_box || 0);
+        const matchingBalance = Number(incomeSummary?.matching || profile.wallets?.matching?.balance || 0);
+        const rankBalance = Number(incomeSummary?.rank || userWalletsData?.rank_bonus_box || 0);
+        const incentiveBalance = Number(incomeSummary?.rewards || profile.wallets?.rewards?.balance || 0);
         const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
         
         setUserWallets({
@@ -209,8 +214,9 @@ const Dashboard: React.FC = () => {
         });
       }
       // 4. Handle transactions
-      console.log("USER ID:", userId);
-      console.log("INCOME TRANSACTIONS:", transactionsData);
+      if (transactionsData) {
+        setTransactions(transactionsData.slice(0, 5)); // Keep only latest 5
+      }
       
       return userId;
 
@@ -278,17 +284,22 @@ const Dashboard: React.FC = () => {
       const userId = await fetchAllData(true); // Initial load with spinner
       
       if (userId && isMounted) {
-        profileUnsubscribe = supabaseService.subscribeToProfile(userId, (updatedProfile) => {
+        profileUnsubscribe = supabaseService.subscribeToProfile(userId, async (updatedProfile) => {
           console.log('Real-time profile update received in Dashboard:', updatedProfile);
           if (updatedProfile && isMounted) {
             setUserData(updatedProfile);
+            
+            // Refresh user_wallets on profile update as well to keep sync
+            const userWalletsData = await supabaseService.getUserWallets(userId);
+            
             // Use nullish coalescing for better robustness
-            const masterBalance = updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? updatedProfile.wallets?.master?.balance ?? 0;
-            const referralBalance = updatedProfile.wallets?.referral?.balance ?? updatedProfile.referral_income ?? 0;
+            const masterBalance = userWalletsData?.master_vault ?? updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? updatedProfile.wallets?.master?.balance ?? 0;
+            const referralBalance = userWalletsData?.referral_box ?? updatedProfile.wallets?.referral?.balance ?? updatedProfile.referral_income ?? 0;
+            const yieldBalance = userWalletsData?.network_yield_box ?? updatedProfile.wallets?.yield?.balance ?? updatedProfile.yield_income ?? 0;
+            
             const matchingBalance = updatedProfile.wallets?.matching?.balance ?? updatedProfile.matching_income ?? 0;
             const rankBonusBalance = updatedProfile.wallets?.rankBonus?.balance ?? updatedProfile.rank_income ?? 0;
             const rewardsBalance = updatedProfile.wallets?.rewards?.balance ?? updatedProfile.incentive_income ?? 0;
-            const yieldBalance = updatedProfile.wallets?.yield?.balance ?? updatedProfile.yield_income ?? 0;
             const cappingBoxBalance = updatedProfile.wallets?.capping_box?.balance || 0;
             
             setUserWallets({ 
@@ -328,8 +339,8 @@ const Dashboard: React.FC = () => {
             if (profile && isMounted) {
               setUserData(profile);
               setUserWallets({
-                master: { balance: Number(profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
-                referral: { balance: Number(profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
+                master: { balance: Number(profile.master_vault ?? profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
+                referral: { balance: Number(profile.referral_box ?? profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
                 matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
                 rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
                 rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
@@ -649,7 +660,7 @@ const Dashboard: React.FC = () => {
               <div className="space-y-4">
                 <div className="p-6 bg-white/5 rounded-[32px] border border-white/5 space-y-4">
                   <div className="flex justify-between items-center px-2">
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Send exactly {paymentData.pay_amount} {paymentData.pay_currency.toUpperCase()}</p>
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Send exactly {paymentData?.pay_amount} {(paymentData?.pay_currency || 'USDT').toString().toUpperCase()}</p>
                     <button 
                       onClick={async () => {
                         await copyUtil(paymentData.pay_address);
@@ -882,6 +893,59 @@ const Dashboard: React.FC = () => {
             ]}
           />
         ))}
+      </div>
+
+      {/* Transaction History Section */}
+      <div className="max-w-4xl mx-auto px-4">
+        <div className="bg-[#111112] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl">
+          <div className="bg-[#18181b] px-8 py-5 border-b border-white/5 flex justify-between items-center">
+            <h3 className="text-white text-[10px] md:text-xs font-black uppercase tracking-[0.2em] flex items-center gap-3">
+              <History size={16} className="text-amber-500" />
+              FINANCIAL PROTOCOL LOGS
+            </h3>
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Latest 5 Entries</span>
+          </div>
+
+          <div className="p-0">
+            {transactions && transactions.length > 0 ? (
+              <div className="divide-y divide-white/5">
+                {transactions.map((tx: any) => (
+                  <div key={tx.id} className="px-8 py-6 flex items-center justify-between hover:bg-white/[0.02] transition-colors group">
+                    <div className="flex items-center gap-5">
+                      <div className={`p-3 rounded-2xl ${tx.amount > 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-rose-500/10 text-rose-500'}`}>
+                        {tx.amount > 0 ? <ArrowUpRight size={20} /> : <ArrowDownLeft size={20} />}
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-0.5">{tx.type.replace(/_/g, ' ')}</p>
+                        <p className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors">{tx.description || 'System Entry'}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-sm font-black italic tracking-tight ${tx.amount > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {tx.amount > 0 ? '+' : ''}{Number(tx.amount).toFixed(2)} <span className="text-[10px] opacity-70">USDT</span>
+                      </p>
+                      <p className="text-[9px] font-bold text-slate-600 uppercase tracking-widest mt-1">
+                        {new Date(tx.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-20 text-center space-y-4">
+                <AlertCircle className="mx-auto text-slate-800" size={48} />
+                <p className="text-[10px] font-black text-slate-600 uppercase tracking-[0.3em]">No Financial History Detected</p>
+              </div>
+            )}
+          </div>
+
+          <button 
+            onClick={() => navigate('/master-wallet')}
+            className="w-full py-5 bg-white/5 hover:bg-white/10 text-slate-500 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all border-t border-white/5"
+          >
+            Access Full Node Ledger
+          </button>
+        </div>
       </div>
     </div>
   );

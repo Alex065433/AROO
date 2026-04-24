@@ -155,6 +155,128 @@ async function startServer() {
     }
   });
 
+  app.post("/api/register-node", async (req, res) => {
+    const admin = getSupabaseAdmin();
+    if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
+
+    try {
+      const body = req.body;
+      const rawSponsor = body.sponsor_id || body.ref || body.parent;
+      const name = body.full_name || body.name || "Arowin Member";
+      const mobile = body.mobile_access || body.mobile || "";
+      const password = body.security_key || body.vault_key || body.password || (Math.random().toString(36).substring(2) + Date.now().toString(36));
+      const twoFaPin = body.two_fa_pin || body.pin || "";
+      const email = body.email;
+      const side = (body.side || body.placement_side || 'LEFT').toUpperCase();
+
+      if (!rawSponsor) throw new Error("Sponsor reference is mandatory for registration.");
+
+      // 2. Dual ID Lookup (Profiles & Members)
+      let resolvedSponsorId: string;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawSponsor);
+      
+      let query = admin.from('profiles').select('id');
+      if (isUuid) {
+        query = query.or(`id.eq.${rawSponsor},operator_id.eq.${rawSponsor}`);
+      } else {
+        query = query.eq('operator_id', rawSponsor);
+      }
+
+      const { data: prof } = await query.maybeSingle();
+
+      if (prof) {
+        resolvedSponsorId = prof.id;
+      } else {
+        // Check in members table (UUID only)
+        if (isUuid) {
+          const { data: mem } = await admin.from('members').select('id').eq('id', rawSponsor).maybeSingle();
+          if (!mem) throw new Error("Identity Breach: Provided Sponsor ID not found in system.");
+          resolvedSponsorId = mem.id;
+        } else {
+          throw new Error("Identity Breach: Provided Sponsor ID not found in system.");
+        }
+      }
+
+      // 3. Placement Logic (Simplified for server)
+      let trueSponsorId = resolvedSponsorId;
+      let placementId: string;
+      
+      // Starting at sponsor, find the extreme outer edge
+      let currentId = trueSponsorId;
+      while (true) {
+        const { data: child } = await admin
+          .from('members')
+          .select('id')
+          .eq('placement_id', currentId)
+          .eq('position', side)
+          .maybeSingle();
+
+        if (!child) {
+          placementId = currentId;
+          break;
+        }
+        currentId = child.id;
+      }
+
+      // 4. Create User
+      const timestamp = Date.now();
+      const finalEmail = email || `node_${timestamp}@arowintrading-internal.com`;
+      
+      // For operator ID generation - using random if RPC fails or is missing
+      let operatorId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
+      try {
+        const { data: seqVal } = await admin.rpc('get_next_operator_id');
+        if (seqVal) operatorId = `ARW-${seqVal}`;
+      } catch (e) {
+        console.warn('get_next_operator_id rpc failed, using random ID');
+      }
+
+      const { data: authData, error: authErr } = await admin.auth.admin.createUser({
+        email: finalEmail,
+        password: password,
+        email_confirm: true,
+        user_metadata: { name, operator_id: operatorId, mobile, two_fa_pin: twoFaPin }
+      });
+
+      if (authErr) throw authErr;
+      const newUserId = authData.user.id;
+
+      // Profiles Sync
+      await admin.from('profiles').insert({
+        id: newUserId,
+        email: finalEmail,
+        name,
+        mobile,
+        operator_id: operatorId,
+        two_fa_pin: twoFaPin,
+        sponsor_id: trueSponsorId,
+        parent_id: placementId,
+        side: side,
+        position: side.toLowerCase(),
+        status: 'inactive'
+      });
+
+      // Members Sync
+      await admin.from('members').insert({
+        id: newUserId,
+        sponsor_id: trueSponsorId,
+        placement_id: placementId,
+        position: side,
+        is_active: false
+      });
+
+      return res.json({
+        success: true,
+        user: { id: newUserId, operator_id: operatorId, email: finalEmail, name },
+        message: "Registration completed successfully."
+      });
+
+    } catch (err: any) {
+      console.error("Registration API failure:", err.message);
+      return res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/admin-setup", async (req, res) => {
     try {
       const { secret } = req.body;

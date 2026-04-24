@@ -89,7 +89,9 @@ const BinaryTree: React.FC = () => {
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT', parentOperatorId?: string) => {
     const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
     
-    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentOperatorId || parentId}&side=${side.toLowerCase()}`;
+    // SAFE TRANSFORMATION: Added fallback and optional chaining
+    const safeSide = (side || 'LEFT').toString().toLowerCase();
+    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentOperatorId || parentId}&side=${safeSide}`;
     
     setInviteModal({
       parentId: parentOperatorId || parentId,
@@ -286,6 +288,11 @@ const BinaryTree: React.FC = () => {
     try {
       const user = await supabaseService.findUserByOperatorId(searchQuery.trim());
       if (user) {
+        if (user.is_virtual) {
+          toast.error('Search Refused: Virtual Sub-Node identified. Binary visualization unavailable.');
+          setIsSearching(false);
+          return;
+        }
         setViewRootId(user.id);
         setSearchQuery('');
         toast.success(`Found user: ${user.name}`);
@@ -351,10 +358,19 @@ const BinaryTree: React.FC = () => {
 
           <div className="flex items-center justify-between gap-2 md:gap-4">
             <button 
+              onClick={refreshTree}
+              disabled={isTreeLoading}
+              className="flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 bg-white/10 text-white font-black text-[10px] md:text-xs uppercase tracking-widest rounded-full transition-all hover:bg-white/20 flex items-center justify-center gap-2"
+            >
+              <RefreshCw size={14} className={isTreeLoading ? 'animate-spin' : ''} />
+              Refresh Tree
+            </button>
+            <button 
               onClick={handleGoUp}
               className="flex-1 md:flex-none px-4 md:px-6 py-2 md:py-2.5 bg-[#c0841a] text-black font-black text-[10px] md:text-xs uppercase tracking-widest rounded-full transition-all hover:bg-[#d49a2d] flex items-center justify-center gap-2"
             >
-              Back &lt;&lt;
+              <ArrowLeft size={14} />
+              Back
             </button>
             <button 
               onClick={() => setActiveTab('ledger')}

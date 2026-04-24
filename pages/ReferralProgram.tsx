@@ -17,7 +17,7 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
     return base.endsWith('/') ? base : base + '/';
   };
 
-  const link = `${getBaseUrl()}#/register?ref=${operatorId}&side=${(side || 'LEFT').toLowerCase()}`;
+  const link = `${getBaseUrl()}#/register?ref=${operatorId}&side=${(side || 'LEFT').toString().toLowerCase()}`;
 
   const handleCopy = async () => {
     const success = await copyToClipboard(link);
@@ -47,7 +47,7 @@ const ReferralLinkCard: React.FC<{ side: 'LEFT' | 'RIGHT', operatorId: string }>
       
       <div className="space-y-6">
         <p className="text-sm text-slate-400 leading-relaxed font-medium">
-          Share this link to enroll new partners directly into your <span className="text-white font-bold">{(side || 'LEFT').toLowerCase()} leg</span>. 
+          Share this link to enroll new partners directly into your <span className="text-white font-bold">{(side || 'LEFT').toString().toLowerCase()} leg</span>. 
           Binary matching is calculated based on volume from this leg.
         </p>
         

@@ -67,7 +67,7 @@ serve(async (req) => {
     // 4. Sequential Transactional Sweep
     // A. Fund Master Vault
     const { data: wallet, error: walletErr } = await supabaseAdmin
-      .from('voxmeta_wallets')
+      .from('user_wallets')
       .select('master_vault')
       .eq('id', masterId)
       .single();
@@ -76,9 +76,18 @@ serve(async (req) => {
 
     // Update Master Vault
     await supabaseAdmin
-      .from('voxmeta_wallets')
+      .from('user_wallets')
       .update({ master_vault: Number(wallet.master_vault || 0) + totalSum })
       .eq('id', masterId);
+
+    // Record in Transactions Table for UI Reflection
+    await supabaseAdmin.from('transactions').insert({
+        user_id: masterId,
+        amount: totalSum,
+        type: 'claim',
+        description: `Sweep: Collected ${totalSum} USDT from node family`,
+        status: 'COMPLETED'
+    });
 
     // B. Claim Specific Ledger Records
     const recordIds = ledgerRecords.map(r => r.id);

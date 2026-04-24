@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.12.0";
 
@@ -7,14 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-/**
- * activate-package: Multi-Node Generation, Internal Sponsoring, and ROI Tracking
- */
 serve(async (req) => {
-  // CORS Preflight
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
     const supabaseAdmin = createClient(
@@ -23,145 +16,115 @@ serve(async (req) => {
     );
 
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) throw new Error("Authentication credential missing.");
+    if (!authHeader) throw new Error("Missing Authorization header");
+    
+    const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(authHeader.replace('Bearer ', ''));
+    if (userErr || !user) throw new Error("Invalid session");
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user: authUser }, error: userErr } = await supabaseAdmin.auth.getUser(token);
-    if (userErr || !authUser) throw new Error("Invalid or expired session.");
+    const { amount } = await req.json();
+    const userId = user.id;
 
-    const body = await req.json();
-    const amount = Number(body.amount);
-    if (!amount || amount < 50) throw new Error("Protocol failure: Valid package amount required ($50 minimum).");
+    if (!amount || amount < 50 || amount % 50 !== 0) throw new Error("Invalid amount.");
 
-    const userId = authUser.id;
-
-    // 1. Liquidity Check & Wallet Deduction
-    const { data: wallet, error: walletErr } = await supabaseAdmin
-      .from('voxmeta_wallets')
+    // 1. ATOMIC WALLET CHECK
+    const { data: wallet, error: walkErr } = await supabaseAdmin
+      .from('user_wallets')
       .select('master_vault')
-      .eq('id', userId)
-      .single();
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (walletErr || !wallet) throw new Error("Security Rejection: Wallet initialization missing.");
-    if (Number(wallet.master_vault) < amount) {
-      throw new Error(`Liquidity Rejection: Insufficient funds. Need: ${amount}, Have: ${wallet.master_vault}`);
-    }
+    if (walkErr || !wallet) throw new Error("Wallet not found.");
+    if (Number(wallet.master_vault) < amount) throw new Error("Insufficient funds in Master Vault.");
 
-    // Atomic Deduction (Simulated)
-    const { error: deductErr } = await supabaseAdmin
-      .from('voxmeta_wallets')
-      .update({ master_vault: Number(wallet.master_vault) - amount })
-      .eq('id', userId);
-    if (deductErr) throw deductErr;
+    // 2. DEDUCT & LOG
+    await supabaseAdmin.from('user_wallets').update({
+        master_vault: Number(wallet.master_vault) - amount,
+        last_updated: new Date().toISOString()
+    }).eq('user_id', userId);
 
-    // 2. Binary Heap Generation (Triangle Logic)
-    const NODE_COST = 50;
-    const numberOfNodes = Math.floor(amount / NODE_COST);
-    const nodeUids: string[] = [userId]; // Master Node is index 0 (Heap Node 1)
-
-    // Activate Master Node
-    await supabaseAdmin.from('profiles').update({ status: 'active', is_active: true, active_package: amount }).eq('id', userId);
-    await supabaseAdmin.from('members').update({ is_active: true, total_investment: NODE_COST }).eq('id', userId);
-
-    // Initial ROI Tracking for Master
-    await supabaseAdmin.from('daily_roi_tracking').insert({
+    await supabaseAdmin.from('transactions').insert({
       user_id: userId,
-      node_id: userId,
-      activation_amount: NODE_COST,
-      daily_percent: 0.5,
-      max_limit: 100
+      amount: -amount,
+      type: 'PACKAGE_ACTIVATION',
+      status: 'COMPLETED',
+      description: `Activated Package: $${amount}`
     });
 
-    // 3. Multi-Node Expansion
-    if (numberOfNodes > 1) {
-      for (let i = 2; i <= numberOfNodes; i++) {
-        // Parent calculation in binary heap: Parent of node i is node at floor(i/2)
-        const parentIdx = Math.floor(i / 2) - 1;
-        const parentUid = nodeUids[parentIdx];
-        const side: 'LEFT' | 'RIGHT' = (i % 2 === 0) ? 'LEFT' : 'RIGHT';
+    // 3. MASTER NODE ACTIVATION
+    const { data: profile } = await supabaseAdmin.from('profiles').select('operator_id, sponsor_id').eq('id', userId).single();
+    
+    await supabaseAdmin.from('profiles').update({ 
+        status: 'active', 
+        is_virtual: false,
+        active_package: amount,
+        activated_at: new Date().toISOString()
+    }).eq('id', userId);
 
-        // ARW- Protocol ID
-        const { data: seqVal } = await supabaseAdmin.rpc('get_next_operator_id');
-        const operatorId = `ARW-${seqVal || Math.floor(100000 + Math.random() * 900000)}`;
+    await supabaseAdmin.from('members').update({ is_active: true }).eq('id', userId);
 
-        // Internal sub-node registration
-        const ts = Date.now();
-        const baseEmail = authUser.email?.split('@')[0];
-        const subEmail = `${baseEmail}+node${i}_${ts}@voxmeta-internal.com`;
+    // 4. VIRTUAL NODES (MINI-TREE)
+    const totalNodes = amount / 50;
+    const virtualCount = totalNodes - 1;
 
-        const { data: subAuth, error: subAuthErr } = await supabaseAdmin.auth.admin.createUser({
-          email: subEmail,
-          password: crypto.randomUUID(),
-          email_confirm: true,
-          user_metadata: { master_id: userId, operator_id: operatorId }
-        });
+    if (virtualCount > 0) {
+        for (let i = 1; i <= virtualCount; i++) {
+            const vId = `${profile?.operator_id}-V${i}`;
+            
+            // Nodes stay in team_collection, parent_id is null for main tree isolation
+            await supabaseAdmin.from('profiles').insert({
+                id: crypto.randomUUID(), // Unique ID for record
+                operator_id: vId,
+                sponsor_id: userId,
+                parent_id: null, 
+                is_virtual: true,
+                status: 'active',
+                active_package: 50
+            });
 
-        if (subAuthErr) throw subAuthErr;
-        const subId = subAuth.user.id;
-        nodeUids.push(subId);
+            // Log commission for virtual node (5% = $2.50)
+            const commission = 2.50;
+            const { data: currentWal } = await supabaseAdmin.from('user_wallets').select('referral_box').eq('user_id', userId).single();
+            
+            await supabaseAdmin.from('user_wallets').update({
+                referral_box: Number(currentWal?.referral_box || 0) + commission,
+                last_updated: new Date().toISOString()
+            }).eq('user_id', userId);
 
-        // --- THE TEAM COLLECTION FIX (PROFILES) ---
-        // Mapping: ALL sub-nodes are sponsored by the Master ID
-        await supabaseAdmin.from('profiles').insert({
-          id: subId,
-          master_id: userId,
-          operator_id: operatorId,
-          name: `${authUser.user_metadata?.name || 'User'} (ID ${i})`,
-          email: subEmail,
-          sponsor_id: userId, // Direct link to Master Node for Dashboard Tracking
-          parent_id: parentUid,
-          side: side,
-          position: side.toLowerCase(),
-          is_active: true,
-          status: 'active',
-          active_package: NODE_COST
-        });
-
-        // --- BINARY TREE FIX (MEMBERS) ---
-        // Mapping: Sponsor and Placement are IMMEDIATE Internal Parents
-        await supabaseAdmin.from('members').insert({
-          id: subId,
-          master_account_id: userId,
-          sponsor_id: parentUid, // Mathematical parent in the binary triangle
-          placement_id: parentUid,
-          position: side,
-          is_active: true,
-          total_investment: NODE_COST
-        });
-
-        // 4. Internal Incomes Logic
-        const bonus = NODE_COST * 0.05; // $2.50
-        await supabaseAdmin.from('income_ledger').insert({
-          user_id: userId, // Accrues to the Master's Ledger
-          earned_by_node_id: parentUid,
-          amount: bonus,
-          type: 'direct_referral',
-          description: `Internal Referral Bonus for placement of node ${i}`,
-          status: 'PENDING'
-        });
-
-        // 5. Daily ROI for Sub-node
-        await supabaseAdmin.from('daily_roi_tracking').insert({
-          user_id: userId,
-          node_id: subId,
-          activation_amount: NODE_COST,
-          daily_percent: 0.5,
-          max_limit: 100
-        });
-      }
+            await supabaseAdmin.from('income_ledger').insert({
+                user_id: userId,
+                amount: commission,
+                type: 'DIRECT_REFERRAL',
+                description: `Internal Referral from Virtual Node ${vId}`
+            });
+        }
     }
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: "Package activated", 
-      nodes_generated: numberOfNodes 
-    }), {
+    // External Sponsor Referral (if any)
+    if (profile?.sponsor_id) {
+        const extCommission = amount * 0.05;
+        const { data: sponWal } = await supabaseAdmin.from('user_wallets').select('referral_box').eq('user_id', profile.sponsor_id).maybeSingle();
+        if (sponWal) {
+            await supabaseAdmin.from('user_wallets').update({
+                referral_box: Number(sponWal.referral_box) + extCommission,
+                last_updated: new Date().toISOString()
+            }).eq('user_id', profile.sponsor_id);
+
+            await supabaseAdmin.from('income_ledger').insert({
+                user_id: profile.sponsor_id,
+                amount: extCommission,
+                type: 'DIRECT_REFERRAL',
+                description: `Referral income from ${profile.operator_id} Activation`
+            });
+        }
+    }
+
+    return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
-  } catch (err: any) {
-    return new Response(JSON.stringify({ success: false, error: err.message }), {
+  } catch (error: any) {
+    return new Response(JSON.stringify({ success: false, error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
