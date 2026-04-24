@@ -98,11 +98,13 @@ export const supabaseService = {
           console.log(`Resolved Operator ID ${cleanId} to: ${email}`);
         } else {
           // Fallback to strict internal format
-          email = `${cleanId.toLowerCase()}@arowintrading.com`;
+          const cleanIdStr = (cleanId || '').toString();
+          email = `${cleanIdStr.toLowerCase()}@arowintrading.com`;
           console.log(`Fallback login ID: ${email}`);
         }
       } catch (e) {
-        email = `${cleanId.toLowerCase()}@arowintrading.com`;
+        const cleanIdStrErr = (cleanId || '').toString();
+        email = `${cleanIdStrErr.toLowerCase()}@arowintrading.com`;
       }
     } else if (cleanId.includes('@') && !isAdminId) {
       // 2. CHECK IF EMAIL HAS MULTIPLE IDs
@@ -118,7 +120,8 @@ export const supabaseService = {
         } else if (profiles && profiles.length === 1) {
           // Resolve to the only account's internal email
           const operatorId = profiles[0]?.operator_id?.toString() || 'unknown';
-          email = `${operatorId.toLowerCase()}@arowintrading.com`;
+          const operatorIdStr = (operatorId || 'unknown').toString();
+          email = `${operatorIdStr.toLowerCase()}@arowintrading.com`;
         }
       } catch (e: any) {
         if (e.message?.includes('Operator ID')) throw e;
@@ -144,7 +147,8 @@ export const supabaseService = {
         }
 
         // Only log non-credential errors as errors, credential errors are normal user behavior
-        if (!authError.message?.toLowerCase().includes('invalid login credentials')) {
+        const authMsg = (authError?.message || '').toString().toLowerCase();
+        if (!authMsg.includes('invalid login credentials')) {
           console.error(`Auth error for ${email}:`, authError);
         }
         
@@ -156,7 +160,8 @@ export const supabaseService = {
           let internalEmailsToTry: string[] = [];
           
           if (!isEmailInput) {
-            internalEmailsToTry.push(`${cleanId.toLowerCase()}@arowin.internal`);
+            const cleanIdStr = (cleanId || '').toString();
+            internalEmailsToTry.push(`${cleanIdStr.toLowerCase()}@arowin.internal`);
           } else {
             // It's an email input, find profiles with this email (case-insensitive)
             try {
@@ -173,7 +178,8 @@ export const supabaseService = {
                   throw new Error(`Multiple accounts found for ${cleanId}. Please use your Operator ID (e.g. ARW-XXXXXX) to log in.`);
                 }
                 const opId = profiles[0]?.operator_id?.toString() || 'unknown';
-                internalEmailsToTry.push(`${opId.toLowerCase()}@arowin.internal`);
+                const opIdStr = (opId || 'unknown').toString();
+                internalEmailsToTry.push(`${opIdStr.toLowerCase()}@arowin.internal`);
               } else {
                 // No profile found for this email
                 console.warn(`No profile found for email: ${cleanId}`);
@@ -201,7 +207,8 @@ export const supabaseService = {
               return retryData;
             }
             
-            if (retryError.message?.toLowerCase().includes('invalid login credentials')) {
+            const retryMsg = (retryError?.message || '').toString().toLowerCase();
+            if (retryMsg.includes('invalid login credentials')) {
               // If it's an email input, we already tried the real email and it failed.
               // If the internal email also fails with invalid credentials, it's a final failure.
               throw new Error(`Authentication Failed: Invalid credentials for identity "${cleanId}". Please check your password.`);
@@ -209,7 +216,8 @@ export const supabaseService = {
           }
         }
         
-        if (authError.message?.toLowerCase().includes('invalid login credentials')) {
+        const authMsgFinal = (authError?.message || '').toString().toLowerCase();
+        if (authMsgFinal.includes('invalid login credentials')) {
           throw new Error(`Authentication Failed: Invalid credentials for ${email}. Please verify your email and password.`);
         }
         throw authError;
@@ -229,7 +237,8 @@ export const supabaseService = {
         throw e;
       }
       
-      if (e.message?.toLowerCase().includes('invalid login credentials')) {
+      const errMsg = (e?.message || '').toString().toLowerCase();
+      if (errMsg.includes('invalid login credentials')) {
         throw new Error(`Authentication Failed: Invalid credentials or system signature for ${email}.`);
       }
       

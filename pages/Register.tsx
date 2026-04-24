@@ -52,9 +52,9 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       localStorage.setItem('arowin_parent', parentParam);
     }
     if (sideParam && (sideParam.toString().toLowerCase() === 'left' || sideParam.toString().toLowerCase() === 'right')) {
-      const normalizedSide = sideParam.toUpperCase() as 'LEFT' | 'RIGHT';
+      const normalizedSide = sideParam.toString().toUpperCase() as 'LEFT' | 'RIGHT';
       setSide(normalizedSide);
-      localStorage.setItem('arowin_side', normalizedSide.toLowerCase());
+      localStorage.setItem('arowin_side', (normalizedSide || 'left').toString().toLowerCase());
     }
   }, [location, currentUser]);
 
@@ -129,8 +129,8 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
 
     try {
       // 2. SAFE STRING TRANSFORMATIONS
-      const cleanEmail = email?.trim()?.toLowerCase() || '';
-      const cleanSponsorId = sponsorId?.trim()?.toUpperCase() || '';
+      const cleanEmail = (email || '').toString().trim().toLowerCase();
+      const cleanSponsorId = (sponsorId || '').toString().trim().toUpperCase();
       const cleanSide = side || 'AUTO';
 
       // Call "dumb" service layer
@@ -140,10 +140,10 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
         cleanSponsorId,
         cleanSide,
         {
-          name: name?.trim() || 'New Operator',
-          mobile: mobile?.trim() || '',
-          withdrawalPassword: withdrawalPassword?.trim() || '',
-          twoFactorPin: twoFactorPin?.trim() || '',
+          name: (name || '').toString().trim() || 'New Operator',
+          mobile: (mobile || '').toString().trim() || '',
+          withdrawalPassword: (withdrawalPassword || '').toString().trim() || '',
+          twoFactorPin: (twoFactorPin || '').toString().trim() || '',
           parentId: parentId 
         }
       );
@@ -158,7 +158,9 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
       const operatorId = (res?.operator_id || 'ARW-NEW').toString();
 
       // Auto-Login after registration
-      const authEmail = res?.internal_email || `${(operatorId || 'unknown').toString().toLowerCase()}@arowin.internal`;
+      const internalEmail = res?.internal_email || res?.email;
+      const opIdSafe = (operatorId || 'ARW-NEW').toString();
+      const authEmail = internalEmail || `${opIdSafe.toLowerCase()}@arowin.internal`;
       
       const { error: loginError } = await supabase.auth.signInWithPassword({
         email: authEmail,

@@ -87,9 +87,10 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         if (sessionError) {
           console.warn('Session error during initialization:', sessionError.message);
-          if (sessionError.message?.toLowerCase().includes('refresh token not found') || 
-              sessionError.message?.toLowerCase().includes('invalid_grant') ||
-              sessionError.message?.toLowerCase().includes('refresh_token_not_found')) {
+          const sessErrMsg = (sessionError?.message || '').toString().toLowerCase();
+          if (sessErrMsg.includes('refresh token not found') || 
+              sessErrMsg.includes('invalid_grant') ||
+              sessErrMsg.includes('refresh_token_not_found')) {
             // Clear everything if refresh token is invalid
             setUser(null);
             setProfile(null);
@@ -118,7 +119,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       } catch (err: any) {
         console.error('Auth initialization failed:', err.message);
-        const msg = err.message?.toLowerCase() || '';
+        const msg = (err?.message || '').toString().toLowerCase();
         if (msg.includes('refresh token not found') || 
             msg.includes('invalid_grant') || 
             msg.includes('refresh_token_not_found')) {

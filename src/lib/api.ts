@@ -68,8 +68,9 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
     } else if (endpoint.includes('/admin/query')) {
     } else if (endpoint.includes('/api/')) {
       // Generic mapping for other /api/ routes
-      const path = endpoint.split('/api/')[1].replace(/\//g, '-');
-      url = `${functionsUrl}/${path}`;
+      const endpointParts = endpoint.split('/api/');
+      const apiPath = endpointParts.length > 1 ? (endpointParts[1] || '').replace(/\//g, '-') : 'unknown';
+      url = `${functionsUrl}/${apiPath}`;
     } else {
       const baseUrl = getApiBaseUrl();
       url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
