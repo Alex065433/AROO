@@ -487,12 +487,21 @@ export const supabaseService = {
     try {
       console.log(`[SERVICE] Activating package ${packageId} ($${amount}) for ${targetUserId || 'self'}`);
       
-      // CRITICAL: Using invoke automatically attaches the user's active session JWT
+      // 1. Extract active session safely
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // 2. Explicitly convert amount to a number
+      const packageAmount = Number(amount);
+
+      // 3. Invoke Edge Function with headers
       const { data, error } = await supabase.functions.invoke('activate-package', {
         body: {
           packageId,
-          amount,
+          amount: packageAmount,
           targetUserId 
+        },
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
         }
       });
 

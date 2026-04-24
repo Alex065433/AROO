@@ -87,14 +87,15 @@ const BinaryTree: React.FC = () => {
   });
 
   const handleInvite = (parentId: string, side: 'LEFT' | 'RIGHT', parentOperatorId?: string) => {
-    const sponsorId = userProfile?.operator_id || 'ARW-XXXX';
+    // Both Sponsor and Placement ID must be the immediate upline of the clicked empty slot
+    const uplineId = parentOperatorId || parentId;
     
     // SAFE TRANSFORMATION: Added fallback and optional chaining
     const safeSide = (side || 'LEFT').toString().toLowerCase();
-    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${sponsorId}&parent=${parentOperatorId || parentId}&side=${safeSide}`;
+    const inviteUrl = `${window.location.origin}${window.location.pathname}#/register?ref=${uplineId}&parent=${uplineId}&side=${safeSide}`;
     
     setInviteModal({
-      parentId: parentOperatorId || parentId,
+      parentId: uplineId,
       side,
       url: inviteUrl
     });
