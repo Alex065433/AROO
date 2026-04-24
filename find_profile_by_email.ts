@@ -5,10 +5,12 @@ dotenv.config();
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.VITE_SUPABASE_SERVICE_KEY!);
 
-async function checkRoots() {
-  const { data, error } = await supabase.from('profiles').select('id, name, is_virtual, parent_id').is('parent_id', null);
+const email = process.argv[2];
+
+async function findProfile() {
+  const { data, error } = await supabase.from('profiles').select('*').eq('email', email).maybeSingle();
   if (error) console.error(error.message);
-  else console.log('Roots:', data);
+  else console.log('Profile:', data);
 }
 
-checkRoots();
+findProfile();

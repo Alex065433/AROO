@@ -2153,47 +2153,50 @@ export const supabaseService = {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rootUid);
     let rootId = rootUid;
     if (!isUuid) {
-      const { data } = await supabase.from('profiles').select('id').eq('operator_id', rootUid).single();
-      if (data) rootId = data.id;
-      else return {};
+      try {
+        const { data } = await supabase.from('profiles').select('id').eq('operator_id', rootUid).maybeSingle();
+        if (data) rootId = data.id;
+        else return {};
+      } catch (e) {
+        return {};
+      }
     }
 
-    // 2. Fetch from members table (STRICT PLACEMENT TREE)
+    // 2. Fetch from profiles table (UNIVERSAL SOURCE)
     const { data: treeNodes, error } = await supabase
-      .from('members')
+      .from('profiles')
       .select(`
         id,
         sponsor_id,
-        placement_id,
+        parent_id,
+        side,
         position,
-        left_points:left_pv,
-        right_points:right_pv,
-        profiles:id (
-          operator_id,
-          name,
-          email,
-          status,
-          created_at,
-          active_package,
-          rank_name,
-          left_business,
-          right_business,
-          is_virtual
-        ),
-        sponsor:sponsor_id (
-          operator_id
-        )
-      `)
-      .eq('profiles.is_virtual', false);
+        operator_id,
+        name,
+        email,
+        status,
+        created_at,
+        active_package,
+        rank_name,
+        left_business,
+        right_business,
+        is_virtual,
+        left_count,
+        right_count
+      `);
 
-    if (error || !treeNodes) return {};
+    if (error || !treeNodes) {
+      console.error('Binary tree fetch error:', error);
+      return {};
+    }
 
     const tree: Record<string, any> = {};
     const nodesByPlacement = new Map<string, any[]>();
     treeNodes.forEach(node => {
-      if (node.placement_id) {
-        const existing = nodesByPlacement.get(node.placement_id) || [];
-        nodesByPlacement.set(node.placement_id, [...existing, node]);
+      // Use parent_id as placement_id in profiles
+      if (node.parent_id) {
+        const existing = nodesByPlacement.get(node.parent_id) || [];
+        nodesByPlacement.set(node.parent_id, [...existing, node]);
       }
     });
 
@@ -2205,27 +2208,28 @@ export const supabaseService = {
       if (visited.has(node.id)) return;
       visited.add(node.id);
 
-      const p = node.profiles || {};
-      const s = node.sponsor || {};
-      
       tree[path] = {
-        id: p.operator_id || 'ARW-000000',
-        name: p.name || 'Unknown',
-        rank: p.rank_name || 'Partner',
-        status: p.status === 'active' ? 'Active' : 'Pending',
-        joinDate: p.created_at?.split('T')[0] || 'N/A',
-        team_size: { left: node.left_points || 0, right: node.right_points || 0 },
-        leftBusiness: (Number(p.left_business) || 0).toFixed(2),
-        rightBusiness: (Number(p.right_business) || 0).toFixed(2),
-        side: node.position || 'ROOT',
+        id: node.operator_id || 'ARW-000000',
+        name: node.name || 'New Member',
+        rank: node.rank_name || 'Partner',
+        status: node.status === 'active' || Number(node.active_package) > 0 ? 'Active' : 'Pending',
+        joinDate: node.created_at?.split('T')[0] || 'N/A',
+        team_size: { 
+          left: Number(node.left_count) || 0, 
+          right: Number(node.right_count) || 0 
+        },
+        leftBusiness: (Number(node.left_business) || 0).toFixed(2),
+        rightBusiness: (Number(node.right_business) || 0).toFixed(2),
+        side: node.side || 'ROOT',
         uid: node.id,
-        sponsorId: s.operator_id || 'N/A',
-        email: p.email || 'N/A'
+        sponsorId: node.sponsor_id || 'N/A',
+        email: node.email || 'N/A'
       };
 
       const children = nodesByPlacement.get(node.id) || [];
-      const leftChild = children.find(c => c.position === 'LEFT');
-      const rightChild = children.find(c => c.position === 'RIGHT');
+      // Support both 'side' and 'position' columns for compatibility
+      const leftChild = children.find(c => (c.side || c.position || '').toUpperCase() === 'LEFT');
+      const rightChild = children.find(c => (c.side || c.position || '').toUpperCase() === 'RIGHT');
 
       if (leftChild) processNode(leftChild, `${path}-left`);
       if (rightChild) processNode(rightChild, `${path}-right`);
@@ -2434,8 +2438,13 @@ export const supabaseService = {
       .from('profiles')
       .select('*')
       .is('parent_id', null)
-      .single();
-    if (error) return null;
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error('Error fetching absolute root:', error);
+      return null;
+    }
     return data;
   },
 
