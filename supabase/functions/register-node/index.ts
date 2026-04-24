@@ -1,13 +1,17 @@
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.12.0";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+/**
+ * register-node: MLM Registration with Smart Placement & Redundant Success Payloads
+ */
 serve(async (req) => {
+  // CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -19,114 +23,145 @@ serve(async (req) => {
     );
 
     const body = await req.json();
-    const { email, password, sponsor_id: rawSponsorId, placement_side: rawSide } = body;
+    const authHeader = req.headers.get('Authorization');
 
-    if (!rawSponsorId || !rawSide) {
-      throw new Error("Sponsor ID and Placement Side are mandatory.");
-    }
+    // 1. Resolve Frontend Payload Variations
+    const rawSponsor = body.sponsor_id || body.ref || body.parent;
+    const name = body.full_name || body.name || "Arowin Member";
+    const mobile = body.mobile_access || body.mobile || "";
+    const password = body.security_key || body.vault_key || body.password || crypto.randomUUID();
+    const twoFaPin = body.two_fa_pin || body.pin || "";
+    const email = body.email;
+    const side = (body.side || body.placement_side || 'LEFT').toUpperCase();
 
-    // 1. Resolve Sponsor & Side
-    let sponsorId = rawSponsorId;
-    if (String(rawSponsorId).startsWith('ARW-')) {
-      const { data: sProf } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('operator_id', rawSponsorId)
-        .single();
-      if (sProf) sponsorId = sProf.id;
-    }
+    if (!rawSponsor) throw new Error("Sponsor reference is mandatory for registration.");
 
-    const { data: sponsorProfile, error: sponsorError } = await supabaseAdmin
+    // 2. Dual ID Lookup (Profiles & Members)
+    let resolvedSponsorId: string;
+    
+    // Check for ARW- operator_id or UUID in Profiles
+    const { data: prof, error: profErr } = await supabaseAdmin
       .from('profiles')
-      .select('name')
-      .eq('id', sponsorId)
-      .single();
+      .select('id')
+      .or(`id.eq.${rawSponsor},operator_id.eq.${rawSponsor}`)
+      .maybeSingle();
 
-    if (sponsorError || !sponsorProfile) {
-      throw new Error("Invalid Sponsor.");
-    }
-
-    const side = String(rawSide).toUpperCase() === 'LEFT' ? 'LEFT' : 'RIGHT';
-
-    // 2. Strict Power-Leg Placement (Extreme Edge)
-    let currentId = sponsorId;
-    let finalPlacementId = null;
-
-    while (true) {
-      const { data: child } = await supabaseAdmin
+    if (prof) {
+      resolvedSponsorId = prof.id;
+    } else {
+      // Check for UUID in Members table
+      const { data: mem } = await supabaseAdmin
         .from('members')
         .select('id')
-        .eq('placement_id', currentId)
-        .eq('position', side)
+        .eq('id', rawSponsor)
         .maybeSingle();
-
-      if (!child) {
-        finalPlacementId = currentId;
-        break;
-      }
-      currentId = child.id;
+      
+      if (!mem) throw new Error("Identity Breach: Provided Sponsor ID not found in system.");
+      resolvedSponsorId = mem.id;
     }
 
-    // 3. Generate 'ARW-' ID from Sequence
-    // We use RPC to get the nextval safely
+    // 3. Smart Placement (Tree Context vs. Referral Context)
+    let trueSponsorId: string;
+    let placementId: string;
+    let isTreeInteraction = false;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(token);
+      if (!userErr && user) {
+        trueSponsorId = user.id;
+        placementId = resolvedSponsorId; // Exact placement under clicked node
+        isTreeInteraction = true;
+      }
+    }
+
+    if (!isTreeInteraction) {
+      // Referral Link: Start at Sponsor and find Extreme outer edge
+      trueSponsorId = resolvedSponsorId;
+      let currentId = trueSponsorId;
+      while (true) {
+        const { data: child } = await supabaseAdmin
+          .from('members')
+          .select('id')
+          .eq('placement_id', currentId)
+          .eq('position', side)
+          .maybeSingle();
+
+        if (!child) {
+          placementId = currentId;
+          break;
+        }
+        currentId = child.id;
+      }
+    }
+
+    // 4. Sync & Node Generation
+    const timestamp = Date.now();
+    const finalEmail = email || `node_${timestamp}@arowintrading-internal.com`;
+
+    // Generate Protocol ID (ARW-XXXXXX)
     const { data: seqVal } = await supabaseAdmin.rpc('get_next_operator_id');
     const operatorId = `ARW-${seqVal || Math.floor(100000 + Math.random() * 900000)}`;
 
-    // 4. Create Auth User
-    const internalEmail = email || `${operatorId.toLowerCase()}@arowin.internal`;
-    const userPassword = password || crypto.randomUUID();
-
-    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: internalEmail,
-      password: userPassword,
+    const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+      email: finalEmail,
+      password: password,
       email_confirm: true,
-      user_metadata: { 
-        operator_id: operatorId,
-        name: email ? email.split('@')[0] : `User ${operatorId}`
-      }
+      user_metadata: { name, operator_id: operatorId, mobile, two_fa_pin: twoFaPin }
     });
 
-    if (authError) throw authError;
-    const userId = userData.user.id;
+    if (authErr) throw authErr;
+    const newUserId = authData.user.id;
 
-    // 5. Database Sync
+    // Profiles Sync
     await supabaseAdmin.from('profiles').insert({
-      id: userId,
-      email: internalEmail,
+      id: newUserId,
+      email: finalEmail,
+      name,
+      mobile,
       operator_id: operatorId,
-      name: email ? email.split('@')[0] : `User ${operatorId}`,
-      sponsor_id: sponsorId,
-      parent_id: finalPlacementId,
+      two_fa_pin: twoFaPin,
+      sponsor_id: trueSponsorId,
+      parent_id: placementId,
       side: side,
       position: side.toLowerCase(),
       status: 'inactive'
     });
 
+    // Members Sync
     await supabaseAdmin.from('members').insert({
-      id: userId,
-      sponsor_id: sponsorId,
-      placement_id: finalPlacementId,
+      id: newUserId,
+      sponsor_id: trueSponsorId,
+      placement_id: placementId,
       position: side,
       is_active: false
     });
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      sponsor_name: sponsorProfile.name,
-      placed_side: side,
-      user: { id: userId, operator_id: operatorId, email: internalEmail } 
-    }), {
+    // 5. HYPER-REDUNDANT Success Payload
+    const result = {
+      success: true,
+      message: "Registered",
+      id: newUserId,
+      user_id: newUserId,
+      userId: newUserId,
+      operator_id: operatorId,
+      data: {
+        id: newUserId,
+        user_id: newUserId,
+        user: { id: newUserId, operator_id: operatorId, email: finalEmail }
+      },
+      user: { id: newUserId, operator_id: operatorId, email: finalEmail }
+    };
+
+    return new Response(JSON.stringify(result), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
-  } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message, success: false }), {
+  } catch (err: any) {
+    return new Response(JSON.stringify({ success: false, error: err.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
     });
   }
 });
-
-// Note: Ensure the RPC 'get_next_operator_id' is defined in your SQL:
-// CREATE OR REPLACE FUNCTION get_next_operator_id() RETURNS INT AS $$ BEGIN RETURN nextval('operator_id_seq'); END; $$ LANGUAGE plpgsql;
