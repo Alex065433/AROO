@@ -485,21 +485,47 @@ export const supabaseService = {
 
   async activatePackage(packageId: string, amount: number, targetUserId?: string) {
     try {
-      // Use apiFetch for unified CORS and header handling
-      const result = await apiFetch('activate-package', {
-        method: 'POST',
-        body: JSON.stringify({
+      console.log(`[SERVICE] Activating package ${packageId} ($${amount}) for ${targetUserId || 'self'}`);
+      
+      // CRITICAL: Using invoke automatically attaches the user's active session JWT
+      const { data, error } = await supabase.functions.invoke('activate-package', {
+        body: {
           packageId,
           amount,
           targetUserId 
-        })
+        }
       });
 
-      if (!result || !result.success) {
-        throw new Error(result?.error || 'Server Protocol Error during Node Activation.');
+      if (error) {
+        // Detailed error extraction from FunctionsHttpError
+        let errorMessage = error.message;
+        
+        // Try to see if there's a response body in the error
+        if (error instanceof Error && 'context' in error) {
+          const context = (error as any).context;
+          if (context && typeof context.json === 'function') {
+            try {
+              const errorData = await context.json();
+              errorMessage = errorData.error || errorData.message || errorMessage;
+            } catch (e) {
+              // If json() fails, try text()
+              try {
+                if (typeof context.text === 'function') {
+                  const errorText = await context.text();
+                  errorMessage = errorText || errorMessage;
+                }
+              } catch (e2) {}
+            }
+          }
+        }
+        throw new Error(errorMessage);
       }
 
-      return result;
+      if (data?.success === false || data?.error) {
+        throw new Error(data.error || "Package activation failed on backend.");
+      }
+
+      return data;
     } catch (error: any) {
       console.error('Core Logic Failure in activatePackage:', error);
       throw error;
@@ -1166,14 +1192,36 @@ export const supabaseService = {
     return result;
   },
 
-  async adminQuery(table: string, operation: 'insert' | 'update' | 'delete', data?: any, match?: Record<string, any>) {
-    const currentUser = this.getCurrentUser();
+  async adminQuery(table: string, operation: 'select' | 'insert' | 'update' | 'delete', data?: any, match?: Record<string, any>) {
+    let currentUser = this.getCurrentUser();
     let token = '';
     
+    // 1. Attempt to get session
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData.session?.access_token) {
       token = sessionData.session.access_token;
-    } else if (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01') {
+    } else {
+      // 2. Try refresh if session is missing
+      try {
+        const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+        if (!refreshErr && refreshed.session?.access_token) {
+          token = refreshed.session.access_token;
+          // Sync profile if needed
+          if (refreshed.user) {
+            const { data: profile } = await supabase.from('profiles').select('*').eq('id', refreshed.user.id).single();
+            if (profile) {
+              localStorage.setItem('arowin_supabase_user', JSON.stringify(profile));
+              currentUser = profile;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('adminQuery: Session refresh ignored or failed.');
+      }
+    }
+
+    // 3. Fallback to Admin Secret if Operator ID matches
+    if (!token && (currentUser?.operator_id === 'ADMIN_AROWIN_2026' || currentUser?.operator_id === 'ARW-ADMIN-01' || currentUser?.role === 'admin')) {
       token = 'CORE_SECURE_999';
     }
 
@@ -1181,7 +1229,7 @@ export const supabaseService = {
       throw new Error("No active session found. Please log in again.");
     }
 
-    console.log(`adminQuery: Requesting ${operation} on ${table} with token length: ${token.length}`);
+    console.log(`adminQuery: Requesting ${operation} on ${table} (token length: ${token.length})`);
 
     try {
       const result = await apiFetch('admin-query', {
@@ -1192,7 +1240,6 @@ export const supabaseService = {
         },
         body: JSON.stringify({ table, operation, data, match }),
       });
-      console.log(`adminQuery: Success for ${operation} on ${table}`);
       return result;
     } catch (err: any) {
       console.error(`adminQuery: Failed for ${operation} on ${table}:`, err.message);
@@ -1245,7 +1292,7 @@ export const supabaseService = {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify({ user_id: uid, amount }),
+          body: JSON.stringify({ user_id: uid, amount, operation: 'add_funds' }),
         });
         console.log('addFunds: Successfully added funds via Edge Function');
         return true;

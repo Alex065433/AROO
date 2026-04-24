@@ -99,7 +99,7 @@ async function startServer() {
     logToFile(`Admin Query Request: table=${req.body.table}, op=${req.body.operation}, adminInit=${!!admin}`);
     
     try {
-      const { table, operation, data, match } = req.body;
+      const { table, operation, data, match, user_id, amount } = req.body;
       const authHeader = req.headers.authorization;
 
       if (!authHeader) {
@@ -122,6 +122,52 @@ async function startServer() {
           error: "Supabase Admin client not initialized",
           details: `Missing environment variables: ${missing.join(", ")}. Please add them in the app settings.`
         });
+      }
+
+      // Handle Add Funds specifically (matches Edge Function logic)
+      if (user_id && amount !== undefined) {
+        try {
+          const numericAmount = Number(amount);
+          const { data: profile, error: fetchError } = await admin
+            .from("profiles")
+            .select("wallet_balance, wallets")
+            .eq("id", user_id)
+            .single();
+            
+          if (fetchError) throw fetchError;
+          
+          const newBalance = (Number(profile.wallet_balance) || 0) + numericAmount;
+          let newWallets = profile.wallets || {};
+          if (typeof newWallets === "string") try { newWallets = JSON.parse(newWallets); } catch (e) {}
+          
+          if (!newWallets.master) newWallets.master = { balance: 0, currency: "USDT" };
+          newWallets.master.balance = (Number(newWallets.master.balance) || 0) + numericAmount;
+          
+          const { error: updateError } = await admin
+            .from("profiles")
+            .update({ wallet_balance: newBalance, wallets: newWallets })
+            .eq("id", user_id);
+            
+          if (updateError) throw updateError;
+          
+          await admin.from("payments").insert({
+            uid: user_id,
+            amount: numericAmount,
+            type: "deposit",
+            status: "finished",
+            method: "admin_credit",
+            description: "Funds added by Administrator via Local API"
+          });
+          
+          return res.json({ success: true, newBalance });
+        } catch (innerErr: any) {
+          console.error("Add Funds Failure:", innerErr.message);
+          return res.status(400).json({ error: innerErr.message });
+        }
+      }
+
+      if (!table) {
+        return res.status(400).json({ error: "Invalid relation name: table must be a non-empty string." });
       }
 
       let query = admin.from(table);
