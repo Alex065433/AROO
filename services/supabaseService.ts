@@ -440,6 +440,21 @@ export const supabaseService = {
     return { parentId: rootId, side: 'LEFT' }; // Fallback
   },
 
+  async collectAsset() {
+    try {
+      const result = await apiFetch('collect-asset', {
+        method: 'POST'
+      });
+      if (!result || !result.success) {
+        throw new Error(result?.message || result?.error || 'Protocol Failure during Asset Collection.');
+      }
+      return result;
+    } catch (error: any) {
+      console.error('Critical Asset Collection Error:', error);
+      throw error;
+    }
+  },
+
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
     try {
       const result = await apiFetch('register-node', {

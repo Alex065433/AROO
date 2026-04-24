@@ -74,7 +74,7 @@ serve(async (req) => {
     if (!userId) throw new Error("CRITICAL_AUTH_FAILURE: User ID could not be retrieved from registry.");
 
     // 4. PROFILE & WALLET INITIALIZATION
-    await supabaseAdmin.from('profiles').insert({
+    const { error: profErr } = await supabaseAdmin.from('profiles').insert({
         id: userId,
         email: internalEmail,
         real_email: email,
@@ -84,54 +84,74 @@ serve(async (req) => {
         sponsor_id: resolvedSponsorId,
         withdrawal_password: withdrawalPassword,
         two_factor_pin: twoFactorPin,
-        status: 'active'
+        status: 'active',
+        is_active: true,
+        role: 'user'
     });
 
-    await supabaseAdmin.from('user_wallets').insert({ user_id: userId, master_vault: 0 });
+    if (profErr) throw new Error(`PROFILE_ERROR: ${profErr.message}`);
+
+    await supabaseAdmin.from('user_wallets').insert({ 
+        user_id: userId, 
+        master_vault: 0,
+        referral_box: 0,
+        matching_box: 0
+    });
 
     // 5. AUTO-SLIDE PLACEMENT LOGIC
     let currentParent = resolvedPlacementId || resolvedSponsorId;
-    let targetPosition = (position || 'LEFT').toUpperCase();
+    let targetSide = (position || 'LEFT').toUpperCase();
     let success = false;
     let iterations = 0;
 
-    while (!success && iterations < 100) {
+    // Use while loop for dynamic spillover
+    while (!success && iterations < 500) {
         iterations++;
         
-        // Check if spot is occupied
-        const { data: occupant } = await supabaseAdmin
-            .from('members')
+        // 5a. Check if spot is occupied in profiles (the source of truth for the tree)
+        const { data: occupant, error: countErr } = await supabaseAdmin
+            .from('profiles')
             .select('id')
-            .eq('placement_id', currentParent)
-            .eq('position', targetPosition)
+            .eq('parent_id', currentParent)
+            .eq('side', targetSide)
             .maybeSingle();
 
+        if (countErr) throw new Error(`QUERY_ERROR: ${countErr.message}`);
+
         if (!occupant) {
-            // Spot is clear, attempt insert
-            const { error: insErr } = await supabaseAdmin.from('members').insert({
+            // 5b. Spot is clear, finalize placement in both tables
+            const { error: updErr } = await supabaseAdmin
+                .from('profiles')
+                .update({ 
+                    parent_id: currentParent, 
+                    side: targetSide,
+                    position: targetSide.toLowerCase() 
+                })
+                .eq('id', userId);
+
+            if (updErr) throw new Error(`PLACEMENT_SYNC_ERROR: ${updErr.message}`);
+            
+            // Sync to members table (optional but good for consistency with legacy code)
+            await supabaseAdmin.from('members').insert({
                 id: userId,
                 sponsor_id: resolvedSponsorId,
                 placement_id: currentParent,
-                position: targetPosition
+                position: targetSide as any
             });
 
-            if (!insErr) {
-                success = true;
-                break;
-            }
-
-            // If someone else grabbed it simultaneously
-            if (insErr.code === '23505') {
-                continue; // Loop will re-check occupant
-            }
-            throw new Error(`PLACEMENT_ERROR: ${insErr.message}`);
+            success = true;
+            break;
         } else {
-            // SLIDE DOWN: The occupant becomes the new parent
+            // 5c. SLIDE DOWN: Move to the child on that side and check again
             currentParent = occupant.id;
+            // Maintain the same target side for spillover
         }
     }
 
-    if (!success) throw new Error("NETWORK_SATURATION: Could not find vacancy in branch.");
+    if (!success) {
+        // Fallback or cleanup if somehow it fails (extremely unlikely with 500 depth)
+        throw new Error("NETWORK_SATURATION: Deep spillover reached max limit. Node created but placement pending.");
+    }
 
     // FAT PAYLOAD RESPONSE
     return new Response(JSON.stringify({ 
