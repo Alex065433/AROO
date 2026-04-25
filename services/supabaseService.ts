@@ -306,7 +306,7 @@ export const supabaseService = {
         const { data: walletData } = await supabase
           .from('user_wallets')
           .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
-          .eq('user_id', userId)
+          .eq('id', userId)
           .maybeSingle();
         
         if (walletData) {
@@ -1330,6 +1330,13 @@ export const supabaseService = {
           })
           .eq('id', uid);
           
+        // SYNC WITH USER_WALLETS
+        await supabase.from('user_wallets').upsert({
+           id: uid,
+           master_vault: newBalance,
+           updated_at: new Date().toISOString()
+        });
+          
         if (updateError) throw updateError;
         
         console.log('addFunds: Successfully added funds via Direct DB Fallback');
@@ -1420,7 +1427,14 @@ export const supabaseService = {
   },
 
   async claimWallet(walletKey: string) {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: sessionData } = await supabase.auth.getSession();
+    let user = sessionData.session?.user;
+    
+    if (!user) {
+      const { data: userData } = await supabase.auth.getUser();
+      user = userData.user;
+    }
+    
     if (!user) throw new Error('Not authenticated');
 
     const { data, error } = await supabase.rpc('claim_wallet', {
@@ -1454,11 +1468,11 @@ export const supabaseService = {
       
       // Update Table Data
       if (walletKey === 'referral') {
-          await supabase.from('user_wallets').update({ referral_box: 0, master_vault: newMasterVault }).eq('id', user.id);
+          await supabase.from('user_wallets').update({ referral_box: 0, master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
       } else if (walletKey === 'yield') {
-          await supabase.from('user_wallets').update({ network_yield_box: 0, master_vault: newMasterVault }).eq('id', user.id);
+          await supabase.from('user_wallets').update({ network_yield_box: 0, master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
       } else {
-          await supabase.from('user_wallets').update({ master_vault: newMasterVault }).eq('id', user.id);
+          await supabase.from('user_wallets').update({ master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
       }
 
       // Update JSONB Legacy Data
@@ -1947,7 +1961,7 @@ export const supabaseService = {
       const { data, error } = await supabase
         .from('user_wallets')
         .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
-        .eq('user_id', id)
+        .eq('id', id)
         .maybeSingle();
         
       if (error) throw error;
@@ -1957,7 +1971,7 @@ export const supabaseService = {
         const { data: newData, error: insertError } = await supabase
           .from('user_wallets')
           .insert({ 
-            user_id: id, 
+            id: id, 
             master_vault: 0, 
             referral_box: 0,
             matching_box: 0,
@@ -2140,10 +2154,10 @@ export const supabaseService = {
 
     try {
       await this.systemQuery('user_wallets', 'upsert', { 
-        user_id: uid, 
+        id: uid, 
         ...walletUpdate,
-        last_updated: new Date().toISOString()
-      }, { user_id: uid });
+        updated_at: new Date().toISOString()
+      }, { id: uid });
     } catch (err) {
        console.error('Failed to update user_wallets:', err);
     }

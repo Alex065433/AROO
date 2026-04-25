@@ -140,6 +140,25 @@ async function startServer() {
           let newWallets = profile.wallets || {};
           if (typeof newWallets === "string") try { newWallets = JSON.parse(newWallets); } catch (e) {}
           
+          // Update Profiles
+          const { error: updateProfileError } = await admin
+            .from("profiles")
+            .update({ wallet_balance: newBalance })
+            .eq("id", user_id);
+            
+          if (updateProfileError) throw updateProfileError;
+
+          // Sync with user_wallets
+          const { error: updateWalletError } = await admin
+            .from("user_wallets")
+            .upsert({ 
+              id: user_id, 
+              master_vault: newBalance,
+              updated_at: new Date().toISOString() 
+            });
+
+          if (updateWalletError) console.error("Wallet sync failed:", updateWalletError);
+          
           if (!newWallets.master) newWallets.master = { balance: 0, currency: "USDT" };
           newWallets.master.balance = (Number(newWallets.master.balance) || 0) + numericAmount;
           

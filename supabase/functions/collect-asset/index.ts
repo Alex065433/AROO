@@ -30,7 +30,7 @@ serve(async (req) => {
     const { data: wallets, error: walErr } = await supabaseAdmin
         .from('user_wallets')
         .select('*')
-        .eq('user_id', userId)
+        .eq('id', userId)
         .single();
     
     if (walErr || !wallets) throw new Error('WALLETS_NOT_FOUND: User wallet infrastructure is missing.');
@@ -57,7 +57,7 @@ serve(async (req) => {
             referral_box: 0,
             matching_box: 0
         })
-        .eq('user_id', userId);
+        .eq('id', userId);
 
     if (updErr) throw new Error(`PROTOCOL_ERROR: Failed to transfer assets to master vault. ${updErr.message}`);
 

@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS public.user_wallets (
     referral_box NUMERIC DEFAULT 0,
     network_yield_box NUMERIC DEFAULT 0,
     rank_bonus_box NUMERIC DEFAULT 0,
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- 2. Binary Traversal Function
@@ -122,7 +122,7 @@ BEGIN
             referral_box = 0,
             network_yield_box = 0,
             rank_bonus_box = 0,
-            last_updated = NOW()
+            updated_at = NOW()
         WHERE user_id = p_user_id;
     END IF;
     

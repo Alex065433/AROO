@@ -23,200 +23,198 @@ serve(async (req) => {
     if (authErr || !user) throw new Error("Invalid Session: Token Expired or Invalid");
     const userId = user.id;
 
-    const { amount, packageId } = await req.json();
+    const body = await req.json();
+    const amount = Number(body.amount) || 0;
 
-    if (!amount || amount < 50 || amount % 50 !== 0) throw new Error("Invalid activation amount.");
+    if (amount < 50 || amount % 50 !== 0) {
+      throw new Error("Invalid activation amount. Must be a multiple of 50.");
+    }
 
-    // 2. FETCH USER PROFILE & WALLET INFRASTRUCTURE
-    const { data: profile, error: profileErr } = await supabaseAdmin
-      .from('profiles')
-      .select('operator_id, sponsor_id, wallet_balance, wallets, parent_id')
+    // 2. SECURE WALLET FETCHING & DEDUCTION
+    const { data: wallet, error: walletErr } = await supabaseAdmin
+      .from('user_wallets')
+      .select('id, master_vault')
       .eq('id', userId)
       .single();
 
-    if (profileErr || !profile) {
-      throw new Error("Profile not found.");
-    }
+    if (walletErr || !wallet) throw new Error("Wallet not found.");
 
-    const { data: wallet, error: walletErr } = await supabaseAdmin
-      .from('user_wallets')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (!wallet) {
-      throw new Error("Wallet infrastructure not found.");
-    }
-
-    const currentMasterVault = Number(wallet.master_vault || 0);
-    
-    if (currentMasterVault < amount) {
+    const currentBalance = Number(wallet.master_vault) || 0;
+    if (currentBalance < amount) {
       throw new Error("Insufficient funds in Master Vault.");
     }
 
-    // 3. MATHEMATICAL MODEL CALCULATIONS
-    const total_ids = amount / 50;
-    const virtualCount = total_ids - 1;
-    const instant_referral = virtualCount * 2.50;
-    const instant_matching = Math.floor(virtualCount / 2) * 5.00;
-
-    // 4. ATOMIC DEDUCTION & MASTER PROFILE UPDATE
-    const newUserBalance = currentMasterVault - amount;
-    
-    const { error: dedErr } = await supabaseAdmin.from('user_wallets').update({
-        master_vault: newUserBalance,
-        last_updated: new Date().toISOString()
-    }).eq('user_id', userId);
+    const { error: dedErr } = await supabaseAdmin
+      .from('user_wallets')
+      .update({
+        master_vault: (currentBalance - amount).toFixed(4),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
 
     if (dedErr) throw new Error(`DEDUCTION_FAILED: ${dedErr.message}`);
 
-    // Sync profiles table balance as well for UI consistency
+    // Update profile status
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('operator_id, sponsor_id')
+      .eq('id', userId)
+      .single();
+
     await supabaseAdmin.from('profiles').update({
-        wallet_balance: newUserBalance,
-        status: 'active', 
-        is_virtual: false,
-        active_package: amount,
-        activated_at: new Date().toISOString(),
-        is_active: true
+      status: 'active',
+      is_active: true,
+      active_package: amount,
+      activated_at: new Date().toISOString()
     }).eq('id', userId);
 
-    // Log the deduction transaction
-    await supabaseAdmin.from('transactions').insert({
-      user_id: userId,
-      uid: userId,
-      amount: -amount,
-      type: 'package_activation',
-      status: 'completed',
-      description: `Package Activation: $${amount}`
-    });
+    // 3. THE PERFECT PYRAMID MATRIX (VIRTUAL NODES)
+    let virtualNodesCount = 0;
+    if (amount >= 100) {
+      virtualNodesCount = Math.floor(amount / 50) - 1;
+    }
 
-    // 5. VIRTUAL NODES PLACEMENT & INSTANT PROFIT DISTRIBUTION
-    if (virtualCount > 0) {
-        const total_internal_profit = instant_referral + instant_matching;
-        const yield_per_node = Number((total_internal_profit / virtualCount).toFixed(2));
+    const matrixIds: string[] = [userId];
+    for (let i = 1; i <= virtualNodesCount; i++) {
+        matrixIds[i] = crypto.randomUUID();
+    }
 
-        // Generate Virtual Nodes
-        for (let i = 1; i <= virtualCount; i++) {
-            const vOpId = `${profile.operator_id}-V${i}`;
-            const vId = crypto.randomUUID();
+    // TEAM COLLECTION UI SYNC CALCS
+    const instantReferral = virtualNodesCount * 2.50;
+    const instantMatching = Math.floor(virtualNodesCount / 2) * 5.00;
+    const totalProfit = instantReferral + instantMatching;
+    const yieldPerNode = virtualNodesCount > 0 ? (totalProfit / virtualNodesCount) : 0;
+
+    for (let i = 1; i <= virtualNodesCount; i++) {
+      const vId = matrixIds[i];
+      const parentId = matrixIds[Math.floor((i - 1) / 2)];
+      const position = i % 2 !== 0 ? 'LEFT' : 'RIGHT';
+      const vOpId = `${profile?.operator_id || 'ARW'}-V${i}`;
+
+      // AWAIT Inserts to ensure consistency
+      // Insert Profile
+      const { error: pErr } = await supabaseAdmin.from('profiles').insert({
+        id: vId,
+        operator_id: vOpId,
+        sponsor_id: userId,
+        is_virtual: true,
+        status: 'active',
+        is_active: true,
+        active_package: 50,
+        activated_at: new Date().toISOString()
+      });
+      if (pErr) console.error(`Error inserting virtual profile ${i}:`, pErr.message);
+
+      // Insert into Members table for Binary Tree
+      const { error: mErr } = await supabaseAdmin.from('members').insert({
+        id: vId,
+        user_id: vId,
+        sponsor_id: userId,
+        placement_id: parentId,
+        position: position,
+        status: 'active'
+      });
+      if (mErr) console.error(`Error inserting virtual member ${i}:`, mErr.message);
+
+      // Insert into Team Collection for UI Yield
+      const { error: tErr } = await supabaseAdmin.from('team_collection').insert({
+        uid: userId,
+        node_id: vOpId,
+        package_amount: 50,
+        status: 'active',
+        pending_yield: Number(yieldPerNode.toFixed(4))
+      });
+      if (tErr) console.error(`Error inserting team collection ${i}:`, tErr.message);
+    }
+
+    // 4. EXTERNAL UPLINE COMMISSIONS
+    // Sponsor Commission (5%)
+    if (profile?.sponsor_id) {
+        try {
+            const { data: sponsorWallet } = await supabaseAdmin
+                .from('user_wallets')
+                .select('id, referral_box')
+                .eq('id', profile.sponsor_id)
+                .single();
             
-            await supabaseAdmin.from('profiles').insert({
-                id: vId,
-                operator_id: vOpId,
-                sponsor_id: userId,
-                parent_id: null, 
-                is_virtual: true,
-                status: 'active',
-                active_package: 50,
-                is_active: true,
-                activated_at: new Date().toISOString(),
-                wallet_balance: 0,
-                wallets: { master: { balance: 0, currency: "USDT" } }
-            });
+            if (sponsorWallet) {
+                const commission = amount * 0.05;
+                await supabaseAdmin.from('user_wallets').update({
+                    referral_box: (Number(sponsorWallet.referral_box) || 0) + commission,
+                    updated_at: new Date().toISOString()
+                }).eq('id', profile.sponsor_id);
 
-            await supabaseAdmin.from('team_collection').insert({
-                uid: userId,
-                node_id: vOpId,
-                package_amount: 50,
-                status: 'active',
-                pending_yield: yield_per_node
-            });
-        }
-
-        // Log Instant Profit Transactions (Still logged for Master Node, but realized via Team Collection)
-        if (instant_referral > 0) {
-            await supabaseAdmin.from('transactions').insert({
-                uid: userId,
-                user_id: userId,
-                amount: instant_referral,
-                type: 'DIRECT_REFERRAL',
-                description: `Internal Referral Bonus ($2.50 x ${virtualCount} Nodes) - Distributed to Team Nodes`,
-                status: 'completed'
-            });
-        }
-
-        if (instant_matching > 0) {
-            await supabaseAdmin.from('transactions').insert({
-                uid: userId,
-                user_id: userId,
-                amount: instant_matching,
-                type: 'MATCHING_BONUS',
-                description: `Internal Matching Bonus ($5.00 x ${Math.floor(virtualCount/2)} Pairs) - Distributed to Team Nodes`,
-                status: 'completed'
-            });
+                await supabaseAdmin.from('transactions').insert({
+                    user_id: profile.sponsor_id,
+                    amount: commission,
+                    type: 'DIRECT_REFERRAL',
+                    status: 'completed',
+                    description: `Referral commission from ${profile.operator_id} package activation`
+                });
+            }
+        } catch (err) {
+            console.error("Sponsor commission error:", err);
         }
     }
 
-    // 6. EXTERNAL SPONSOR COMMISSION (5%) - REFERRAL INCOME
-    if (profile.sponsor_id && profile.sponsor_id !== userId) {
-        const extCommission = amount * 0.05;
-        
-        // Update user_wallets.referral_box
-        const { data: sponUserWallet } = await supabaseAdmin.from('user_wallets').select('referral_box').eq('user_id', profile.sponsor_id).maybeSingle();
-        if (sponUserWallet) {
-             await supabaseAdmin.from('user_wallets').update({
-                referral_box: (Number(sponUserWallet.referral_box) || 0) + extCommission,
-                last_updated: new Date().toISOString()
-             }).eq('user_id', profile.sponsor_id);
+    // External Matching Commissions (1% x 10 levels)
+    try {
+        let currentLevelUserId = userId;
+        for (let level = 1; level <= 10; level++) {
+            // Traverse up via members.placement_id
+            const { data: currentMember, error: memErr } = await supabaseAdmin
+                .from('members')
+                .select('placement_id')
+                .eq('id', currentLevelUserId)
+                .single();
+            
+            if (memErr || !currentMember?.placement_id) break;
+            
+            const uplineId = currentMember.placement_id;
+            
+            try {
+                const { data: uplineWallet, error: uwErr } = await supabaseAdmin
+                    .from('user_wallets')
+                    .select('id, matching_box')
+                    .eq('id', uplineId)
+                    .single();
+                
+                if (!uwErr && uplineWallet) {
+                    const bonus = amount * 0.01;
+                    await supabaseAdmin.from('user_wallets').update({
+                        matching_box: (Number(uplineWallet.matching_box) || 0) + bonus,
+                        updated_at: new Date().toISOString()
+                    }).eq('id', uplineId);
+
+                    await supabaseAdmin.from('transactions').insert({
+                        user_id: uplineId,
+                        amount: bonus,
+                        type: 'MATCHING_BONUS',
+                        status: 'completed',
+                        description: `Level ${level} matching bonus from ${profile?.operator_id}`
+                    });
+                }
+            } catch (innerErr) {
+                console.error(`Upline commissions level ${level} inner error:`, innerErr);
+            }
+            
+            currentLevelUserId = uplineId;
         }
-
-        await supabaseAdmin.from('transactions').insert({
-            uid: profile.sponsor_id,
-            user_id: profile.sponsor_id,
-            amount: extCommission,
-            type: 'DIRECT_REFERRAL',
-            description: `Direct Referral Reward from ${profile.operator_id} Activation`,
-            status: 'completed'
-        });
-    }
-
-    // 7. EXTERNAL MATCHING INCOME (TREE TRAVERSAL UPWARD)
-    let currentParentId = profile.parent_id; 
-    let level = 1;
-    const maxLevels = 50; 
-    
-    while (currentParentId && level <= maxLevels) {
-        const matchingAmount = amount * 0.01; // Example: 1% per upline
-        
-        const { data: uplineProf } = await supabaseAdmin
-            .from('profiles')
-            .select('id, parent_id')
-            .eq('id', currentParentId)
-            .maybeSingle();
-
-        if (!uplineProf) break;
-        
-        const { data: uplineWallet } = await supabaseAdmin.from('user_wallets').select('matching_box').eq('user_id', uplineProf.id).maybeSingle();
-        if (uplineWallet) {
-             await supabaseAdmin.from('user_wallets').update({
-                 matching_box: (Number(uplineWallet.matching_box) || 0) + matchingAmount,
-                 last_updated: new Date().toISOString()
-             }).eq('user_id', uplineProf.id);
-        }
-
-        await supabaseAdmin.from('transactions').insert({
-            uid: uplineProf.id,
-            user_id: uplineProf.id,
-            amount: matchingAmount,
-            type: 'MATCHING_BONUS',
-            description: `Network Matching Bonus from House ${profile.operator_id} (Level ${level})`,
-            status: 'completed'
-        });
-
-        currentParentId = uplineProf.parent_id;
-        level++;
+    } catch (err) {
+        console.error("External matching loop error:", err);
     }
 
     return new Response(JSON.stringify({ 
-        success: true,
-        message: "Activation Complete. Welcome to Arowin Network." 
+      success: true, 
+      message: "Package activated successfully",
+      new_balance: (currentBalance - amount).toFixed(4)
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error: any) {
-    console.error("[EDGE_FUNCTION_ACTIVATE]", error);
+    console.error("[ACTIVATE-PACKAGE ERROR]", error.message);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,

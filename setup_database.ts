@@ -40,29 +40,18 @@ CREATE TABLE IF NOT EXISTS public.income_ledger (
 
 -- 3. Optimized Wallet Structure
 CREATE TABLE IF NOT EXISTS public.user_wallets (
-    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     master_vault NUMERIC DEFAULT 0,
     referral_box NUMERIC DEFAULT 0,
     matching_box NUMERIC DEFAULT 0,
     network_yield_box NUMERIC DEFAULT 0,
     rank_bonus_box NUMERIC DEFAULT 0,
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Ensure profiles has required columns for multi-account support
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_virtual BOOLEAN DEFAULT false;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS real_email TEXT;
-
--- Optimized Wallet Structure
-CREATE TABLE IF NOT EXISTS public.user_wallets (
-    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    master_vault NUMERIC DEFAULT 0,
-    referral_box NUMERIC DEFAULT 0,
-    matching_box NUMERIC DEFAULT 0,
-    network_yield_box NUMERIC DEFAULT 0,
-    rank_bonus_box NUMERIC DEFAULT 0,
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
 `;
 
 async function setup() {
