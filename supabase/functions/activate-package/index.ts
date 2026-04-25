@@ -92,6 +92,9 @@ serve(async (req) => {
 
     // 5. VIRTUAL NODES PLACEMENT & INSTANT PROFIT DISTRIBUTION
     if (virtualCount > 0) {
+        const total_internal_profit = instant_referral + instant_matching;
+        const yield_per_node = Number((total_internal_profit / virtualCount).toFixed(2));
+
         // Generate Virtual Nodes
         for (let i = 1; i <= virtualCount; i++) {
             const vOpId = `${profile.operator_id}-V${i}`;
@@ -115,27 +118,19 @@ serve(async (req) => {
                 uid: userId,
                 node_id: vOpId,
                 package_amount: 50,
-                status: 'active'
+                status: 'active',
+                pending_yield: yield_per_node
             });
         }
 
-        // Atomically Add Instant Profits to Master's boxes
-        const { error: profitErr } = await supabaseAdmin.from('user_wallets').update({
-            referral_box: (Number(wallet.referral_box) || 0) + instant_referral,
-            matching_box: (Number(wallet.matching_box) || 0) + instant_matching,
-            last_updated: new Date().toISOString()
-        }).eq('user_id', userId);
-
-        if (profitErr) console.error("Error distributing instant profits:", profitErr);
-
-        // Log Instant Profit Transactions
+        // Log Instant Profit Transactions (Still logged for Master Node, but realized via Team Collection)
         if (instant_referral > 0) {
             await supabaseAdmin.from('transactions').insert({
                 uid: userId,
                 user_id: userId,
                 amount: instant_referral,
                 type: 'DIRECT_REFERRAL',
-                description: `Instant Internal Referral Bonus ($2.50 x ${virtualCount} Nodes)`,
+                description: `Internal Referral Bonus ($2.50 x ${virtualCount} Nodes) - Distributed to Team Nodes`,
                 status: 'completed'
             });
         }
@@ -146,7 +141,7 @@ serve(async (req) => {
                 user_id: userId,
                 amount: instant_matching,
                 type: 'MATCHING_BONUS',
-                description: `Instant Internal Matching Bonus ($5.00 x ${Math.floor(virtualCount/2)} Pairs)`,
+                description: `Internal Matching Bonus ($5.00 x ${Math.floor(virtualCount/2)} Pairs) - Distributed to Team Nodes`,
                 status: 'completed'
             });
         }
