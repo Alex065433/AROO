@@ -15,49 +15,48 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // 1. SECURE AUTHENTICATION
+    // 1. ADMIN OVERRIDE & SAFE AUTH
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("Invalid Session: Missing Auth Header");
+    if (!authHeader) throw new Error("INSUFFICIENT_PERMISSIONS: No token provided");
     const token = authHeader.replace("Bearer ", "");
     const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(token);
-    if (authErr || !user) throw new Error("Invalid Session: Token Expired or Invalid");
+    if (authErr || !user) throw new Error("INSUFFICIENT_PERMISSIONS: Session invalid");
     const userId = user.id;
 
     const body = await req.json();
     const amount = Number(body.amount) || 0;
 
     if (amount < 50 || amount % 50 !== 0) {
-      throw new Error("Invalid activation amount. Must be a multiple of 50.");
+      throw new Error("INVALID_PACKAGE: Amount must be a multiple of $50");
     }
 
-    // 2. SECURE WALLET FETCHING & DEDUCTION
+    // 2. SAFE ATOMIC DEDUCTION
     const { data: wallet, error: walletErr } = await supabaseAdmin
       .from('user_wallets')
       .select('id, master_vault')
       .eq('id', userId)
       .single();
 
-    if (walletErr || !wallet) throw new Error("Wallet not found.");
+    if (walletErr || !wallet) throw new Error("WALLET_FAILURE: Master Vault not found");
 
-    const currentBalance = Number(wallet.master_vault) || 0;
-    if (currentBalance < amount) {
-      throw new Error("Insufficient funds in Master Vault.");
-    }
+    const vaultBalance = Number(wallet.master_vault) || 0;
+    if (vaultBalance < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
 
+    // Atomic Balance Update
     const { error: dedErr } = await supabaseAdmin
       .from('user_wallets')
       .update({
-        master_vault: (currentBalance - amount).toFixed(4),
+        master_vault: (vaultBalance - amount).toFixed(4),
         updated_at: new Date().toISOString()
       })
       .eq('id', userId);
 
-    if (dedErr) throw new Error(`DEDUCTION_FAILED: ${dedErr.message}`);
+    if (dedErr) throw new Error(`DEDUCTION_FAILURE: ${dedErr.message}`);
 
-    // Update profile status
+    // Update Master Profile Status
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('operator_id, sponsor_id')
+      .select('operator_id, sponsor_id, name')
       .eq('id', userId)
       .single();
 
@@ -68,153 +67,149 @@ serve(async (req) => {
       activated_at: new Date().toISOString()
     }).eq('id', userId);
 
-    // 3. THE PERFECT PYRAMID MATRIX (VIRTUAL NODES)
-    let virtualNodesCount = 0;
-    if (amount >= 100) {
-      virtualNodesCount = Math.floor(amount / 50) - 1;
-    }
+    // 3. $50 BASE CALCULATIONS
+    const totalNodes = Math.floor(amount / 50);
+    const virtualNodesCount = totalNodes - 1;
 
+    // Internal Profits strictly on the $50 base
+    const instantReferral = virtualNodesCount * 2.50; // 5% of $50 per node
+    const totalPairs = Math.floor(virtualNodesCount / 2);
+    const instantMatching = totalPairs * 5.00; // 10% of $50 per pair
+    const totalInternalProfit = instantReferral + instantMatching;
+    const yieldPerNode = virtualNodesCount > 0 ? (totalInternalProfit / virtualNodesCount).toFixed(4) : "0";
+
+    // 4. BALANCED BINARY MATRIX (LEFT/RIGHT FILL)
     const matrixIds: string[] = [userId];
     for (let i = 1; i <= virtualNodesCount; i++) {
         matrixIds[i] = crypto.randomUUID();
     }
 
-    // TEAM COLLECTION UI SYNC CALCS
-    const instantReferral = virtualNodesCount * 2.50;
-    const instantMatching = Math.floor(virtualNodesCount / 2) * 5.00;
-    const totalProfit = instantReferral + instantMatching;
-    const yieldPerNode = virtualNodesCount > 0 ? (totalProfit / virtualNodesCount) : 0;
+    if (virtualNodesCount > 0) {
+        for (let i = 1; i <= virtualNodesCount; i++) {
+            const vId = matrixIds[i];
+            const pIndex = Math.floor((i - 1) / 2);
+            const parentId = matrixIds[pIndex];
+            const position = (i % 2 !== 0) ? 'LEFT' : 'RIGHT';
+            const vOpId = `${profile?.operator_id || 'USR'}-V${i}`;
 
-    for (let i = 1; i <= virtualNodesCount; i++) {
-      const vId = matrixIds[i];
-      const parentId = matrixIds[Math.floor((i - 1) / 2)];
-      const position = i % 2 !== 0 ? 'LEFT' : 'RIGHT';
-      const vOpId = `${profile?.operator_id || 'ARW'}-V${i}`;
+            // AWAIT Sequential High-Integrity Inserts
+            // A. Insert Virtual Profile
+            await supabaseAdmin.from('profiles').insert({
+                id: vId,
+                operator_id: vOpId,
+                name: `${profile?.name || 'User'} (V${i})`,
+                sponsor_id: userId,
+                is_virtual: true,
+                status: 'active',
+                is_active: true,
+                active_package: 50,
+                activated_at: new Date().toISOString()
+            });
 
-      // AWAIT Inserts to ensure consistency
-      // Insert Profile
-      const { error: pErr } = await supabaseAdmin.from('profiles').insert({
-        id: vId,
-        operator_id: vOpId,
-        sponsor_id: userId,
-        is_virtual: true,
-        status: 'active',
-        is_active: true,
-        active_package: 50,
-        activated_at: new Date().toISOString()
-      });
-      if (pErr) console.error(`Error inserting virtual profile ${i}:`, pErr.message);
+            // B. Insert Into Members (Placement)
+            // Note: Using detected columns 'master_account_id'
+            await supabaseAdmin.from('members').insert({
+                id: vId,
+                sponsor_id: userId,
+                placement_id: parentId,
+                position: position,
+                is_active: true,
+                master_account_id: userId
+            });
 
-      // Insert into Members table for Binary Tree
-      const { error: mErr } = await supabaseAdmin.from('members').insert({
-        id: vId,
-        user_id: vId,
-        sponsor_id: userId,
-        placement_id: parentId,
-        position: position,
-        status: 'active'
-      });
-      if (mErr) console.error(`Error inserting virtual member ${i}:`, mErr.message);
-
-      // Insert into Team Collection for UI Yield
-      const { error: tErr } = await supabaseAdmin.from('team_collection').insert({
-        uid: userId,
-        node_id: vOpId,
-        package_amount: 50,
-        status: 'active',
-        pending_yield: Number(yieldPerNode.toFixed(4))
-      });
-      if (tErr) console.error(`Error inserting team collection ${i}:`, tErr.message);
+            // C. Insert Into Team Collection (UI Sync)
+            // Requirement mandate: save in 'pending_yield'
+            await supabaseAdmin.from('team_collection').insert({
+                uid: userId,
+                node_id: vOpId,
+                package_amount: 50,
+                status: 'active',
+                pending_yield: Number(yieldPerNode)
+            });
+        }
     }
 
-    // 4. EXTERNAL UPLINE COMMISSIONS
-    // Sponsor Commission (5%)
+    // 5. UPLINE COMMISSIONS (EXTERNAL)
+    // 5.1 Sponsor 5%
     if (profile?.sponsor_id) {
         try {
-            const { data: sponsorWallet } = await supabaseAdmin
+            const { data: sWallet } = await supabaseAdmin
                 .from('user_wallets')
                 .select('id, referral_box')
                 .eq('id', profile.sponsor_id)
                 .single();
-            
-            if (sponsorWallet) {
-                const commission = amount * 0.05;
+
+            if (sWallet) {
+                const bonus = amount * 0.05;
                 await supabaseAdmin.from('user_wallets').update({
-                    referral_box: (Number(sponsorWallet.referral_box) || 0) + commission,
+                    referral_box: (Number(sWallet.referral_box) || 0) + bonus,
                     updated_at: new Date().toISOString()
-                }).eq('id', profile.sponsor_id);
+                }).eq('id', sWallet.id);
 
                 await supabaseAdmin.from('transactions').insert({
                     user_id: profile.sponsor_id,
-                    amount: commission,
+                    amount: bonus,
                     type: 'DIRECT_REFERRAL',
                     status: 'completed',
-                    description: `Referral commission from ${profile.operator_id} package activation`
+                    description: `Referral bonus from ${profile.operator_id} ($${amount})`
                 });
             }
-        } catch (err) {
-            console.error("Sponsor commission error:", err);
-        }
+        } catch (e) { console.error("Sponsor payout failed:", e.message); }
     }
 
-    // External Matching Commissions (1% x 10 levels)
+    // 5.2 External Matching 1% (10 Levels)
     try {
-        let currentLevelUserId = userId;
-        for (let level = 1; level <= 10; level++) {
-            // Traverse up via members.placement_id
-            const { data: currentMember, error: memErr } = await supabaseAdmin
+        let tracerId = userId;
+        for (let l = 1; l <= 10; l++) {
+            const { data: member } = await supabaseAdmin
                 .from('members')
                 .select('placement_id')
-                .eq('id', currentLevelUserId)
-                .single();
-            
-            if (memErr || !currentMember?.placement_id) break;
-            
-            const uplineId = currentMember.placement_id;
-            
+                .eq('id', tracerId)
+                .maybeSingle();
+
+            if (!member?.placement_id) break;
+            const uplineId = member.placement_id;
+
             try {
-                const { data: uplineWallet, error: uwErr } = await supabaseAdmin
+                const { data: uWallet } = await supabaseAdmin
                     .from('user_wallets')
                     .select('id, matching_box')
                     .eq('id', uplineId)
                     .single();
-                
-                if (!uwErr && uplineWallet) {
+
+                if (uWallet) {
                     const bonus = amount * 0.01;
                     await supabaseAdmin.from('user_wallets').update({
-                        matching_box: (Number(uplineWallet.matching_box) || 0) + bonus,
+                        matching_box: (Number(uWallet.matching_box) || 0) + bonus,
                         updated_at: new Date().toISOString()
-                    }).eq('id', uplineId);
+                    }).eq('id', uWallet.id);
 
                     await supabaseAdmin.from('transactions').insert({
                         user_id: uplineId,
                         amount: bonus,
                         type: 'MATCHING_BONUS',
                         status: 'completed',
-                        description: `Level ${level} matching bonus from ${profile?.operator_id}`
+                        description: `Matching L${l} bonus from ${profile?.operator_id}`
                     });
                 }
-            } catch (innerErr) {
-                console.error(`Upline commissions level ${level} inner error:`, innerErr);
-            }
+            } catch (innerE) { console.error(`Level ${l} failed:`, innerE.message); }
             
-            currentLevelUserId = uplineId;
+            tracerId = uplineId;
         }
-    } catch (err) {
-        console.error("External matching loop error:", err);
-    }
+    } catch (e) { console.error("Upline loop failed:", e.message); }
 
     return new Response(JSON.stringify({ 
       success: true, 
-      message: "Package activated successfully",
-      new_balance: (currentBalance - amount).toFixed(4)
+      message: "Package Activation Successful",
+      total_nodes: totalNodes,
+      matrix_yield: yieldPerNode
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error: any) {
-    console.error("[ACTIVATE-PACKAGE ERROR]", error.message);
+    console.error("[CRITICAL] Activation Failure:", error.message);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
