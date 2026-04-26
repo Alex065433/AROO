@@ -38,12 +38,19 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
     
     // SAFE Extraction with Fallbacks
     const ref = params.get('ref') || hashParams.get('ref') || localStorage.getItem('arowin_ref');
+    const parentParam = params.get('parent') || hashParams.get('parent') || params.get('upline') || hashParams.get('upline') || localStorage.getItem('arowin_parent');
     const sideParam = params.get('side') || hashParams.get('side') || localStorage.getItem('arowin_side');
     
     if (ref && typeof ref === 'string') {
       const cleanRef = ref.trim().toUpperCase();
       setSponsorId(cleanRef);
       localStorage.setItem('arowin_ref', cleanRef);
+    }
+
+    if (parentParam && typeof parentParam === 'string') {
+      const cleanParent = parentParam.trim().toUpperCase();
+      setParentId(cleanParent);
+      localStorage.setItem('arowin_parent', cleanParent);
     }
 
     if (sideParam && typeof sideParam === 'string') {
@@ -115,7 +122,8 @@ const Register: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
           name: cleanName,
           mobile: (mobile || '').toString().trim(),
           withdrawalPassword: (withdrawalPassword || '').toString().trim(),
-          twoFactorPin: (twoFactorPin || '').toString().trim()
+          twoFactorPin: (twoFactorPin || '').toString().trim(),
+          parentId: parentId || undefined
         }
       );
 
