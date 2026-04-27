@@ -457,18 +457,21 @@ export const supabaseService = {
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
     try {
-      const result = await apiFetch('register-node', {
+      const isManualPlacement = !!additionalData.parentId;
+      
+      const result = await apiFetch('register-user', {
         method: 'POST',
         body: JSON.stringify({
           email,
           password,
           sponsor_id: sponsorId,
-          position: side === 'AUTO' ? null : side,
+          position: side === 'AUTO' ? 'LEFT' : side,
           name: additionalData.name,
           mobile: additionalData.mobile,
+          isManualPlacement,
+          targetNodeId: additionalData.parentId,
           withdrawalPassword: additionalData.withdrawalPassword,
-          twoFactorPin: additionalData.twoFactorPin,
-          parentId: additionalData.parentId
+          twoFactorPin: additionalData.twoFactorPin
         })
       });
 
@@ -487,13 +490,9 @@ export const supabaseService = {
     try {
       console.log(`[SERVICE] Activating package ${packageId} ($${amount}) for ${targetUserId || 'self'}`);
       
-      // 1. Extract active session safely
       const { data: { session } } = await supabase.auth.getSession();
-      
-      // 2. Explicitly convert amount to a number
       const packageAmount = Number(amount);
 
-      // 3. Invoke Edge Function with headers
       const { data, error } = await supabase.functions.invoke('activate-package', {
         body: {
           packageId,
@@ -506,28 +505,7 @@ export const supabaseService = {
       });
 
       if (error) {
-        // Detailed error extraction from FunctionsHttpError
-        let errorMessage = error.message;
-        
-        // Try to see if there's a response body in the error
-        if (error instanceof Error && 'context' in error) {
-          const context = (error as any).context;
-          if (context && typeof context.json === 'function') {
-            try {
-              const errorData = await context.json();
-              errorMessage = errorData.error || errorData.message || errorMessage;
-            } catch (e) {
-              // If json() fails, try text()
-              try {
-                if (typeof context.text === 'function') {
-                  const errorText = await context.text();
-                  errorMessage = errorText || errorMessage;
-                }
-              } catch (e2) {}
-            }
-          }
-        }
-        throw new Error(errorMessage);
+        throw new Error(error.message || "Edge Function Connection Error");
       }
 
       if (data?.success === false || data?.error) {
