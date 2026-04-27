@@ -1558,24 +1558,24 @@ export const supabaseService = {
   // Team Collection
   async getTeamCollection(uid: string) {
     try {
-      // 1. Fetch from profiles (STRICT VIRTUAL FILTER)
-      const { data: virtualNodes, error: tcErr } = await supabase
-        .from('profiles')
-        .select('id, operator_id, active_package, created_at, status')
-        .eq('is_virtual', true)
-        .eq('sponsor_id', uid);
+      // 1. Fetch from team_collection table (STRICT SOURCE)
+      const { data: nodes, error: tcErr } = await supabase
+        .from('team_collection')
+        .select('*')
+        .eq('uid', uid)
+        .order('created_at', { ascending: false });
 
       if (tcErr) throw tcErr;
 
-      return (virtualNodes || []).map((vn: any) => ({
-        id: vn.id,
-        node_id: vn.operator_id,
+      return (nodes || []).map((node: any) => ({
+        id: node.id,
+        node_id: node.node_id,
         name: `Virtual Node`,
-        package_name: `Internal Stake`,
-        package_amount: vn.active_package || 50,
-        balance: 0,
-        status: vn.status || 'active',
-        created_at: vn.created_at
+        package_name: `Cloud Stake`,
+        package_amount: node.package_amount || 50,
+        balance: Number(node.pending_yield) || 0,
+        status: node.status || 'active',
+        created_at: node.created_at
       }));
     } catch (err) {
       console.error('Error in getTeamCollection:', err);
@@ -1640,11 +1640,22 @@ export const supabaseService = {
     }
   },
 
-  async collectFromNodes(uid: string, _nodeIds: string[]) {
+  async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
-      const { data, error } = await supabase.rpc('claim_all_yield', { p_user_id: uid });
+      // Use the new Edge Function for consolidated yield collection
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const { data, error } = await supabase.functions.invoke('collect-team-yield', {
+        body: { selectedNodeIds: nodeIds },
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
+        }
+      });
+
       if (error) throw error;
-      return Number(data) || 0;
+      if (!data || !data.success) throw new Error(data?.error || "Collection protocol failed on server.");
+
+      return Number(data.collected_amount) || 0;
     } catch (err) {
       console.error('Error in collectFromNodes:', err);
       throw err;

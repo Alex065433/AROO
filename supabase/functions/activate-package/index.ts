@@ -24,54 +24,72 @@ serve(async (req) => {
     const userId = user.id;
     const { amount } = await req.json();
 
-    // Fetch and lock wallet
-    const { data: wallet, error: wErr } = await supabaseAdmin.from('user_wallets').select('master_vault').eq('id', userId).single();
+    if (!amount || amount < 50 || amount % 50 !== 0) {
+        throw new Error("INVALID_AMOUNT: Package must be a multiple of $50");
+    }
+
+    // A. FETCH WALLET
+    const { data: wallet, error: wErr } = await supabaseAdmin
+        .from('user_wallets')
+        .select('master_vault')
+        .eq('id', userId)
+        .single();
+
     if (wErr || !wallet) throw new Error("WALLET_NOT_FOUND");
     if (Number(wallet.master_vault) < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
 
-    // ATOMIC DEDUCTION
-    await supabaseAdmin.from('user_wallets').update({ 
+    // B. ATOMIC DEDUCTION (Deduction FIRST)
+    const { error: dedErr } = await supabaseAdmin.from('user_wallets').update({ 
         master_vault: (Number(wallet.master_vault) - amount).toFixed(4),
         updated_at: new Date().toISOString()
     }).eq('id', userId);
 
-    // 2. RULE 1: THE BALANCED TRIANGLE ENGINE ($50 BASE)
+    if (dedErr) throw new Error(`DEDUCTION_FAILED: ${dedErr.message}`);
+
+    // 2. THE BALANCED TRIANGLE ENGINE ($50 BASE)
     const totalUnits = Math.floor(amount / 50);
     const virtualCount = totalUnits - 1;
 
-    // Yield Calc: (Referral 5% + Matching 10%) distributed to virtual nodes
-    const profit = (virtualCount * 2.50) + (Math.floor(virtualCount / 2) * 5.00);
-    const yieldPerNode = virtualCount > 0 ? (profit / virtualCount).toFixed(4) : "0";
+    // Yield Calc: (Referral 5% [$2.50] + Matching 10% [$5.00] per pair)
+    // We calculate profit strictly on the $50 base for the triangle
+    const referralProfit = virtualCount * 2.50;
+    const matchingPairs = Math.floor(virtualCount / 2);
+    const matchingProfit = matchingPairs * 5.00;
+    const totalInternalProfit = referralProfit + matchingProfit;
+    const yieldPerNode = virtualCount > 0 ? (totalInternalProfit / virtualCount).toFixed(4) : "0";
 
     const matrix = [userId];
-    const { data: profile } = await supabaseAdmin.from('profiles').select('operator_id, name').eq('id', userId).single();
+    const { data: profile } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id').eq('id', userId).single();
 
-    // Generation & Placement Loop
+    // Loop for Virtual Node Generation
     for (let i = 1; i <= virtualCount; i++) {
         const vId = crypto.randomUUID();
         matrix[i] = vId;
         
-        const parentId = matrix[Math.floor((i - 1) / 2)];
+        const parentIndex = Math.floor((i - 1) / 2);
+        const parentId = matrix[parentIndex];
         const position = (i % 2 !== 0) ? 'LEFT' : 'RIGHT';
+        const vOpId = `${profile.operator_id}-V${i}`;
         
-        // A. Create Profile
+        // A. Insert Profile
         await supabaseAdmin.from('profiles').insert({
             id: vId,
-            operator_id: `${profile.operator_id}-V${i}`,
+            operator_id: vOpId,
             name: `${profile.name} (V${i})`,
             is_virtual: true,
             is_active: true,
             status: 'active',
             active_package: 50,
-            sponsor_id: userId
+            sponsor_id: userId,
+            activated_at: new Date().toISOString()
         });
 
-        // B. Place in Binary Tree
+        // B. Insert into Members (Binary Tree Placement)
         await supabaseAdmin.from('members').insert({
             id: vId,
             placement_id: parentId,
             position: position,
-            sponsor_id: userId,
+            sponsor_id: userId, // Master is the sponsor
             is_active: true,
             master_account_id: userId
         });
@@ -79,21 +97,95 @@ serve(async (req) => {
         // C. Sync Individual Income (pending_yield)
         await supabaseAdmin.from('team_collection').insert({
             uid: userId,
-            node_id: `${profile.operator_id}-V${i}`,
+            node_id: vOpId,
             package_amount: 50,
             status: 'active',
             pending_yield: Number(yieldPerNode)
         });
+
+        // D. Passive ROI Registration
+        await supabaseAdmin.from('daily_roi_tracking').insert({
+            user_id: userId,
+            node_id: vOpId,
+            activation_amount: 50,
+            daily_percent: 0.50,
+            status: 'active',
+            max_limit: 150, // Example: 3x ROI
+            description: `Passive ROI for node ${vOpId}`
+        });
     }
 
-    // Update Master Package
-    await supabaseAdmin.from('profiles').update({ status: 'active', is_active: true, active_package: amount }).eq('id', userId);
+    // 3. UPLINE PAYOUTS (EXTERNAL)
+    // 5% Direct Referral to Sponsor
+    if (profile.sponsor_id) {
+        try {
+            const { data: sponsorWallet } = await supabaseAdmin.from('user_wallets').select('referral_box').eq('id', profile.sponsor_id).single();
+            if (sponsorWallet) {
+                const commission = amount * 0.05;
+                await supabaseAdmin.from('user_wallets').update({
+                    referral_box: (Number(sponsorWallet.referral_box) + commission).toFixed(4),
+                    updated_at: new Date().toISOString()
+                }).eq('id', profile.sponsor_id);
 
-    return new Response(JSON.stringify({ success: true, matrix_nodes: virtualCount }), {
+                await supabaseAdmin.from('transactions').insert({
+                    user_id: profile.sponsor_id,
+                    amount: commission,
+                    type: 'DIRECT_REFERRAL',
+                    status: 'completed',
+                    description: `Referral commission from ${profile.operator_id} ($${amount})`
+                });
+            }
+        } catch (e) { console.error("Sponsor payout failed", e); }
+    }
+
+    // 1% Matching Bonus to 10 Upline Levels
+    try {
+        let currentUplineId = userId;
+        for (let level = 1; level <= 10; level++) {
+            const { data: member } = await supabaseAdmin.from('members').select('placement_id').eq('id', currentUplineId).single();
+            if (!member || !member.placement_id) break;
+            
+            const uplineId = member.placement_id;
+            const { data: uplineWallet } = await supabaseAdmin.from('user_wallets').select('matching_box').eq('id', uplineId).single();
+            
+            if (uplineWallet) {
+                const bonus = amount * 0.01;
+                await supabaseAdmin.from('user_wallets').update({
+                    matching_box: (Number(uplineWallet.matching_box) + bonus).toFixed(4),
+                    updated_at: new Date().toISOString()
+                }).eq('id', uplineId);
+
+                await supabaseAdmin.from('transactions').insert({
+                    user_id: uplineId,
+                    amount: bonus,
+                    type: 'MATCHING_BONUS',
+                    status: 'completed',
+                    description: `Level ${level} matching bonus from ${profile.operator_id}`
+                });
+            }
+            currentUplineId = uplineId;
+        }
+    } catch (e) { console.error("Upline matching loop failed", e); }
+
+    // Update Master Profile
+    await supabaseAdmin.from('profiles').update({ 
+        status: 'active', 
+        is_active: true, 
+        active_package: amount,
+        activated_at: new Date().toISOString()
+    }).eq('id', userId);
+
+    return new Response(JSON.stringify({ 
+        success: true, 
+        message: `${totalUnits} Nodes Activated ($${amount})`,
+        matrix_nodes: virtualCount,
+        yield_per_node: yieldPerNode
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
   } catch (error: any) {
+    console.error("[ACTIVATE-PACKAGE FAILURE]", error.message);
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 400,
