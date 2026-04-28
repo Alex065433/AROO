@@ -58,6 +58,14 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+  
+  // Request Logger
+  app.use((req, res, next) => {
+    if (!req.url.startsWith('/@vite') && !req.url.startsWith('/src') && !req.url.includes('.')) {
+      logToFile(`Incoming Request: ${req.method} ${req.url}`);
+    }
+    next();
+  });
 
   // API routes
   app.get("/api/health", (req, res) => {

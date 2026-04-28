@@ -46,30 +46,36 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
                   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
   const functionsUrl = `${supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl}/functions/v1`;
   
-  let url = endpoint;
-  if (!endpoint.startsWith('http')) {
-    console.log(`[API DEBUG] Mapping endpoint: ${endpoint}`);
-    // Force mapping for specific routes to Supabase Edge Functions
-    if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
-      url = `${functionsUrl}/create-payment`;
-      console.log(`[API DEBUG] Mapped to create-payment: ${url}`);
-    } else if (endpoint.includes('/payments/status/') || endpoint.includes('/v1/tx/status/')) {
-      const id = endpoint.split('/').pop();
-      url = `${functionsUrl}/tx-status?id=${id}`;
-      console.log(`[API DEBUG] Mapped to tx-status: ${url}`);
-    } else if (endpoint.includes('/rates/binance')) {
-      url = `${functionsUrl}/binance-rates`;
-    } else if (endpoint.includes('/health')) {
-      url = `${functionsUrl}/health`;
-    } else if (endpoint === 'register-user' || endpoint === 'activate-package') {
-      const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
-      url = `${baseUrl}/api/${endpoint}`;
-      console.log(`[API DEBUG] Mapped to local ${endpoint}: ${url}`);
-    } else if (endpoint === 'admin-query' || endpoint === '/admin-query') {
-      const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
-      url = `${baseUrl}/api/admin-query`;
-      console.log(`[API DEBUG] Mapped to local admin-query: ${url}`);
-    } else if (endpoint.includes('/admin/query')) {
+    let url = endpoint;
+    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
+    if (!endpoint.startsWith('http')) {
+      console.log(`[API DEBUG] Mapping endpoint: ${endpoint}`);
+      
+      if (endpoint === 'register-user' || endpoint === '/api/register-user') {
+        url = `${currentOrigin}/api/register-user`;
+        console.log(`[API DEBUG] Forced local register: ${url}`);
+      } else if (endpoint === 'activate-package' || endpoint === '/api/activate-package') {
+        url = `${currentOrigin}/api/activate-package`;
+        console.log(`[API DEBUG] Forced local activate: ${url}`);
+      } else if (endpoint === 'admin-query' || endpoint === '/admin-query' || endpoint === '/api/admin-query') {
+        url = `${currentOrigin}/api/admin-query`;
+        console.log(`[API DEBUG] Forced local admin-query: ${url}`);
+      } else if (endpoint === 'register-node') {
+        url = `${currentOrigin}/api/register-node`;
+        console.log(`[API DEBUG] Forced local register-node: ${url}`);
+      } else if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
+        url = `${functionsUrl}/create-payment`;
+        console.log(`[API DEBUG] Mapped to create-payment: ${url}`);
+      } else if (endpoint.includes('/payments/status/') || endpoint.includes('/v1/tx/status/')) {
+        const id = endpoint.split('/').pop();
+        url = `${functionsUrl}/tx-status?id=${id}`;
+        console.log(`[API DEBUG] Mapped to tx-status: ${url}`);
+      } else if (endpoint.includes('/rates/binance')) {
+        url = `${functionsUrl}/binance-rates`;
+      } else if (endpoint.includes('/health')) {
+        url = `${functionsUrl}/health`;
+      } else if (endpoint.includes('/admin/query')) {
     } else if (endpoint.includes('/api/')) {
       // Generic mapping for other /api/ routes
       const endpointParts = endpoint.split('/api/');
