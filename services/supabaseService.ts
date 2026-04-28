@@ -1280,7 +1280,7 @@ export const supabaseService = {
         
         // Fallback: Direct database update if Edge Function is not deployed
         // This requires the user to have appropriate RLS permissions or be an admin
-        const { data: profile } = await supabase.from('profiles').select('wallet_balance, wallets').eq('id', uid).single();
+        const { data: profile } = await supabase.from('profiles').select('wallet_balance, wallets, master_vault, master_wallet').eq('id', uid).single();
         
         const currentBalance = Number(profile?.wallet_balance || 0);
         const newBalance = currentBalance + amount;
@@ -1296,7 +1296,9 @@ export const supabaseService = {
           .from('profiles')
           .update({ 
             wallet_balance: newBalance,
-            wallets: newWallets
+            wallets: newWallets,
+            master_vault: newBalance,
+            master_wallet: newBalance
           })
           .eq('id', uid);
           
@@ -1457,9 +1459,6 @@ export const supabaseService = {
       // Update Master Source (Profiles)
       const wallets = profile.wallets || {};
       const newWallets = { ...wallets };
-      if (updateField) {
-        // If it was a specific column, zero it out or use the JSONB fallback
-      }
       newWallets[walletKey] = { ...(wallets[walletKey] || {}), balance: 0 };
       newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
       newWallets.master.balance = Number(newWallets.master.balance) + claimAmount;

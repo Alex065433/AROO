@@ -65,12 +65,25 @@ serve(async (req) => {
       if (!newWallets.master) newWallets.master = { balance: 0, currency: "USDT" };
       newWallets.master.balance = (Number(newWallets.master.balance) || 0) + numericAmount;
       
+      // Update Profiles (Single Source of Truth)
       const { error: updateError } = await supabase
         .from("profiles")
-        .update({ wallet_balance: newBalance, wallets: newWallets })
+        .update({ 
+            wallet_balance: newBalance, 
+            wallets: newWallets,
+            master_vault: newBalance,
+            master_wallet: newBalance
+        })
         .eq("id", user_id);
         
       if (updateError) throw updateError;
+      
+      // Sync with user_wallets
+      await supabase.from("user_wallets").upsert({
+          id: user_id,
+          master_vault: newBalance,
+          updated_at: new Date().toISOString()
+      });
       
       await supabase.from("payments").insert({
         uid: user_id,
