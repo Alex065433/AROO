@@ -55,13 +55,13 @@ const MasterWallet: React.FC = () => {
     if (userProfile?.id) {
       fetchTransactions();
       
-      // Update wallets based on profile (centralized logic)
-      const masterBalance = userProfile.master_vault ?? userProfile.wallet_balance ?? (userProfile.wallets?.master?.balance || 0);
-      const referralBalance = userProfile.referral_box ?? (userProfile.wallets?.referral?.balance || 0);
-      const matchingBalance = userProfile.matching_box ?? (userProfile.wallets?.matching?.balance || 0);
-      const yieldBalance = userProfile.network_yield_box ?? (userProfile.wallets?.yield?.balance || 0);
-      const rankBalance = userProfile.rank_bonus_box ?? (userProfile.wallets?.rankBonus?.balance || 0);
-      const rewardsBalance = userProfile.rewards_box ?? (userProfile.wallets?.rewards?.balance || 0);
+      // Update wallets based on profile (centralized logic) - SINGLE SOURCE OF TRUTH (profiles table)
+      const masterBalance = userProfile.master_vault ?? userProfile.master_wallet ?? userProfile.wallet_balance ?? 0;
+      const referralBalance = userProfile.referral_income ?? 0;
+      const matchingBalance = userProfile.matching_income ?? 0;
+      const yieldBalance = userProfile.yield_income ?? 0;
+      const rankBalance = userProfile.rank_income ?? 0;
+      const rewardsBalance = userProfile.reward_income ?? userProfile.incentive_income ?? 0;
       
       setUserWallets({ 
         ...MOCK_USER.wallets, 
@@ -198,11 +198,12 @@ const MasterWallet: React.FC = () => {
       try {
         const cost = Number(amountToUse);
         setIsProcessing(true);
+        setError(null);
         
-        // Use Node + amount as a generic package ID if specific one isn't passed
-        await supabaseService.activatePackage(`NODE-${cost}`, cost);
+        // 1. Send simplified payload to activate-package
+        await supabaseService.activatePackage(`PKG-${cost}`, cost);
         
-        // Refresh profile from backend to sync state
+        // 2. IMMEDIATE RE-FETCH (Refresh profile to update balances on screen)
         await refreshProfile();
         
         setSuccess(true);
@@ -210,11 +211,12 @@ const MasterWallet: React.FC = () => {
           setSuccess(false);
           setActiveTab(null);
           setExchangeAmount('');
-        }, 2500);
+        }, 2000);
         return;
       } catch (err: any) {
-        console.error('Error activating package:', err);
-        setError(err.message || 'Activation failed. Please try again.');
+        console.error('Activation Failed:', err);
+        // Display EXACT error string from backend JSON
+        setError(err.message || 'Node Protocol Synchronization Failed');
         setIsProcessing(false);
         return;
       }

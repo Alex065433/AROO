@@ -22,29 +22,54 @@ serve(async (req) => {
     if (authErr || !user) throw new Error("INVALID_SESSION");
     
     const userId = user.id;
-    const { amount } = await req.json();
+    const { amount, targetUserId } = await req.json();
+
+    // Determine target user (allow admin to specify targetUserId)
+    let effectiveUserId = userId;
+    if (targetUserId && targetUserId !== userId) {
+        // Check if caller is admin
+        const { data: callerProfile } = await supabaseAdmin.from('profiles').select('role').eq('id', userId).single();
+        if (callerProfile?.role === 'admin') {
+            effectiveUserId = targetUserId;
+            console.log(`Admin ${userId} activating package for user ${effectiveUserId}`);
+        } else {
+            throw new Error("UNAUTHORIZED: Only admins can activate for others");
+        }
+    }
 
     if (!amount || amount < 50 || amount % 50 !== 0) {
         throw new Error("INVALID_AMOUNT: Package must be a multiple of $50");
     }
 
-    // A. FETCH WALLET
+    // A. FETCH WALLET of the CALLER (The one paying)
     const { data: wallet, error: wErr } = await supabaseAdmin
         .from('user_wallets')
         .select('master_vault')
         .eq('id', userId)
         .single();
+    
+    // FETCH PROFILE of the EFFECTIVE USER (The one receiving)
+    const { data: profile, error: pErr } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id, master_vault').eq('id', effectiveUserId).single();
+    if (pErr || !profile) throw new Error("TARGET_USER_PROFILE_NOT_FOUND");
 
     if (wErr || !wallet) throw new Error("WALLET_NOT_FOUND");
+    
+    // Check if the caller has enough balance
     if (Number(wallet.master_vault) < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
 
-    // B. ATOMIC DEDUCTION (Deduction FIRST)
+    // B. ATOMIC DEDUCTION from CALLER
     const { error: dedErr } = await supabaseAdmin.from('user_wallets').update({ 
         master_vault: (Number(wallet.master_vault) - amount).toFixed(4),
         updated_at: new Date().toISOString()
     }).eq('id', userId);
 
     if (dedErr) throw new Error(`DEDUCTION_FAILED: ${dedErr.message}`);
+
+    // Update profiles mirror for CALLER
+    await supabaseAdmin.from('profiles').update({
+        master_vault: (Number(wallet.master_vault) - amount).toFixed(4)
+    }).eq('id', userId);
+
 
     // 2. THE BALANCED TRIANGLE ENGINE ($50 BASE)
     const totalUnits = Math.floor(amount / 50);
@@ -58,9 +83,7 @@ serve(async (req) => {
     const totalInternalProfit = referralProfit + matchingProfit;
     const yieldPerNode = virtualCount > 0 ? (totalInternalProfit / virtualCount).toFixed(4) : "0";
 
-    const matrix = [userId];
-    const { data: profile } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id').eq('id', userId).single();
-
+    const matrix = [effectiveUserId];
     // Loop for Virtual Node Generation
     for (let i = 1; i <= virtualCount; i++) {
         const vId = crypto.randomUUID();
@@ -80,7 +103,7 @@ serve(async (req) => {
             is_active: true,
             status: 'active',
             active_package: 50,
-            sponsor_id: userId,
+            sponsor_id: effectiveUserId,
             activated_at: new Date().toISOString()
         });
 
@@ -89,14 +112,14 @@ serve(async (req) => {
             id: vId,
             placement_id: parentId,
             position: position,
-            sponsor_id: userId, // Master is the sponsor
+            sponsor_id: effectiveUserId, // Master is the sponsor
             is_active: true,
-            master_account_id: userId
+            master_account_id: effectiveUserId
         });
 
         // C. Sync Individual Income (pending_yield)
         await supabaseAdmin.from('team_collection').insert({
-            uid: userId,
+            uid: effectiveUserId,
             node_id: vOpId,
             package_amount: 50,
             status: 'active',
@@ -105,7 +128,7 @@ serve(async (req) => {
 
         // D. Passive ROI Registration
         await supabaseAdmin.from('daily_roi_tracking').insert({
-            user_id: userId,
+            user_id: effectiveUserId,
             node_id: vOpId,
             activation_amount: 50,
             daily_percent: 0.50,
@@ -127,6 +150,15 @@ serve(async (req) => {
                     updated_at: new Date().toISOString()
                 }).eq('id', profile.sponsor_id);
 
+                // Update profiles mirror for Sponsor
+                const { data: sProf } = await supabaseAdmin.from('profiles').select('referral_income, wallet_balance').eq('id', profile.sponsor_id).single();
+                if (sProf) {
+                     await supabaseAdmin.from('profiles').update({
+                        referral_income: (Number(sProf.referral_income || 0) + commission).toFixed(4),
+                        wallet_balance: (Number(sProf.wallet_balance || 0) + commission).toFixed(4)
+                    }).eq('id', profile.sponsor_id);
+                }
+
                 await supabaseAdmin.from('transactions').insert({
                     user_id: profile.sponsor_id,
                     amount: commission,
@@ -140,7 +172,7 @@ serve(async (req) => {
 
     // 1% Matching Bonus to 10 Upline Levels
     try {
-        let currentUplineId = userId;
+        let currentUplineId = effectiveUserId;
         for (let level = 1; level <= 10; level++) {
             const { data: member } = await supabaseAdmin.from('members').select('placement_id').eq('id', currentUplineId).single();
             if (!member || !member.placement_id) break;
@@ -154,6 +186,15 @@ serve(async (req) => {
                     matching_box: (Number(uplineWallet.matching_box) + bonus).toFixed(4),
                     updated_at: new Date().toISOString()
                 }).eq('id', uplineId);
+
+                // Update profiles mirror for Upline
+                const { data: uProf } = await supabaseAdmin.from('profiles').select('matching_income, wallet_balance').eq('id', uplineId).single();
+                if (uProf) {
+                    await supabaseAdmin.from('profiles').update({
+                        matching_income: (Number(uProf.matching_income || 0) + bonus).toFixed(4),
+                        wallet_balance: (Number(uProf.wallet_balance || 0) + bonus).toFixed(4)
+                    }).eq('id', uplineId);
+                }
 
                 await supabaseAdmin.from('transactions').insert({
                     user_id: uplineId,
@@ -173,7 +214,7 @@ serve(async (req) => {
         is_active: true, 
         active_package: amount,
         activated_at: new Date().toISOString()
-    }).eq('id', userId);
+    }).eq('id', effectiveUserId);
 
     return new Response(JSON.stringify({ 
         success: true, 

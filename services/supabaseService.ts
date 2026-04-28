@@ -302,21 +302,6 @@ export const supabaseService = {
           throw new Error("Your account has been blocked. Please contact system administration.");
         }
 
-        // REQUIREMENT 4: Fetch wallet balances from the new user_wallets table
-        const { data: walletData } = await supabase
-          .from('user_wallets')
-          .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
-          .eq('id', userId)
-          .maybeSingle();
-        
-        if (walletData) {
-          profile.master_vault = walletData.master_vault || 0;
-          profile.referral_box = walletData.referral_box || 0;
-          profile.matching_box = walletData.matching_box || 0;
-          profile.network_yield_box = walletData.network_yield_box || 0;
-          profile.rank_bonus_box = walletData.rank_bonus_box || 0;
-        }
-
         // Force admin role for Administrative Protocol
         if (profile.email === 'admin@arowin.internal') {
           profile.role = 'admin';
@@ -485,58 +470,43 @@ export const supabaseService = {
 
   async activatePackage(packageId: string, amount: number, targetUserId?: string) {
     try {
-      console.log(`[SERVICE] Activating package ${packageId} ($${amount}) for ${targetUserId || 'self'}`);
+      console.log(`[SERVICE] Activating package ${packageId} ($${amount})${targetUserId ? ' for user ' + targetUserId : ''}`);
       
-      // 1. Extract active session safely
       const { data: { session } } = await supabase.auth.getSession();
-      
-      // 2. Explicitly convert amount to a number
-      const packageAmount = Number(amount);
+      if (!session) throw new Error('Session expired. Please login again.');
 
-      // 3. Invoke Edge Function with headers
       const { data, error } = await supabase.functions.invoke('activate-package', {
-        body: {
-          packageId,
-          amount: packageAmount,
-          targetUserId 
+        body: { 
+          amount: Number(amount),
+          packageId: packageId,
+          targetUserId: targetUserId
         },
         headers: {
-          Authorization: `Bearer ${session?.access_token}`
+          Authorization: `Bearer ${session.access_token}`
         }
       });
 
       if (error) {
-        // Detailed error extraction from FunctionsHttpError
+        // Parse exact error from response if available
         let errorMessage = error.message;
-        
-        // Try to see if there's a response body in the error
-        if (error instanceof Error && 'context' in error) {
-          const context = (error as any).context;
-          if (context && typeof context.json === 'function') {
-            try {
-              const errorData = await context.json();
-              errorMessage = errorData.error || errorData.message || errorMessage;
-            } catch (e) {
-              // If json() fails, try text()
-              try {
-                if (typeof context.text === 'function') {
-                  const errorText = await context.text();
-                  errorMessage = errorText || errorMessage;
-                }
-              } catch (e2) {}
-            }
+        if (error instanceof Error && (error as any).context) {
+          try {
+            const errorBody = await (error as any).context.json();
+            errorMessage = errorBody.error || errorBody.message || errorMessage;
+          } catch (e) {
+            // Fallback if not JSON
           }
         }
         throw new Error(errorMessage);
       }
 
-      if (data?.success === false || data?.error) {
-        throw new Error(data.error || "Package activation failed on backend.");
+      if (data?.error) {
+        throw new Error(data.error);
       }
 
       return data;
     } catch (error: any) {
-      console.error('Core Logic Failure in activatePackage:', error);
+      console.error('Package Activation Error:', error);
       throw error;
     }
   },
@@ -1437,6 +1407,7 @@ export const supabaseService = {
     
     if (!user) throw new Error('Not authenticated');
 
+    // Attempt RPC first for atomicity
     const { data, error } = await supabase.rpc('claim_wallet', {
       p_user_id: user.id,
       p_wallet_key: walletKey
@@ -1444,16 +1415,25 @@ export const supabaseService = {
 
     if (error) {
       console.warn('RPC claim_wallet failed, falling back to client-side claim:', error);
-      // Client-side fallback
+      // Client-side fallback using PROFILES TABLE ONLY
       const profile = await this.getUserProfile(user.id);
-      const userWallets = await this.getUserWallets(user.id);
       if (!profile) throw new Error('User not found');
       
       let claimAmount = 0;
+      let updateField = '';
+      
       if (walletKey === 'referral') {
-          claimAmount = Number(userWallets?.referral_box || 0);
+          claimAmount = Number(profile.referral_income || 0);
+          updateField = 'referral_income';
       } else if (walletKey === 'yield') {
-          claimAmount = Number(userWallets?.network_yield_box || 0);
+          claimAmount = Number(profile.yield_income || 0);
+          updateField = 'yield_income';
+      } else if (walletKey === 'matching') {
+          claimAmount = Number(profile.matching_income || 0);
+          updateField = 'matching_income';
+      } else if (walletKey === 'rank') {
+          claimAmount = Number(profile.rank_income || 0);
+          updateField = 'rank_income';
       } else {
           const wallets = profile.wallets || {};
           claimAmount = Number(wallets[walletKey]?.balance || 0);
@@ -1463,31 +1443,38 @@ export const supabaseService = {
         throw new Error('No balance to claim');
       }
       
-      const newMasterVault = Number(userWallets?.master_vault || 0) + claimAmount;
+      const currentMaster = Number(profile.master_vault || profile.master_wallet || 0);
+      const newMasterVault = currentMaster + claimAmount;
       const newWalletBalance = Number(profile.wallet_balance || 0) + claimAmount;
       
-      // Update Table Data
-      if (walletKey === 'referral') {
-          await supabase.from('user_wallets').update({ referral_box: 0, master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
-      } else if (walletKey === 'yield') {
-          await supabase.from('user_wallets').update({ network_yield_box: 0, master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
-      } else {
-          await supabase.from('user_wallets').update({ master_vault: newMasterVault, updated_at: new Date().toISOString() }).eq('id', user.id);
-      }
+      // Update Dual Tables for Backend Sync
+      const walletUpdate: any = { master_vault: newMasterVault, updated_at: new Date().toISOString() };
+      if (walletKey === 'referral') walletUpdate.referral_box = 0;
+      else if (walletKey === 'yield') walletUpdate.network_yield_box = 0;
+      
+      await supabase.from('user_wallets').update(walletUpdate).eq('id', user.id);
 
-      // Update JSONB Legacy Data
+      // Update Master Source (Profiles)
       const wallets = profile.wallets || {};
       const newWallets = { ...wallets };
+      if (updateField) {
+        // If it was a specific column, zero it out or use the JSONB fallback
+      }
       newWallets[walletKey] = { ...(wallets[walletKey] || {}), balance: 0 };
       newWallets.master = newWallets.master || { balance: 0, currency: 'USDT' };
       newWallets.master.balance = Number(newWallets.master.balance) + claimAmount;
       
-      await supabase.from('profiles').update({
+      const profileUpdate: any = {
         wallets: newWallets,
-        wallet_balance: newWalletBalance
-      }).eq('id', user.id);
+        wallet_balance: newWalletBalance,
+        master_vault: newMasterVault,
+        master_wallet: newMasterVault
+      };
+      if (updateField) profileUpdate[updateField] = 0;
       
-      // Log transaction to BOTH tables
+      await supabase.from('profiles').update(profileUpdate).eq('id', user.id);
+      
+      // Log transactions
       await supabase.from('transactions').insert({
         user_id: user.id,
         amount: claimAmount,
@@ -1496,17 +1483,7 @@ export const supabaseService = {
         status: 'COMPLETED'
       });
 
-      await supabase.from('payments').insert({
-        uid: user.id,
-        amount: claimAmount,
-        type: 'claim',
-        method: 'INTERNAL',
-        description: `Claimed ${walletKey} to Master Vault`,
-        status: 'finished',
-        currency: 'usdtbsc'
-      });
-      
-      return { success: true, claimed_amount: claimAmount, new_master_balance: newWallets.master.balance };
+      return { success: true, claimed_amount: claimAmount, new_master_balance: newMasterVault };
     }
 
     if (data && !data.success) {
@@ -1967,36 +1944,26 @@ export const supabaseService = {
     }
   },
 
-  async getUserWallets(id: string) {
+  async getUserWallets(userId: string) {
     try {
-      const { data, error } = await supabase
-        .from('user_wallets')
-        .select('master_vault, referral_box, matching_box, network_yield_box, rank_bonus_box')
-        .eq('id', id)
-        .maybeSingle();
-        
-      if (error) throw error;
+      // REQUIREMENT: ALL financial data must be fetched EXCLUSIVELY from the profiles table
+      const profile = await this.getUserProfile(userId);
+      
+      if (!profile) return null;
 
-      if (!data) {
-        // If row doesn't exist, create it
-        const { data: newData, error: insertError } = await supabase
-          .from('user_wallets')
-          .insert({ 
-            id: id, 
-            master_vault: 0, 
-            referral_box: 0,
-            matching_box: 0,
-            network_yield_box: 0,
-            rank_bonus_box: 0 
-          })
-          .select()
-          .single();
-        if (insertError) throw insertError;
-        return newData;
-      }
-      return data;
+      // Map from profile columns to wallet structure for backward compatibility
+      return {
+        id: userId,
+        master_vault: Number(profile.master_vault || profile.master_wallet || 0),
+        referral_box: Number(profile.referral_income || 0),
+        matching_box: Number(profile.matching_income || 0),
+        network_yield_box: Number(profile.yield_income || 0),
+        rank_bonus_box: Number(profile.rank_income || 0),
+        rewards_box: Number(profile.reward_income || profile.incentive_income || 0),
+        updated_at: profile.updated_at || new Date().toISOString()
+      };
     } catch (err) {
-      console.error('Error fetching/creating wallets:', err);
+      console.error('Error fetching wallets from profile:', err);
       return null;
     }
   },

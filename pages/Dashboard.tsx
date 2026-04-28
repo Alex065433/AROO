@@ -169,7 +169,6 @@ const Dashboard: React.FC = () => {
   const fetchAllData = async (isInitial = false) => {
     if (isInitial) setLoading(true);
     try {
-      // 1. Get current authenticated user
       const { data: { user } } = await supabase.auth.getUser();
 
       if (!user) {
@@ -179,47 +178,39 @@ const Dashboard: React.FC = () => {
 
       const userId = user.id;
 
-      // 2. Fetch profile, income summary, user wallets, and transactions in parallel
-      const [profileResponse, incomeSummary, userWalletsData, transactionsData] = await Promise.all([
-        supabaseService.getUserProfile(userId),
-        supabaseService.getIncomeSummary(userId),
-        supabaseService.getUserWallets(userId),
-        supabaseService.getTransactions(userId)
-      ]);
+      // EXCLUSIVE FETCH FROM PROFILES TABLE - SINGLE SOURCE OF TRUTH
+      const profile = await supabaseService.getUserProfile(userId);
 
-      // 3. Handle profile data
-      if (profileResponse) {
-        const profile = profileResponse as any;
+      if (profile) {
         setUserData(profile);
 
-        // Fetch from user_wallets explicitly as per new architecture
-        const masterBalance = Number(userWalletsData?.master_vault ?? profile.wallets?.master?.balance ?? 0);
-        
-        // Use income summary for specific boxes to ensure DB consistency with ledger
-        const referralBalance = Number(incomeSummary?.referral || userWalletsData?.referral_box || 0);
-        const yieldBalance = Number(incomeSummary?.yield || userWalletsData?.network_yield_box || 0);
-        const matchingBalance = Number(incomeSummary?.matching || profile.wallets?.matching?.balance || 0);
-        const rankBalance = Number(incomeSummary?.rank || userWalletsData?.rank_bonus_box || 0);
-        const incentiveBalance = Number(incomeSummary?.rewards || profile.wallets?.rewards?.balance || 0);
-        const cappingBoxBalance = profile.wallets?.capping_box?.balance || 0;
+        // Map data strictly from profile columns as per finalized architecture
+        const masterBalance = Number(profile.master_vault || profile.master_wallet || 0);
+        const referralBalance = Number(profile.referral_income || 0);
+        const yieldBalance = Number(profile.yield_income || 0);
+        const matchingBalance = Number(profile.matching_income || 0);
+        const rankBalance = Number(profile.rank_income || 0);
+        const rewardBalance = Number(profile.reward_income || profile.incentive_income || 0);
+        const cappingBoxBalance = Number(profile.capping_box || 0);
         
         setUserWallets({
-          master: { balance: Number(masterBalance), currency: 'USDT' },
-          referral: { balance: Number(referralBalance), currency: 'USDT' },
-          matching: { balance: Number(matchingBalance), currency: 'USDT' },
-          yield: { balance: Number(yieldBalance), currency: 'USDT' },
-          rankBonus: { balance: Number(rankBalance), currency: 'USDT' },
-          rewards: { balance: Number(incentiveBalance), currency: 'USDT' },
-          capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
+          master: { balance: masterBalance, currency: 'USDT' },
+          referral: { balance: referralBalance, currency: 'USDT' },
+          matching: { balance: matchingBalance, currency: 'USDT' },
+          yield: { balance: yieldBalance, currency: 'USDT' },
+          rankBonus: { balance: rankBalance, currency: 'USDT' },
+          rewards: { balance: rewardBalance, currency: 'USDT' },
+          capping_box: { balance: cappingBoxBalance, currency: 'USDT' }
         });
-      }
-      // 4. Handle transactions
-      if (transactionsData) {
-        setTransactions(transactionsData.slice(0, 5)); // Keep only latest 5
+
+        // Fetch transactions separately for logs
+        const transactionsData = await supabaseService.getTransactions(userId);
+        if (transactionsData) {
+          setTransactions(transactionsData.slice(0, 5));
+        }
       }
       
       return userId;
-
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       return null;
@@ -289,27 +280,23 @@ const Dashboard: React.FC = () => {
           if (updatedProfile && isMounted) {
             setUserData(updatedProfile);
             
-            // Refresh user_wallets on profile update as well to keep sync
-            const userWalletsData = await supabaseService.getUserWallets(userId);
-            
-            // Use nullish coalescing for better robustness
-            const masterBalance = userWalletsData?.master_vault ?? updatedProfile.wallet_balance ?? updatedProfile.deposit_wallet ?? updatedProfile.wallets?.master?.balance ?? 0;
-            const referralBalance = userWalletsData?.referral_box ?? updatedProfile.wallets?.referral?.balance ?? updatedProfile.referral_income ?? 0;
-            const yieldBalance = userWalletsData?.network_yield_box ?? updatedProfile.wallets?.yield?.balance ?? updatedProfile.yield_income ?? 0;
-            
-            const matchingBalance = updatedProfile.wallets?.matching?.balance ?? updatedProfile.matching_income ?? 0;
-            const rankBonusBalance = updatedProfile.wallets?.rankBonus?.balance ?? updatedProfile.rank_income ?? 0;
-            const rewardsBalance = updatedProfile.wallets?.rewards?.balance ?? updatedProfile.incentive_income ?? 0;
-            const cappingBoxBalance = updatedProfile.wallets?.capping_box?.balance || 0;
+            // Map data strictly from profile columns as per finalized architecture
+            const masterBalance = Number(updatedProfile.master_vault || updatedProfile.master_wallet || 0);
+            const referralBalance = Number(updatedProfile.referral_income || 0);
+            const yieldBalance = Number(updatedProfile.yield_income || 0);
+            const matchingBalance = Number(updatedProfile.matching_income || 0);
+            const rankBalance = Number(updatedProfile.rank_income || 0);
+            const rewardBalance = Number(updatedProfile.reward_income || updatedProfile.incentive_income || 0);
+            const cappingBoxBalance = Number(updatedProfile.capping_box || 0);
             
             setUserWallets({ 
-              master: { balance: Number(masterBalance), currency: 'USDT' },
-              referral: { balance: Number(referralBalance), currency: 'USDT' },
-              matching: { balance: Number(matchingBalance), currency: 'USDT' },
-              yield: { balance: Number(yieldBalance), currency: 'USDT' },
-              rankBonus: { balance: Number(rankBonusBalance), currency: 'USDT' },
-              rewards: { balance: Number(rewardsBalance), currency: 'USDT' },
-              capping_box: { balance: Number(cappingBoxBalance), currency: 'USDT' }
+              master: { balance: masterBalance, currency: 'USDT' },
+              referral: { balance: referralBalance, currency: 'USDT' },
+              matching: { balance: matchingBalance, currency: 'USDT' },
+              yield: { balance: yieldBalance, currency: 'USDT' },
+              rankBonus: { balance: rankBalance, currency: 'USDT' },
+              rewards: { balance: rewardBalance, currency: 'USDT' },
+              capping_box: { balance: cappingBoxBalance, currency: 'USDT' }
             });
           }
         });
@@ -339,13 +326,13 @@ const Dashboard: React.FC = () => {
             if (profile && isMounted) {
               setUserData(profile);
               setUserWallets({
-                master: { balance: Number(profile.master_vault ?? profile.wallet_balance ?? profile.deposit_wallet ?? profile.wallets?.master?.balance ?? 0), currency: 'USDT' },
-                referral: { balance: Number(profile.referral_box ?? profile.wallets?.referral?.balance ?? profile.referral_income ?? 0), currency: 'USDT' },
-                matching: { balance: Number(profile.wallets?.matching?.balance ?? profile.matching_income ?? 0), currency: 'USDT' },
-                rankBonus: { balance: Number(profile.wallets?.rankBonus?.balance ?? profile.rank_income ?? 0), currency: 'USDT' },
-                rewards: { balance: Number(profile.wallets?.rewards?.balance ?? profile.incentive_income ?? 0), currency: 'USDT' },
-                yield: { balance: Number(profile.wallets?.yield?.balance ?? profile.yield_income ?? 0), currency: 'USDT' },
-                capping_box: { balance: Number(profile.wallets?.capping_box?.balance || 0), currency: 'USDT' }
+                master: { balance: Number(profile.master_vault || profile.master_wallet || 0), currency: 'USDT' },
+                referral: { balance: Number(profile.referral_income || 0), currency: 'USDT' },
+                matching: { balance: Number(profile.matching_income || 0), currency: 'USDT' },
+                rankBonus: { balance: Number(profile.rank_income || 0), currency: 'USDT' },
+                rewards: { balance: Number(profile.reward_income || profile.incentive_income || 0), currency: 'USDT' },
+                yield: { balance: Number(profile.yield_income || 0), currency: 'USDT' },
+                capping_box: { balance: Number(profile.capping_box || 0), currency: 'USDT' }
               });
             }
           } catch (err: any) {
