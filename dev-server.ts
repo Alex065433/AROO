@@ -60,12 +60,11 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
   
-  // Request Logger
+  // High-level request logger for debugging
   app.use((req, res, next) => {
-    if (!req.url.startsWith('/@vite') && !req.url.startsWith('/src') && !req.url.includes('.')) {
-      logToFile(`Incoming Request: ${req.method} ${req.url}`);
-    }
+    logToFile(`[REQUEST] ${req.method} ${req.url} | Content-Type: ${req.headers['content-type']}`);
     next();
   });
 
@@ -80,34 +79,7 @@ async function startServer() {
   });
   app.get("/health", (req, res) => res.json({ status: "ok" }));
 
-  app.get("/api/binance-rates", async (req, res) => {
-    try {
-      const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'TRXUSDT'];
-      const symbolsParam = JSON.stringify(symbols);
-      const url = `https://api.binance.com/api/v3/ticker/price?symbols=${symbolsParam}`;
-      
-      const response = await axios.get(url);
-      res.json(response.data);
-    } catch (error: any) {
-      console.error("Error fetching binance rates in proxy:", error.message);
-      res.status(500).json({ error: "Failed to fetch rates from Binance", details: error.message });
-    }
-  });
-
-  app.post("/api/debug-env", (req, res) => {
-    const admin = getSupabaseAdmin();
-    const url = process.env.VITE_SUPABASE_URL || "";
-    const key = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-    
-    res.json({
-      VITE_SUPABASE_URL: url ? `${url.substring(0, 15)}...` : "MISSING",
-      VITE_SUPABASE_SERVICE_KEY: key ? `${key.substring(0, 10)}...` : "MISSING",
-      supabaseAdminInitialized: !!admin,
-      envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE'))
-    });
-  });
-
-  // Handle both /api/register-user and /register-user for robustness
+  // --- REGISTRATION ---
   const registerUserHandler = async (req: express.Request, res: express.Response) => {
     logToFile(`Route Hit: ${req.method} ${req.url} | Body Keys: ${Object.keys(req.body).join(", ")}`);
     const admin = getSupabaseAdmin();
@@ -232,11 +204,9 @@ async function startServer() {
     }
   };
 
-  app.post("/api/register-user", registerUserHandler);
-  app.post("/register-user", registerUserHandler);
-  app.post("/api/register-node", registerUserHandler); // Node registration uses same logic often
+  app.all(["/api/register-user", "/register-user", "/api/register-node", "/register-node"], registerUserHandler);
 
-  // Handle both /api/activate-package and /activate-package
+  // --- ACTIVATION ---
   const activatePackageHandler = async (req: express.Request, res: express.Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
@@ -323,8 +293,35 @@ async function startServer() {
     }
   };
 
-  app.post("/api/activate-package", activatePackageHandler);
-  app.post("/activate-package", activatePackageHandler);
+  app.all(["/api/activate-package", "/activate-package"], activatePackageHandler);
+
+
+  app.get("/api/binance-rates", async (req, res) => {
+    try {
+      const symbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'TRXUSDT'];
+      const symbolsParam = JSON.stringify(symbols);
+      const url = `https://api.binance.com/api/v3/ticker/price?symbols=${symbolsParam}`;
+      
+      const response = await axios.get(url);
+      res.json(response.data);
+    } catch (error: any) {
+      console.error("Error fetching binance rates in proxy:", error.message);
+      res.status(500).json({ error: "Failed to fetch rates from Binance", details: error.message });
+    }
+  });
+
+  app.post("/api/debug-env", (req, res) => {
+    const admin = getSupabaseAdmin();
+    const url = process.env.VITE_SUPABASE_URL || "";
+    const key = process.env.VITE_SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    
+    res.json({
+      VITE_SUPABASE_URL: url ? `${url.substring(0, 15)}...` : "MISSING",
+      VITE_SUPABASE_SERVICE_KEY: key ? `${key.substring(0, 10)}...` : "MISSING",
+      supabaseAdminInitialized: !!admin,
+      envKeys: Object.keys(process.env).filter(k => k.includes('SUPABASE'))
+    });
+  });
 
   // --- ADMIN QUERY ---
   const adminQueryHandler = async (req: express.Request, res: express.Response) => {

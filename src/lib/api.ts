@@ -54,17 +54,16 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
                          endpoint.includes('activate-package') || 
                          endpoint.includes('admin-query') || 
                          endpoint.includes('register-node') ||
-                         endpoint.includes('health');
+                         endpoint.includes('health') ||
+                         endpoint.includes('binance-rates') ||
+                         endpoint.includes('debug-env');
 
       if (isLocalApi) {
         // Map everything to /api/xxxxx
         const apiName = endpoint.split('/').pop()?.replace('api-', '') || endpoint;
-        url = `/api/${apiName}`;
+        const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+        url = `${origin}/api/${apiName}`;
         
-        // In browser, force absolute to be 100% sure we hit the same origin and port
-        if (typeof window !== 'undefined') {
-          url = new URL(url, window.location.origin).toString();
-        }
         console.log(`[API DEBUG] Local Route Mapped: ${endpoint} -> ${url}`);
       } else if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
         url = `${functionsUrl}/create-payment`;
