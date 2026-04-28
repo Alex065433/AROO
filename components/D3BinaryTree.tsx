@@ -22,7 +22,6 @@ interface NodeData {
   team_size?: { left: number; right: number };
   generationIds?: { id: string; gen: number }[];
   nodeCount?: number;
-  is_virtual?: boolean;
 }
 
 interface D3Node extends d3.HierarchyNode<NodeData> {
@@ -242,29 +241,9 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
           el.append("circle")
             .attr("r", 22)
             .attr("cy", -25)
-            .attr("fill", d.data.is_virtual ? "#1e1b4b" : "#1e2329")
-            .attr("stroke", d.data.is_virtual ? "#6366f1" : "#c0841a")
+            .attr("fill", "#1e2329")
+            .attr("stroke", "#c0841a")
             .attr("stroke-width", 2);
-
-          // Virtual Node Badge
-          if (d.data.is_virtual) {
-            const vBadge = el.append("g").attr("transform", "translate(0, -50)");
-            vBadge.append("rect")
-              .attr("x", -15)
-              .attr("y", -6)
-              .attr("width", 30)
-              .attr("height", 12)
-              .attr("rx", 4)
-              .attr("fill", "#6366f1");
-            
-            vBadge.append("text")
-              .attr("text-anchor", "middle")
-              .attr("y", 3)
-              .attr("fill", "white")
-              .attr("font-size", "7px")
-              .attr("font-weight", "black")
-              .text("VIRTUAL");
-          }
 
           // User Icon (Simplified)
           const avatarGroup = el.append("g").attr("transform", "translate(0, -25)");
@@ -289,7 +268,7 @@ export const D3BinaryTree: React.FC<D3BinaryTreeProps> = ({ data, onSelect, onIn
             .attr("height", labelHeight)
             .attr("rx", 8)
             .attr("fill", "#121214")
-            .attr("stroke", d.data.is_virtual ? "#6366f1" : "#c0841a")
+            .attr("stroke", "#c0841a")
             .attr("stroke-width", 1.5);
 
           el.append("text")

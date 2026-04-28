@@ -46,46 +46,36 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
                   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpobHhlaG53bmx6ZnRveWxhbmNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM1MTUwODUsImV4cCI6MjA4OTA5MTA4NX0.N1XqGjkL3LALBQH05UzBTmGQHLDUs2JkFMIXffTXBNU';
   const functionsUrl = `${supabaseUrl.endsWith('/') ? supabaseUrl.slice(0, -1) : supabaseUrl}/functions/v1`;
   
-    let url = endpoint;
-    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-
-    if (!endpoint.startsWith('http')) {
-      const isLocalApi = endpoint.includes('register-user') || 
-                         endpoint.includes('activate-package') || 
-                         endpoint.includes('admin-query') || 
-                         endpoint.includes('register-node') ||
-                         endpoint.includes('health') ||
-                         endpoint.includes('binance-rates') ||
-                         endpoint.includes('debug-env');
-
-      if (isLocalApi) {
-        // Map everything to /api/xxxxx
-        const apiName = endpoint.split('/').pop()?.replace('api-', '') || endpoint;
-        const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-        url = `${origin}/api/${apiName}`;
-        
-        console.log(`[API DEBUG] Local Route Mapped: ${endpoint} -> ${url}`);
-      } else if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
-        url = `${functionsUrl}/create-payment`;
-        console.log(`[API DEBUG] Mapped to create-payment: ${url}`);
-      } else if (endpoint.includes('/payments/status/') || endpoint.includes('/v1/tx/status/')) {
-        const id = endpoint.split('/').pop();
-        url = `${functionsUrl}/tx-status?id=${id}`;
-        console.log(`[API DEBUG] Mapped to tx-status: ${url}`);
-      } else if (endpoint.includes('/rates/binance')) {
-        url = `${functionsUrl}/binance-rates`;
-      } else if (endpoint.includes('/health')) {
-        url = `${functionsUrl}/health`;
-      } else if (endpoint.includes('/api/')) {
-        // Generic mapping for other /api/ routes
-        const endpointParts = endpoint.split('/api/');
-        const apiPath = endpointParts.length > 1 ? (endpointParts[1] || '').replace(/\//g, '-') : 'unknown';
-        url = `${functionsUrl}/${apiPath}`;
-      } else {
-        const baseUrl = getApiBaseUrl();
-        url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
-      }
+  let url = endpoint;
+  if (!endpoint.startsWith('http')) {
+    console.log(`[API DEBUG] Mapping endpoint: ${endpoint}`);
+    // Force mapping for specific routes to Supabase Edge Functions
+    if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
+      url = `${functionsUrl}/create-payment`;
+      console.log(`[API DEBUG] Mapped to create-payment: ${url}`);
+    } else if (endpoint.includes('/payments/status/') || endpoint.includes('/v1/tx/status/')) {
+      const id = endpoint.split('/').pop();
+      url = `${functionsUrl}/tx-status?id=${id}`;
+      console.log(`[API DEBUG] Mapped to tx-status: ${url}`);
+    } else if (endpoint.includes('/rates/binance')) {
+      url = `${functionsUrl}/binance-rates`;
+    } else if (endpoint.includes('/health')) {
+      url = `${functionsUrl}/health`;
+    } else if (endpoint === 'admin-query' || endpoint === '/admin-query') {
+      const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+      url = `${baseUrl}/api/admin-query`;
+      console.log(`[API DEBUG] Mapped to local admin-query: ${url}`);
+    } else if (endpoint.includes('/admin/query')) {
+    } else if (endpoint.includes('/api/')) {
+      // Generic mapping for other /api/ routes
+      const endpointParts = endpoint.split('/api/');
+      const apiPath = endpointParts.length > 1 ? (endpointParts[1] || '').replace(/\//g, '-') : 'unknown';
+      url = `${functionsUrl}/${apiPath}`;
+    } else {
+      const baseUrl = getApiBaseUrl();
+      url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
     }
+  }
   
   console.log(`[API] Fetching ${url}...`);
   

@@ -6,9 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
 import axios from "axios";
-import crypto from "crypto";
 
-import cors from "cors";
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,243 +56,16 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(cors());
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  
-  // High-level request logger for debugging
-  app.use((req, res, next) => {
-    logToFile(`[REQUEST] ${req.method} ${req.url} | Content-Type: ${req.headers['content-type']}`);
-    next();
-  });
+  app.use(express.json());
 
   // API routes
   app.get("/api/health", (req, res) => {
-    logToFile(`Health check from ${req.ip}`);
     res.json({ 
       status: "ok", 
       adminInitialized: !!getSupabaseAdmin(),
       environment: process.env.NODE_ENV || 'development'
     });
   });
-  app.get("/health", (req, res) => res.json({ status: "ok" }));
-
-  // --- REGISTRATION ---
-  const registerUserHandler = async (req: express.Request, res: express.Response) => {
-    logToFile(`Route Hit: ${req.method} ${req.url} | Body Keys: ${Object.keys(req.body).join(", ")}`);
-    const admin = getSupabaseAdmin();
-    if (!admin) {
-      logToFile("Error: Admin client not initialized for registration");
-      return res.status(500).json({ error: "Admin client not initialized" });
-    }
-
-    try {
-      const { 
-        email, 
-        password, 
-        sponsor_id, 
-        position, 
-        name, 
-        mobile,
-        isManualPlacement,
-        targetNodeId,
-        withdrawalPassword,
-        twoFactorPin
-      } = req.body;
-
-      // A. Identity Resolution
-      const resolveToUuid = async (idOrOp: string) => {
-        if (!idOrOp) return null;
-        if (/^[0-9a-f-]{36}$/i.test(idOrOp)) return idOrOp;
-        const { data } = await admin.from('profiles').select('id').ilike('operator_id', idOrOp).maybeSingle();
-        return data?.id;
-      };
-
-      let resolvedSponsorId = await resolveToUuid(sponsor_id);
-      if (!resolvedSponsorId) throw new Error(`Sponsor ${sponsor_id} not found.`);
-
-      let resolvedPlacementId: string | null = null;
-      let targetSide = (position || 'LEFT').toUpperCase();
-
-      if (isManualPlacement && targetNodeId) {
-        const manualTargetId = await resolveToUuid(targetNodeId);
-        if (!manualTargetId) throw new Error("Manual target node not found.");
-        resolvedSponsorId = manualTargetId;
-        resolvedPlacementId = manualTargetId;
-      } else {
-        let currentId = resolvedSponsorId;
-        let isLeafFound = false;
-        while (!isLeafFound) {
-          const { data: child } = await admin
-            .from('members')
-            .select('id')
-            .eq('placement_id', currentId)
-            .eq('position', targetSide)
-            .maybeSingle();
-          
-          if (child) {
-            currentId = child.id;
-          } else {
-            isLeafFound = true;
-            resolvedPlacementId = currentId;
-          }
-        }
-      }
-
-      if (!resolvedPlacementId) throw new Error("Placement calculation failed.");
-
-      // C. User Provisioning
-      const opId = `ARW-${Math.floor(100000 + Math.random() * 900000)}`;
-      const internalEmail = `${opId.toLowerCase()}@arowintrading-internal.com`;
-
-      const { data: authData, error: authErr } = await admin.auth.admin.createUser({
-        email: internalEmail,
-        password: password || 'Arowin123!',
-        email_confirm: true,
-        user_metadata: { name, operator_id: opId, real_email: email }
-      });
-
-      if (authErr) throw authErr;
-      const userId = authData.user.id;
-
-      // D. Database Assembly
-      await admin.from('profiles').insert({
-        id: userId,
-        email: internalEmail,
-        real_email: email,
-        name: name || 'Operator',
-        operator_id: opId,
-        sponsor_id: resolvedSponsorId,
-        parent_id: resolvedPlacementId,
-        side: targetSide,
-        position: targetSide.toLowerCase(),
-        withdrawal_password: withdrawalPassword,
-        two_factor_pin: twoFactorPin,
-        status: 'inactive'
-      });
-
-      await admin.from('members').insert({
-        id: userId,
-        sponsor_id: resolvedSponsorId,
-        placement_id: resolvedPlacementId,
-        position: targetSide,
-        is_active: false
-      });
-
-      await admin.from('user_wallets').insert({
-        id: userId,
-        master_vault: 0,
-        referral_box: 0,
-        matching_box: 0,
-        network_yield_box: 0,
-        rank_bonus_box: 0
-      });
-
-      return res.json({ 
-        success: true, 
-        id: userId, 
-        operator_id: opId, 
-        message: "Registration successful" 
-      });
-
-    } catch (err: any) {
-      logToFile(`Local Registration API failure: ${err.message}`);
-      console.error("Local Registration API failure:", err.message);
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  };
-
-  app.all(["/api/register-user", "/register-user", "/api/register-node", "/register-node"], registerUserHandler);
-
-  // --- ACTIVATION ---
-  const activatePackageHandler = async (req: express.Request, res: express.Response) => {
-    const admin = getSupabaseAdmin();
-    if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
-
-    try {
-      logToFile(`Activation Request: ${req.method} ${req.url}`);
-      const authHeader = req.headers.authorization;
-      if (!authHeader) throw new Error("Unauthorized");
-      const token = authHeader.replace("Bearer ", "");
-      const { data: { user }, error: authErr } = await admin.auth.getUser(token);
-      if (authErr || !user) throw new Error("Invalid Session");
-      
-      const userId = user.id;
-      const { amount } = req.body;
-      const activationAmount = Number(amount || 50);
-
-      // 1. Atomic Wallet Deduction
-      const { data: wallet } = await admin.from('user_wallets').select('master_vault').eq('id', userId).single();
-      if (!wallet || Number(wallet.master_vault) < activationAmount) throw new Error("INSUFFICIENT BALANCE");
-
-      const { error: deductErr } = await admin.from('user_wallets').update({ 
-        master_vault: (Number(wallet.master_vault) - activationAmount).toFixed(4)
-      }).eq('id', userId);
-
-      if (deductErr) throw new Error("Wallet deduction failed.");
-
-      // 2. Matrix Logic
-      const { data: masterProf } = await admin.from('profiles').select('operator_id, name').eq('id', userId).single();
-      const nodes = Math.floor(activationAmount / 50);
-      const yieldPerNode = 0; // Initial yield for new nodes
-      const matrixIds = [userId];
-      for(let i = 1; i < nodes; i++) {
-        const vId = crypto.randomUUID();
-        matrixIds[i] = vId;
-        
-        const parentIdx = Math.floor((i - 1) / 2);
-        const parentId = matrixIds[parentIdx];
-        const side = (i % 2 !== 0) ? 'LEFT' : 'RIGHT';
-        const vOpId = `${masterProf.operator_id}-V${i}`;
-
-        await admin.from('profiles').insert({
-          id: vId, operator_id: vOpId, name: `${masterProf.name} (V${i})`,
-          sponsor_id: userId, is_virtual: true, status: 'active', is_active: true,
-          active_package: 50, activated_at: new Date().toISOString()
-        });
-
-        await admin.from('members').insert({
-          id: vId, sponsor_id: userId, placement_id: parentId, position: side, is_active: true
-        });
-
-        // ROI & Team Collection
-        await admin.from('team_collection').insert({
-          uid: userId, 
-          node_id: vOpId, 
-          package_amount: 50, 
-          status: 'ACTIVE',
-          pending_yield: Number(yieldPerNode)
-        });
-
-        await admin.from('daily_roi_tracking').insert({
-          user_id: userId, 
-          node_id: vId,
-          operator_id: vOpId, 
-          daily_amount: 0.25, 
-          status: 'ACTIVE'
-        });
-      }
-
-      // Starter Qualification check (at least 2 virtual nodes)
-      if (nodes >= 3) {
-        await admin.from('profiles').update({ is_starter: true }).eq('id', userId);
-      }
-
-      await admin.from('profiles').update({
-        status: 'active', is_active: true, active_package: activationAmount,
-        activated_at: new Date().toISOString()
-      }).eq('id', userId);
-
-      return res.json({ success: true, message: "Activation successful" });
-
-    } catch (err: any) {
-      console.error("Local Activation API failure:", err.message);
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  };
-
-  app.all(["/api/activate-package", "/activate-package"], activatePackageHandler);
-
 
   app.get("/api/binance-rates", async (req, res) => {
     try {
@@ -323,8 +94,7 @@ async function startServer() {
     });
   });
 
-  // --- ADMIN QUERY ---
-  const adminQueryHandler = async (req: express.Request, res: express.Response) => {
+  app.post("/api/admin-query", async (req, res) => {
     const admin = getSupabaseAdmin();
     logToFile(`Admin Query Request: table=${req.body.table}, op=${req.body.operation}, adminInit=${!!admin}`);
     
@@ -448,13 +218,9 @@ async function startServer() {
       console.error("Admin Query Exception:", error);
       return res.status(500).json({ error: error.message });
     }
-  };
-
-  app.post("/api/admin-query", adminQueryHandler);
-  app.post("/admin-query", adminQueryHandler);
+  });
 
   app.post("/api/register-node", async (req, res) => {
-    logToFile(`Route Hit: POST /api/register-node`);
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
 
@@ -574,24 +340,6 @@ async function startServer() {
       console.error("Registration API failure:", err.message);
       return res.status(400).json({ success: false, error: err.message });
     }
-  });
-
-  // Catch-all for unmatched API routes
-  app.all("/api/*", (req, res) => {
-    logToFile(`404 Unmatched API Route: ${req.method} ${req.url}`);
-    res.status(404).json({ 
-      error: "API Route Not Found", 
-      method: req.method, 
-      path: req.url,
-      availableRoutes: [
-        "/api/health",
-        "/api/binance-rates",
-        "/api/register-user",
-        "/api/activate-package",
-        "/api/admin-query",
-        "/api/register-node"
-      ]
-    });
   });
 
   app.post("/api/admin-setup", async (req, res) => {

@@ -457,21 +457,18 @@ export const supabaseService = {
 
   async register(email: string, password: string, sponsorId: string, side: 'LEFT' | 'RIGHT' | 'AUTO', additionalData: any = {}) {
     try {
-      const isManualPlacement = !!additionalData.parentId;
-      
-      const result = await apiFetch('register-user', {
+      const result = await apiFetch('register-node', {
         method: 'POST',
         body: JSON.stringify({
           email,
           password,
           sponsor_id: sponsorId,
-          position: side === 'AUTO' ? 'LEFT' : side,
+          position: side === 'AUTO' ? null : side,
           name: additionalData.name,
           mobile: additionalData.mobile,
-          isManualPlacement,
-          targetNodeId: additionalData.parentId,
           withdrawalPassword: additionalData.withdrawalPassword,
-          twoFactorPin: additionalData.twoFactorPin
+          twoFactorPin: additionalData.twoFactorPin,
+          parentId: additionalData.parentId
         })
       });
 
@@ -490,20 +487,48 @@ export const supabaseService = {
     try {
       console.log(`[SERVICE] Activating package ${packageId} ($${amount}) for ${targetUserId || 'self'}`);
       
+      // 1. Extract active session safely
       const { data: { session } } = await supabase.auth.getSession();
+      
+      // 2. Explicitly convert amount to a number
       const packageAmount = Number(amount);
 
-      const data = await apiFetch('activate-package', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`
-        },
-        body: JSON.stringify({
+      // 3. Invoke Edge Function with headers
+      const { data, error } = await supabase.functions.invoke('activate-package', {
+        body: {
           packageId,
           amount: packageAmount,
           targetUserId 
-        })
+        },
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
+        }
       });
+
+      if (error) {
+        // Detailed error extraction from FunctionsHttpError
+        let errorMessage = error.message;
+        
+        // Try to see if there's a response body in the error
+        if (error instanceof Error && 'context' in error) {
+          const context = (error as any).context;
+          if (context && typeof context.json === 'function') {
+            try {
+              const errorData = await context.json();
+              errorMessage = errorData.error || errorData.message || errorMessage;
+            } catch (e) {
+              // If json() fails, try text()
+              try {
+                if (typeof context.text === 'function') {
+                  const errorText = await context.text();
+                  errorMessage = errorText || errorMessage;
+                }
+              } catch (e2) {}
+            }
+          }
+        }
+        throw new Error(errorMessage);
+      }
 
       if (data?.success === false || data?.error) {
         throw new Error(data.error || "Package activation failed on backend.");
@@ -1615,37 +1640,6 @@ export const supabaseService = {
     }
   },
 
-  async getDailyROI(uid: string) {
-    try {
-      const { data, error } = await supabase
-        .from('daily_roi_tracking')
-        .select('*')
-        .eq('uid', uid)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      return data || [];
-    } catch (err) {
-      console.error('Error in getDailyROI:', err);
-      return [];
-    }
-  },
-
-  async collectDailyROI(uid: string) {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const { data, error } = await supabase.functions.invoke('collect-roi', {
-        headers: { Authorization: `Bearer ${session?.access_token}` }
-      });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'ROI collection failed.');
-      return data;
-    } catch (err) {
-      console.error('Error in collectDailyROI:', err);
-      throw err;
-    }
-  },
-
   async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
       // Use the new Edge Function for consolidated yield collection
@@ -2325,8 +2319,7 @@ export const supabaseService = {
         side: node.side || 'ROOT',
         uid: node.id,
         sponsorId: node.sponsor_id || 'N/A',
-        email: node.email || 'N/A',
-        is_virtual: !!node.is_virtual
+        email: node.email || 'N/A'
       };
 
       const children = nodesByPlacement.get(node.id) || [];
