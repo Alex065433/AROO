@@ -11,7 +11,7 @@ interface TeamNode {
   package_name: string;
   package_amount: number;
   status: 'active' | 'inactive';
-  balance: number;
+  pending_yield: number;
   created_at: string;
 }
 
@@ -66,7 +66,7 @@ const TeamCollection: React.FC = () => {
     }
   };
 
-  const totalPending = nodes.reduce((acc, node) => acc + (node.balance || 0), 0);
+  const totalPending = nodes.reduce((acc, node) => acc + (node.pending_yield || 0), 0);
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] text-white p-4 md:p-8 space-y-6">
@@ -139,7 +139,7 @@ const TeamCollection: React.FC = () => {
                 <tr className="text-[10px] uppercase text-slate-500 font-black tracking-[0.2em] bg-white/[0.02]">
                   <th className="px-8 py-5">Node ID</th>
                   <th className="px-8 py-5">Node Alias</th>
-                  <th className="px-8 py-5">Package</th>
+                  <th className="px-8 py-5">Package Amount</th>
                   <th className="px-8 py-5">Pending Yield</th>
                   <th className="px-8 py-5">Activation</th>
                   <th className="px-8 py-5 text-center">Status</th>
@@ -170,10 +170,10 @@ const TeamCollection: React.FC = () => {
                         <span className="text-xs font-mono font-bold text-white group-hover:text-[#f08a1d] transition-colors">{node.node_id}</span>
                       </td>
                       <td className="px-8 py-6 text-xs font-bold text-slate-400 uppercase tracking-tight">{node.name}</td>
-                      <td className="px-8 py-6 text-xs font-bold text-white uppercase tracking-tight">{node.package_name}</td>
+                      <td className="px-8 py-6 text-xs font-bold text-white uppercase tracking-tight">${node.package_amount}</td>
                       <td className="px-8 py-6">
                         <div className="flex flex-col">
-                          <span className="text-sm font-black text-emerald-500">${(node.balance || 0).toFixed(4)}</span>
+                          <span className="text-sm font-black text-emerald-500">${(node.pending_yield || 0).toFixed(4)}</span>
                           <span className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Accruing...</span>
                         </div>
                       </td>

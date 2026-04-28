@@ -1618,6 +1618,37 @@ export const supabaseService = {
     }
   },
 
+  async getDailyROI(uid: string) {
+    try {
+      const { data, error } = await supabase
+        .from('daily_roi_tracking')
+        .select('*')
+        .eq('uid', uid)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error('Error in getDailyROI:', err);
+      return [];
+    }
+  },
+
+  async collectDailyROI(uid: string) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('collect-roi', {
+        headers: { Authorization: `Bearer ${session?.access_token}` }
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'ROI collection failed.');
+      return data;
+    } catch (err) {
+      console.error('Error in collectDailyROI:', err);
+      throw err;
+    }
+  },
+
   async collectFromNodes(uid: string, nodeIds: string[]) {
     try {
       // Use the new Edge Function for consolidated yield collection
@@ -2297,7 +2328,8 @@ export const supabaseService = {
         side: node.side || 'ROOT',
         uid: node.id,
         sponsorId: node.sponsor_id || 'N/A',
-        email: node.email || 'N/A'
+        email: node.email || 'N/A',
+        is_virtual: !!node.is_virtual
       };
 
       const children = nodesByPlacement.get(node.id) || [];

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import axios from 'axios';
 import { 
   TrendingUp, Info, Wallet, CheckCircle2, X, ArrowRight, RefreshCw, 
@@ -115,6 +116,30 @@ const Dashboard: React.FC = () => {
   const [adminFoundUser, setAdminFoundUser] = useState<any>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [dailyROI, setDailyROI] = useState<any[]>([]);
+
+  const handleActivate = async (amount: number) => {
+    setIsProcessing(true);
+    try {
+      // Call activate-package Edge Function via apiFetch
+      const response = await apiFetch('activate-package', {
+        method: 'POST',
+        body: JSON.stringify({ amount })
+      });
+      
+      toast.success(response.message || 'Package activated successfully!');
+      
+      // Immediately refresh all data to sync wallet balances and package status
+      await fetchAllData();
+      setActiveModal(null);
+    } catch (err: any) {
+      console.error('Activation failed:', err);
+      // Strictly display the error message from the backend
+      toast.error(err.message || 'Activation failed. Please check your balance.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleAdminSearch = async () => {
     if (!adminSearchId) return;
@@ -179,12 +204,13 @@ const Dashboard: React.FC = () => {
 
       const userId = user.id;
 
-      // 2. Fetch profile, income summary, user wallets, and transactions in parallel
-      const [profileResponse, incomeSummary, userWalletsData, transactionsData] = await Promise.all([
+      // 2. Fetch profile, income summary, user wallets, transactions and ROI in parallel
+      const [profileResponse, incomeSummary, userWalletsData, transactionsData, roiData] = await Promise.all([
         supabaseService.getUserProfile(userId),
         supabaseService.getIncomeSummary(userId),
         supabaseService.getUserWallets(userId),
-        supabaseService.getTransactions(userId)
+        supabaseService.getTransactions(userId),
+        supabaseService.getDailyROI(userId)
       ]);
 
       // 3. Handle profile data
@@ -216,6 +242,11 @@ const Dashboard: React.FC = () => {
       // 4. Handle transactions
       if (transactionsData) {
         setTransactions(transactionsData.slice(0, 5)); // Keep only latest 5
+      }
+
+      // 5. Handle ROI
+      if (roiData) {
+        setDailyROI(roiData);
       }
       
       return userId;
@@ -828,10 +859,14 @@ const Dashboard: React.FC = () => {
           </div>
           <div>
             <h2 className="text-xl md:text-4xl font-black text-slate-100 uppercase tracking-tight italic">AROWIN <span className="text-[#c0841a]">TRADING</span></h2>
-            <div className="flex flex-wrap justify-center md:justify-start items-center gap-2 md:gap-4 mt-2 md:mt-3">
+            <div className="flex flex-wrap justify-center md:justify-start items-center gap-2 md:gap-4 mt-2 md:mt-4">
                <span className="text-slate-500 text-[7px] md:text-[10px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">OPERATOR: {userData.name}</span>
                <div className="w-1 h-1 md:w-1.5 md:h-1.5 rounded-full bg-emerald-500" />
-               <span className="text-amber-500 text-[8px] md:text-[12px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">RANK: {RANK_NAMES[(userData.rank || 1) - 1] || 'Starter'}</span>
+               <span className={`px-2 py-0.5 rounded text-[7px] md:text-[10px] font-black uppercase tracking-widest ${userData.is_starter ? 'bg-blue-500/10 text-blue-400' : 'bg-orange-500/10 text-orange-400'}`}>
+                 {userData.is_starter ? 'STARTER' : 'PRO'}
+               </span>
+               <div className="w-1 h-1 md:w-1.5 md:h-1.5 rounded-full bg-emerald-500" />
+               <span className="text-amber-500 text-[8px] md:text-[12px] font-black uppercase tracking-[0.2em] md:tracking-[0.4em]">RANK: {userData.rank_name || 'PARTNER'}</span>
             </div>
           </div>
         </div>
@@ -894,6 +929,59 @@ const Dashboard: React.FC = () => {
           />
         ))}
       </div>
+
+        {/* Passive Income: Daily ROI Section */}
+        <div className="max-w-4xl mx-auto px-4 mt-12 mb-8">
+          <div className="bg-[#111112] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl relative">
+            <div className="absolute top-0 right-0 p-8 opacity-10">
+               <Zap size={120} className="text-amber-500" />
+            </div>
+            
+            <div className="px-8 py-6 border-b border-white/5 flex justify-between items-center relative z-10">
+               <h3 className="text-white text-[10px] md:text-xs font-black uppercase tracking-[0.2em] flex items-center gap-3">
+                 <Zap size={16} className="text-amber-500" />
+                 PASSIVE INCOME: DAILY ROI ACCRUAL
+               </h3>
+               <div className="flex items-center gap-2">
+                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                 <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">0.5% DAILY</span>
+               </div>
+            </div>
+
+            <div className="p-8 relative z-10">
+              {dailyROI && dailyROI.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                   <div className="space-y-4">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active ROI Nodes</p>
+                      <div className="text-3xl font-black text-white">{dailyROI.length} <span className="text-xs text-slate-600 font-bold ml-1">NODES ACCRUING</span></div>
+                      <p className="text-[10px] text-slate-600 font-bold leading-relaxed">
+                        Daily yield is automatically calculated and synchronized to your Capping Box every 24 hours based on your active node liquidity.
+                      </p>
+                   </div>
+                   <div className="bg-white/5 rounded-2xl p-6 flex flex-col justify-center items-center text-center">
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Capping Box Total</p>
+                      <p className="text-4xl font-black text-amber-500 tracking-tighter">${(userWallets?.capping_box?.balance || 0).toFixed(2)}</p>
+                      <button 
+                        onClick={() => handleClaim('capping_box')}
+                        disabled={isProcessing || (userWallets?.capping_box?.balance || 0) <= 0}
+                        className="mt-4 px-6 py-2 bg-amber-600/20 text-amber-500 border border-amber-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-600 hover:text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        {isProcessing ? 'SYNCHRONIZING...' : 'CLAIM TO VAULT'}
+                      </button>
+                   </div>
+                </div>
+              ) : (
+                <div className="py-8 text-center space-y-4 bg-white/[0.02] rounded-2xl border border-white/5 border-dashed">
+                   <AlertCircle className="mx-auto text-slate-700" size={32} />
+                   <div className="space-y-1">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">No Active ROI Nodes</p>
+                     <p className="text-[9px] text-slate-600 font-bold uppercase tracking-widest italic">Activate a package to start passive accrual</p>
+                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
       {/* Transaction History Section */}
       <div className="max-w-4xl mx-auto px-4">

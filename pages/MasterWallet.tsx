@@ -6,6 +6,7 @@ import { supabaseService } from '../services/supabaseService';
 import { apiFetch } from '../src/lib/api';
 import { copyToClipboard as copyUtil } from '../src/lib/clipboard';
 import { useUser } from '../src/context/UserContext';
+import { toast } from 'sonner';
 import { 
   Wallet, ArrowUpRight, ArrowDownLeft, ArrowRightLeft, 
   History, Plus, X, ArrowRight, CheckCircle2, RefreshCw,
@@ -198,9 +199,16 @@ const MasterWallet: React.FC = () => {
       try {
         const cost = Number(amountToUse);
         setIsProcessing(true);
+        setError(null);
         
-        // Use Node + amount as a generic package ID if specific one isn't passed
-        await supabaseService.activatePackage(`NODE-${cost}`, cost);
+        // Call the Edge Function via our standardized handleActivate pattern
+        // which uses apiFetch under the hood for package activation
+        const data = await apiFetch('activate-package', {
+          method: 'POST',
+          body: JSON.stringify({ amount: cost })
+        });
+        
+        toast.success(data.message || 'Node Activation Synchronized!');
         
         // Refresh profile from backend to sync state
         await refreshProfile();
@@ -214,7 +222,8 @@ const MasterWallet: React.FC = () => {
         return;
       } catch (err: any) {
         console.error('Error activating package:', err);
-        setError(err.message || 'Activation failed. Please try again.');
+        setError(err.message || 'Activation failed. Please check your master vault balance.');
+        toast.error(err.message || 'Activation failed.');
         setIsProcessing(false);
         return;
       }
