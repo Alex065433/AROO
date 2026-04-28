@@ -61,6 +61,10 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
       url = `${functionsUrl}/binance-rates`;
     } else if (endpoint.includes('/health')) {
       url = `${functionsUrl}/health`;
+    } else if (endpoint === 'register-user' || endpoint === 'activate-package') {
+      const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+      url = `${baseUrl}/api/${endpoint}`;
+      console.log(`[API DEBUG] Mapped to local ${endpoint}: ${url}`);
     } else if (endpoint === 'admin-query' || endpoint === '/admin-query') {
       const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
       url = `${baseUrl}/api/admin-query`;
