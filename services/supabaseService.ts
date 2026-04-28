@@ -493,20 +493,17 @@ export const supabaseService = {
       const { data: { session } } = await supabase.auth.getSession();
       const packageAmount = Number(amount);
 
-      const { data, error } = await supabase.functions.invoke('activate-package', {
-        body: {
+      const data = await apiFetch('activate-package', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({
           packageId,
           amount: packageAmount,
           targetUserId 
-        },
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`
-        }
+        })
       });
-
-      if (error) {
-        throw new Error(error.message || "Edge Function Connection Error");
-      }
 
       if (data?.success === false || data?.error) {
         throw new Error(data.error || "Package activation failed on backend.");

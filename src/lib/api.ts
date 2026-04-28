@@ -50,19 +50,22 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
     const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 
     if (!endpoint.startsWith('http')) {
-      console.log(`[API DEBUG] Mapping endpoint: ${endpoint}`);
-      
-      const isLocalApi = endpoint === 'register-user' || endpoint === '/api/register-user' || 
-                         endpoint === 'activate-package' || endpoint === '/api/activate-package' ||
-                         endpoint === 'admin-query' || endpoint === '/admin-query' || endpoint === '/api/admin-query' ||
-                         endpoint === 'register-node' || endpoint === '/api/register-node';
+      const isLocalApi = endpoint.includes('register-user') || 
+                         endpoint.includes('activate-package') || 
+                         endpoint.includes('admin-query') || 
+                         endpoint.includes('register-node') ||
+                         endpoint.includes('health');
 
       if (isLocalApi) {
-        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/api/${endpoint.replace('api/', '')}`;
-        url = cleanEndpoint.startsWith('/api/') ? cleanEndpoint : `/api/${cleanEndpoint.replace(/^\//, '')}`;
-        // Ensure it always starts with /api/ correctly
-        if (!url.startsWith('/api/')) url = `/api/${url.replace(/^\//, '')}`;
-        console.log(`[API DEBUG] Forced relative local route: ${url}`);
+        // Map everything to /api/xxxxx
+        const apiName = endpoint.split('/').pop()?.replace('api-', '') || endpoint;
+        url = `/api/${apiName}`;
+        
+        // In browser, force absolute to be 100% sure we hit the same origin and port
+        if (typeof window !== 'undefined') {
+          url = new URL(url, window.location.origin).toString();
+        }
+        console.log(`[API DEBUG] Local Route Mapped: ${endpoint} -> ${url}`);
       } else if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
         url = `${functionsUrl}/create-payment`;
         console.log(`[API DEBUG] Mapped to create-payment: ${url}`);

@@ -71,12 +71,14 @@ async function startServer() {
 
   // API routes
   app.get("/api/health", (req, res) => {
+    logToFile(`Health check from ${req.ip}`);
     res.json({ 
       status: "ok", 
       adminInitialized: !!getSupabaseAdmin(),
       environment: process.env.NODE_ENV || 'development'
     });
   });
+  app.get("/health", (req, res) => res.json({ status: "ok" }));
 
   app.get("/api/binance-rates", async (req, res) => {
     try {
@@ -105,11 +107,12 @@ async function startServer() {
     });
   });
 
-  app.post("/api/register-user", async (req, res) => {
-    logToFile(`Route Hit: POST /api/register-user | Body: ${JSON.stringify(req.body).substring(0, 100)}...`);
+  // Handle both /api/register-user and /register-user for robustness
+  const registerUserHandler = async (req: express.Request, res: express.Response) => {
+    logToFile(`Route Hit: ${req.method} ${req.url} | Body Keys: ${Object.keys(req.body).join(", ")}`);
     const admin = getSupabaseAdmin();
     if (!admin) {
-      logToFile("Error: Admin client not initialized for register-user");
+      logToFile("Error: Admin client not initialized for registration");
       return res.status(500).json({ error: "Admin client not initialized" });
     }
 
@@ -223,16 +226,23 @@ async function startServer() {
       });
 
     } catch (err: any) {
+      logToFile(`Local Registration API failure: ${err.message}`);
       console.error("Local Registration API failure:", err.message);
       return res.status(400).json({ success: false, error: err.message });
     }
-  });
+  };
 
-  app.post("/api/activate-package", async (req, res) => {
+  app.post("/api/register-user", registerUserHandler);
+  app.post("/register-user", registerUserHandler);
+  app.post("/api/register-node", registerUserHandler); // Node registration uses same logic often
+
+  // Handle both /api/activate-package and /activate-package
+  const activatePackageHandler = async (req: express.Request, res: express.Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
 
     try {
+      logToFile(`Activation Request: ${req.method} ${req.url}`);
       const authHeader = req.headers.authorization;
       if (!authHeader) throw new Error("Unauthorized");
       const token = authHeader.replace("Bearer ", "");
@@ -311,9 +321,13 @@ async function startServer() {
       console.error("Local Activation API failure:", err.message);
       return res.status(400).json({ success: false, error: err.message });
     }
-  });
+  };
 
-  app.post("/api/admin-query", async (req, res) => {
+  app.post("/api/activate-package", activatePackageHandler);
+  app.post("/activate-package", activatePackageHandler);
+
+  // --- ADMIN QUERY ---
+  const adminQueryHandler = async (req: express.Request, res: express.Response) => {
     const admin = getSupabaseAdmin();
     logToFile(`Admin Query Request: table=${req.body.table}, op=${req.body.operation}, adminInit=${!!admin}`);
     
@@ -437,7 +451,10 @@ async function startServer() {
       console.error("Admin Query Exception:", error);
       return res.status(500).json({ error: error.message });
     }
-  });
+  };
+
+  app.post("/api/admin-query", adminQueryHandler);
+  app.post("/admin-query", adminQueryHandler);
 
   app.post("/api/register-node", async (req, res) => {
     logToFile(`Route Hit: POST /api/register-node`);
