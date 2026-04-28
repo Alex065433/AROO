@@ -52,18 +52,17 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
     if (!endpoint.startsWith('http')) {
       console.log(`[API DEBUG] Mapping endpoint: ${endpoint}`);
       
-      if (endpoint === 'register-user' || endpoint === '/api/register-user') {
-        url = `${currentOrigin}/api/register-user`;
-        console.log(`[API DEBUG] Forced local register: ${url}`);
-      } else if (endpoint === 'activate-package' || endpoint === '/api/activate-package') {
-        url = `${currentOrigin}/api/activate-package`;
-        console.log(`[API DEBUG] Forced local activate: ${url}`);
-      } else if (endpoint === 'admin-query' || endpoint === '/admin-query' || endpoint === '/api/admin-query') {
-        url = `${currentOrigin}/api/admin-query`;
-        console.log(`[API DEBUG] Forced local admin-query: ${url}`);
-      } else if (endpoint === 'register-node') {
-        url = `${currentOrigin}/api/register-node`;
-        console.log(`[API DEBUG] Forced local register-node: ${url}`);
+      const isLocalApi = endpoint === 'register-user' || endpoint === '/api/register-user' || 
+                         endpoint === 'activate-package' || endpoint === '/api/activate-package' ||
+                         endpoint === 'admin-query' || endpoint === '/admin-query' || endpoint === '/api/admin-query' ||
+                         endpoint === 'register-node' || endpoint === '/api/register-node';
+
+      if (isLocalApi) {
+        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/api/${endpoint.replace('api/', '')}`;
+        url = cleanEndpoint.startsWith('/api/') ? cleanEndpoint : `/api/${cleanEndpoint.replace(/^\//, '')}`;
+        // Ensure it always starts with /api/ correctly
+        if (!url.startsWith('/api/')) url = `/api/${url.replace(/^\//, '')}`;
+        console.log(`[API DEBUG] Forced relative local route: ${url}`);
       } else if (endpoint.includes('/payments/create') || endpoint.includes('/v1/payment/create') || endpoint.includes('/v1/tx/new')) {
         url = `${functionsUrl}/create-payment`;
         console.log(`[API DEBUG] Mapped to create-payment: ${url}`);
@@ -75,17 +74,16 @@ export const apiFetch = async (endpoint: string, options: any = {}, retries = 3)
         url = `${functionsUrl}/binance-rates`;
       } else if (endpoint.includes('/health')) {
         url = `${functionsUrl}/health`;
-      } else if (endpoint.includes('/admin/query')) {
-    } else if (endpoint.includes('/api/')) {
-      // Generic mapping for other /api/ routes
-      const endpointParts = endpoint.split('/api/');
-      const apiPath = endpointParts.length > 1 ? (endpointParts[1] || '').replace(/\//g, '-') : 'unknown';
-      url = `${functionsUrl}/${apiPath}`;
-    } else {
-      const baseUrl = getApiBaseUrl();
-      url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+      } else if (endpoint.includes('/api/')) {
+        // Generic mapping for other /api/ routes
+        const endpointParts = endpoint.split('/api/');
+        const apiPath = endpointParts.length > 1 ? (endpointParts[1] || '').replace(/\//g, '-') : 'unknown';
+        url = `${functionsUrl}/${apiPath}`;
+      } else {
+        const baseUrl = getApiBaseUrl();
+        url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+      }
     }
-  }
   
   console.log(`[API] Fetching ${url}...`);
   

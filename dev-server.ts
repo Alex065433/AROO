@@ -8,6 +8,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import crypto from "crypto";
 
+import cors from "cors";
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,7 +58,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(cors());
+  app.use(express.json({ limit: '10mb' }));
   
   // Request Logger
   app.use((req, res, next) => {
@@ -104,8 +106,12 @@ async function startServer() {
   });
 
   app.post("/api/register-user", async (req, res) => {
+    logToFile(`Route Hit: POST /api/register-user | Body: ${JSON.stringify(req.body).substring(0, 100)}...`);
     const admin = getSupabaseAdmin();
-    if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
+    if (!admin) {
+      logToFile("Error: Admin client not initialized for register-user");
+      return res.status(500).json({ error: "Admin client not initialized" });
+    }
 
     try {
       const { 
@@ -434,6 +440,7 @@ async function startServer() {
   });
 
   app.post("/api/register-node", async (req, res) => {
+    logToFile(`Route Hit: POST /api/register-node`);
     const admin = getSupabaseAdmin();
     if (!admin) return res.status(500).json({ error: "Admin client not initialized" });
 
@@ -553,6 +560,24 @@ async function startServer() {
       console.error("Registration API failure:", err.message);
       return res.status(400).json({ success: false, error: err.message });
     }
+  });
+
+  // Catch-all for unmatched API routes
+  app.all("/api/*", (req, res) => {
+    logToFile(`404 Unmatched API Route: ${req.method} ${req.url}`);
+    res.status(404).json({ 
+      error: "API Route Not Found", 
+      method: req.method, 
+      path: req.url,
+      availableRoutes: [
+        "/api/health",
+        "/api/binance-rates",
+        "/api/register-user",
+        "/api/activate-package",
+        "/api/admin-query",
+        "/api/register-node"
+      ]
+    });
   });
 
   app.post("/api/admin-setup", async (req, res) => {
