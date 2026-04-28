@@ -157,9 +157,33 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     );
 
+    // Profile REAL-TIME SYNC
+    let profileSubscription: any = null;
+    
+    const setupProfileSubscription = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        profileSubscription = supabase
+          .channel('any:profiles')
+          .on('postgres_changes', { 
+            event: 'UPDATE', 
+            schema: 'public', 
+            table: 'profiles', 
+            filter: `id=eq.${session.user.id}` 
+          }, (payload) => {
+            console.log('Real-time Profile Update Received:', payload.new);
+            setProfile(payload.new as UserProfile);
+          })
+          .subscribe();
+      }
+    };
+
+    setupProfileSubscription();
+
     return () => {
       mounted = false;
       authSubscription.unsubscribe();
+      if (profileSubscription) profileSubscription.unsubscribe();
     };
   }, []);
 

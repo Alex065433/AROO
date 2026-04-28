@@ -68,38 +68,42 @@ serve(async (req) => {
 
             console.log(`[BINARY MATCH] Matched ${matchingVolume} PV for parent ${parentId}. Commission: $${commission}`);
 
-            // Update parent's wallet and total earned
+            // Update parent's profile and matching_income
             const { data: profile, error: profError } = await supabaseAdmin
               .from('profiles')
-              .select('wallet_balance, wallets, total_income')
+              .select('matching_income, wallet_balance, total_income')
               .eq('id', parentId)
               .single();
 
             if (!profError && profile) {
-                const newBalance = (Number(profile.wallet_balance) || 0) + commission;
-                const newTotalIncome = (Number(profile.total_income) || 0) + commission;
+                const newMatchingIncome = (Number(profile.matching_income || 0) + commission).toFixed(4);
+                const newBalance = (Number(profile.wallet_balance || 0) + commission).toFixed(4);
+                const newTotalIncome = (Number(profile.total_income || 0) + commission).toFixed(4);
                 
-                const updatedWallets = { ...profile.wallets };
-                if (updatedWallets.master) {
-                    updatedWallets.master.balance = newBalance;
-                }
-
                 await supabaseAdmin
                   .from('profiles')
                   .update({
+                      matching_income: newMatchingIncome,
                       wallet_balance: newBalance,
-                      total_income: newTotalIncome,
-                      wallets: updatedWallets
+                      total_income: newTotalIncome
                   })
                   .eq('id', parentId);
+
+                // Update user_wallets for backend sync
+                const { data: wallet } = await supabaseAdmin.from('user_wallets').select('matching_box').eq('id', parentId).single();
+                if (wallet) {
+                    await supabaseAdmin.from('user_wallets').update({
+                        matching_box: (Number(wallet.matching_box || 0) + commission).toFixed(4),
+                        updated_at: new Date().toISOString()
+                    }).eq('id', parentId);
+                }
 
                 // Log matching commission
                 await supabaseAdmin.from('transactions').insert({
                     user_id: parentId,
-                    uid: parentId,
                     amount: commission,
-                    type: 'matching',
-                    description: `Binary Matching Dividend: 10% on ${matchingVolume} PV`,
+                    type: 'MATCHING_BONUS',
+                    description: `Binary Matching Dividend (10%) on ${matchingVolume} USDT Volume`,
                     status: 'completed'
                 });
             }

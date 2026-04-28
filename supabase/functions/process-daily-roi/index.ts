@@ -56,7 +56,7 @@ serve(async (req) => {
           continue;
         }
 
-        if (matchingCount && matchingCount > 0) {
+        if (false) { // Condition removed: Matching bonus does not stop ROI in this version
           // STOP ROI for this node permanently
           await supabaseAdmin
             .from("daily_roi_tracking")
@@ -71,37 +71,43 @@ serve(async (req) => {
           const nextDaysCount = Number(roi.total_days_paid) + 1;
           const isNowCompleted = nextDaysCount >= Number(roi.max_days);
 
-          // Update Wallet: Add to network_yield_box
-          const { data: wallet, error: walletQueryErr } = await supabaseAdmin
-            .from("user_wallets")
-            .select("network_yield_box")
-            .eq("id", roi.user_id)
+          // Update Team Collection: Add to pending_yield
+          const { data: teamCol, error: tColErr } = await supabaseAdmin
+            .from("team_collection")
+            .select("id, pending_yield")
+            .eq("uid", roi.user_id)
+            .eq("node_id", roi.node_id)
             .single();
 
-          if (walletQueryErr) {
-            console.error(`[ROI ERROR] No wallet for ${roi.user_id}:`, walletQueryErr.message);
+          if (tColErr && tColErr.code !== 'PGRST116') { // PGRST116 is not found
+            console.error(`[ROI ERROR] Team collection fetch error for ${roi.user_id}:`, tColErr.message);
             continue;
           }
 
-          // Transaction-like sequential updates
-          const { error: walletUpdateErr } = await supabaseAdmin
-            .from("user_wallets")
-            .update({ 
-               network_yield_box: Number(wallet.network_yield_box || 0) + amountToPay,
-               updated_at: new Date().toISOString()
-            })
-            .eq("id", roi.user_id);
+          if (!teamCol) {
+            // Create record if it doesn't exist
+            await supabaseAdmin.from("team_collection").insert({
+                uid: roi.user_id,
+                node_id: roi.node_id,
+                pending_yield: amountToPay,
+                updated_at: new Date().toISOString()
+            });
+          } else {
+            // Update existing
+            await supabaseAdmin.from("team_collection").update({
+                pending_yield: Number(teamCol.pending_yield || 0) + amountToPay,
+                updated_at: new Date().toISOString()
+            }).eq("id", teamCol.id);
+          }
 
-          if (walletUpdateErr) throw walletUpdateErr;
-
-          // Record in Income Ledger
+          // Record in Income Ledger (as pending)
           await supabaseAdmin.from("income_ledger").insert({
             user_id: roi.user_id,
             earned_by_node_id: roi.node_id,
             amount: amountToPay,
-            type: "DAILY_ROI",
+            type: "DAILY_ROI_PENDING",
             description: `Daily ROI Payout (Day ${nextDaysCount}/200)`,
-            status: "CLAIMED"
+            status: "PENDING_COLLECTION"
           });
 
           // Update ROI Tracking

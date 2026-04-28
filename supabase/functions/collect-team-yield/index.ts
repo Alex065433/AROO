@@ -47,15 +47,32 @@ serve(async (req) => {
     const totalToCollect = collection.reduce((sum, item) => sum + (Number(item.pending_yield) || 0), 0);
 
     // 3. ATOMIC UPDATES
-    // A. Add to wallet
-    const { data: wallet, error: wErr } = await supabaseAdmin.from('user_wallets').select('master_vault').eq('id', userId).single();
-    if (wErr || !wallet) throw new Error("WALLET_NOT_FOUND");
+    // A. Add to yield box (yield_income in profiles)
+    const { data: profile, error: pErr } = await supabaseAdmin.from('profiles').select('yield_income, wallet_balance, network_yield_box').eq('id', userId).single();
+    if (pErr || !profile) throw new Error("PROFILE_NOT_FOUND");
 
-    const newVaultBalance = (Number(wallet.master_vault) + totalToCollect).toFixed(4);
-    await supabaseAdmin.from('user_wallets').update({ 
-        master_vault: newVaultBalance,
-        updated_at: new Date().toISOString()
+    const newYieldIncome = (Number(profile.yield_income || 0) + totalToCollect).toFixed(4);
+    const newWalletBalance = (Number(profile.wallet_balance || 0) + totalToCollect).toFixed(4);
+
+    await supabaseAdmin.from('profiles').update({ 
+        yield_income: newYieldIncome,
+        wallet_balance: newWalletBalance,
+        network_yield_box: newYieldIncome // Syncing dual column if exists
     }).eq('id', userId);
+
+    // Sync with user_wallets for backend compatibility
+    const { data: wallet } = await supabaseAdmin.from('user_wallets').select('network_yield_box').eq('id', userId).single();
+    if (wallet) {
+        await supabaseAdmin.from('user_wallets').update({
+            network_yield_box: (Number(wallet.network_yield_box || 0) + totalToCollect).toFixed(4),
+            updated_at: new Date().toISOString()
+        }).eq('id', userId);
+    } else {
+        await supabaseAdmin.from('user_wallets').insert({
+            id: userId,
+            network_yield_box: totalToCollect.toFixed(4)
+        });
+    }
 
     // B. Reset pending_yield in team_collection
     // Using a loop for precision since supabaseAdmin update doesn't support multiple where clauses in one batch easily for unique resets per ID without filter
@@ -79,7 +96,7 @@ serve(async (req) => {
         success: true, 
         message: `Successfully collected $${totalToCollect.toFixed(2)} from ${collection.length} nodes.`,
         collected_amount: totalToCollect,
-        new_vault_balance: newVaultBalance
+        new_balance: newWalletBalance
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,

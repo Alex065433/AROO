@@ -41,35 +41,34 @@ serve(async (req) => {
         throw new Error("INVALID_AMOUNT: Package must be a multiple of $50");
     }
 
-    // A. FETCH WALLET of the CALLER (The one paying)
-    const { data: wallet, error: wErr } = await supabaseAdmin
-        .from('user_wallets')
-        .select('master_vault')
-        .eq('id', userId)
-        .single();
+    // A. FETCH PROFILE of the CALLER (The one paying)
+    const { data: callerProfile, error: cpErr } = await supabaseAdmin.from('profiles').select('wallet_balance, master_vault, master_wallet').eq('id', userId).single();
+    if (cpErr || !callerProfile) throw new Error("CALLER_PROFILE_NOT_FOUND");
     
     // FETCH PROFILE of the EFFECTIVE USER (The one receiving)
     const { data: profile, error: pErr } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id, master_vault').eq('id', effectiveUserId).single();
     if (pErr || !profile) throw new Error("TARGET_USER_PROFILE_NOT_FOUND");
 
-    if (wErr || !wallet) throw new Error("WALLET_NOT_FOUND");
+    const currentBalance = Number(callerProfile.master_vault || callerProfile.master_wallet || callerProfile.wallet_balance || 0);
     
     // Check if the caller has enough balance
-    if (Number(wallet.master_vault) < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
+    if (currentBalance < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
 
     // B. ATOMIC DEDUCTION from CALLER
-    const { error: dedErr } = await supabaseAdmin.from('user_wallets').update({ 
-        master_vault: (Number(wallet.master_vault) - amount).toFixed(4),
+    const newBalance = (currentBalance - amount).toFixed(4);
+    
+    // Update Profiles (Source of Truth)
+    await supabaseAdmin.from('profiles').update({
+        master_vault: newBalance,
+        master_wallet: newBalance,
+        wallet_balance: newBalance
+    }).eq('id', userId);
+
+    // Sync with user_wallets for backend compatibility
+    await supabaseAdmin.from('user_wallets').update({ 
+        master_vault: newBalance,
         updated_at: new Date().toISOString()
     }).eq('id', userId);
-
-    if (dedErr) throw new Error(`DEDUCTION_FAILED: ${dedErr.message}`);
-
-    // Update profiles mirror for CALLER
-    await supabaseAdmin.from('profiles').update({
-        master_vault: (Number(wallet.master_vault) - amount).toFixed(4)
-    }).eq('id', userId);
-
 
     // 2. THE BALANCED TRIANGLE ENGINE ($50 BASE)
     const totalUnits = Math.floor(amount / 50);
@@ -84,6 +83,27 @@ serve(async (req) => {
     const yieldPerNode = virtualCount > 0 ? (totalInternalProfit / virtualCount).toFixed(4) : "0";
 
     const matrix = [effectiveUserId];
+    // 2.0 TRACK MASTER NODE YIELD
+    const { data: existingMaster } = await supabaseAdmin.from('daily_roi_tracking').select('id').eq('node_id', profile.operator_id).maybeSingle();
+    if (!existingMaster) {
+        await supabaseAdmin.from('team_collection').insert({
+            uid: effectiveUserId,
+            node_id: profile.operator_id,
+            package_amount: 50,
+            status: 'active',
+            pending_yield: 0
+        });
+        await supabaseAdmin.from('daily_roi_tracking').insert({
+            user_id: effectiveUserId,
+            node_id: profile.operator_id,
+            activation_amount: 50,
+            daily_percent: 0.50,
+            status: 'active',
+            max_limit: 150,
+            description: `Passive ROI for Master node ${profile.operator_id}`
+        });
+    }
+
     // Loop for Virtual Node Generation
     for (let i = 1; i <= virtualCount; i++) {
         const vId = crypto.randomUUID();
@@ -136,6 +156,24 @@ serve(async (req) => {
             max_limit: 150, // Example: 3x ROI
             description: `Passive ROI for node ${vOpId}`
         });
+
+        // E. DISTRIBUTE BINARY VOLUME FOR VIRTUAL NODE
+        try {
+            await supabaseAdmin.functions.invoke('matching-engine', {
+                body: { userId: vId, volume: 50 }
+            });
+        } catch (e) {
+            console.error(`Binary volume distribution failed for node ${vId}`, e);
+        }
+    }
+
+    // 2.1 DISTRIBUTE BINARY VOLUME FOR MASTER NODE (Always $50 base for the triangle entry)
+    try {
+        await supabaseAdmin.functions.invoke('matching-engine', {
+            body: { userId: effectiveUserId, volume: 50 }
+        });
+    } catch (e) {
+        console.error(`Binary volume distribution failed for master ID ${effectiveUserId}`, e);
     }
 
     // 3. UPLINE PAYOUTS (EXTERNAL)
@@ -170,43 +208,8 @@ serve(async (req) => {
         } catch (e) { console.error("Sponsor payout failed", e); }
     }
 
-    // 1% Matching Bonus to 10 Upline Levels
-    try {
-        let currentUplineId = effectiveUserId;
-        for (let level = 1; level <= 10; level++) {
-            const { data: member } = await supabaseAdmin.from('members').select('placement_id').eq('id', currentUplineId).single();
-            if (!member || !member.placement_id) break;
-            
-            const uplineId = member.placement_id;
-            const { data: uplineWallet } = await supabaseAdmin.from('user_wallets').select('matching_box').eq('id', uplineId).single();
-            
-            if (uplineWallet) {
-                const bonus = amount * 0.01;
-                await supabaseAdmin.from('user_wallets').update({
-                    matching_box: (Number(uplineWallet.matching_box) + bonus).toFixed(4),
-                    updated_at: new Date().toISOString()
-                }).eq('id', uplineId);
-
-                // Update profiles mirror for Upline
-                const { data: uProf } = await supabaseAdmin.from('profiles').select('matching_income, wallet_balance').eq('id', uplineId).single();
-                if (uProf) {
-                    await supabaseAdmin.from('profiles').update({
-                        matching_income: (Number(uProf.matching_income || 0) + bonus).toFixed(4),
-                        wallet_balance: (Number(uProf.wallet_balance || 0) + bonus).toFixed(4)
-                    }).eq('id', uplineId);
-                }
-
-                await supabaseAdmin.from('transactions').insert({
-                    user_id: uplineId,
-                    amount: bonus,
-                    type: 'MATCHING_BONUS',
-                    status: 'completed',
-                    description: `Level ${level} matching bonus from ${profile.operator_id}`
-                });
-            }
-            currentUplineId = uplineId;
-        }
-    } catch (e) { console.error("Upline matching loop failed", e); }
+    // Binary volume distribution is handled by matching-engine (10% on pairs)
+    // No additional level matching required.
 
     // Update Master Profile
     await supabaseAdmin.from('profiles').update({ 

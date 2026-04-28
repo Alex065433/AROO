@@ -222,6 +222,13 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (!userData) return;
     const userId = userData.id;
+    const profilesSubscription = supabase
+      .channel('public:profiles')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, () => {
+        fetchAllData(false); // Silent refresh
+      })
+      .subscribe();
+    
     const transactionsSubscription = supabase
       .channel('public:transactions')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `uid=eq.${userId}` }, () => {
@@ -237,6 +244,7 @@ const Dashboard: React.FC = () => {
       .subscribe();
 
     return () => {
+      profilesSubscription.unsubscribe();
       transactionsSubscription.unsubscribe();
       paymentsSubscription.unsubscribe();
     };
