@@ -71,8 +71,7 @@ serve(async (req) => {
         .update({ 
             wallet_balance: newBalance, 
             wallets: newWallets,
-            master_vault: newBalance,
-            master_wallet: newBalance
+            master_wallet: newBalance // master_vault removed as it's missing from profiles schema cache
         })
         .eq("id", user_id);
         

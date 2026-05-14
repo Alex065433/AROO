@@ -42,14 +42,14 @@ serve(async (req) => {
     }
 
     // A. FETCH PROFILE of the CALLER (The one paying)
-    const { data: callerProfile, error: cpErr } = await supabaseAdmin.from('profiles').select('wallet_balance, master_vault, master_wallet').eq('id', userId).single();
+    const { data: callerProfile, error: cpErr } = await supabaseAdmin.from('profiles').select('wallet_balance, master_wallet').eq('id', userId).single();
     if (cpErr || !callerProfile) throw new Error("CALLER_PROFILE_NOT_FOUND");
     
     // FETCH PROFILE of the EFFECTIVE USER (The one receiving)
-    const { data: profile, error: pErr } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id, master_vault').eq('id', effectiveUserId).single();
+    const { data: profile, error: pErr } = await supabaseAdmin.from('profiles').select('operator_id, name, sponsor_id').eq('id', effectiveUserId).single();
     if (pErr || !profile) throw new Error("TARGET_USER_PROFILE_NOT_FOUND");
 
-    const currentBalance = Number(callerProfile.master_vault || callerProfile.master_wallet || callerProfile.wallet_balance || 0);
+    const currentBalance = Number(callerProfile.master_wallet || callerProfile.wallet_balance || 0);
     
     // Check if the caller has enough balance
     if (currentBalance < amount) throw new Error("INSUFFICIENT MASTER VAULT BALANCE");
@@ -59,7 +59,6 @@ serve(async (req) => {
     
     // Update Profiles (Source of Truth)
     await supabaseAdmin.from('profiles').update({
-        master_vault: newBalance,
         master_wallet: newBalance,
         wallet_balance: newBalance
     }).eq('id', userId);
